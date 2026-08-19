@@ -8,6 +8,8 @@ _This is a companion to `triage-guard-spec.md`. It shows two views of the same s
 
 _The diagram uses the same groups, agents, and numbered arrows as the Whimsical board. **Solid** arrows show Orchestrator to agent actions. **Dashed** arrows show agent to Orchestrator proposals. The **thick** arrow is the only time the Orchestrator writes to State. The numbers match the arrow numbers in the Transitions table of the spec._
 
+![Triage Guard architecture — Whimsical board](assets/triage-guard-whimsical-board.png)
+
 ```mermaid
 flowchart LR
   subgraph IN["Input channels"]
