@@ -12,6 +12,7 @@
 **Contents**
 
 - [How the pieces fit (diagram groups)](#how-the-pieces-fit-diagram-groups)
+- [Tech stack](#tech-stack)
 - [Conventions & scope](#conventions--scope)
 - [Document intake & demo data](#document-intake--demo-data)
 - [Actors / Agents](#actors--agents)
@@ -41,6 +42,19 @@ _This is a one-screen map of the system, giving the rest of the document a clear
 - **Agent Core** includes the **Orchestrator Agent** (the only one that writes to State) and six specialist agents: Intake Parser, Acuity Classifier, Safety Validation, Human Escalation, Waiting Room Monitor, and Audit.
 - **Knowledge & Memory** covers the Knowledge Base, policy vector store, CRM (patient profile and history), and session memory.
 - **Monitoring & Evaluation** includes user and agent feedback, an evaluation pipeline (test cases and regression checks), logs and traces, and a metrics dashboard.
+
+---
+
+## Tech stack
+
+_This section lists the implementation technologies backing the components described above, mapping each to its role in the system._
+
+| Component        | Tech            | Role                                                                                                  |
+| ----------------- | ---------------- | ------------------------------------------------------------------------------------------------------ |
+| Agent orchestration | **crewAI**     | Orchestrator + specialist agents (Intake Parser, Acuity Classifier, Safety Validation, Human Escalation, Waiting Room Monitor, Audit) |
+| Text analysis      | **BERT**       | sentiment/urgency scorer and PII detection in the Input Normalizer stage                              |
+| Observability      | **Langfuse**   | traces, logs, and eval pipeline feeding **Monitoring & Evaluation**                                    |
+| Package management | **uv**         | Python dependency management                                                                            |
 
 ---
 
@@ -96,7 +110,7 @@ This section lists all participants in a case: the Orchestrator, each proposing 
 | Waiting Room Monitor Agent                        | Timer / watcher      | status + timers         | timeout / deterioration triggers                                    | No                     | _(to confirm)_                   |
 | Audit Agent                                       | Sink                 | event log               | persists trace                                                      | No (write-only to log) | append-only store _(to confirm)_ |
 | Channel Router                                    | Ingress              | raw input               | routes PDF vs website                                               | No                     | —                                |
-| Input Normalizer + PII filter + Sentiment/Urgency | Pre-processor        | routed input            | redacted message + distress/pain score                              | No                     | BERT _(to confirm)_              |
+| Input Normalizer + PII filter + Sentiment/Urgency | Pre-processor        | routed input            | redacted message + distress/pain score                              | No                     | BERT                             |
 | Triage Nurse / Charge Nurse / Clinician           | Human                | board + detail panel    | status changes, approvals, acuity, missing fields, release sign-off | via Orchestrator only  | —                                |
 | Technician                                        | Human (ops)          | agent-failure alerts    | fixes / acknowledges                                                | No                     | —                                |
 
