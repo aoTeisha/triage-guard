@@ -1,14 +1,14 @@
 # Triage Guard Diagrams
 
-_This is a companion to `triage-guard-spec.md`. It shows two views of the same system: the architecture, using a Mermaid version of the Whimsical board, and the central control-plane state machine._
+_This is a companion to `triage-guard-spec.md`. It shows two views of the same system: the architecture diagram and the central control-plane state machine, as Mermaid diagrams._
 
 ---
 
 ## Architecture diagram
 
-_The diagram uses the same groups, agents, and numbered arrows as the Whimsical board. **Solid** arrows show Orchestrator to agent actions. **Dashed** arrows show agent to Orchestrator proposals. The **thick** arrow is the only time the Orchestrator writes to State. The numbers match the arrow numbers in the Transitions table of the spec._
+_The diagram groups, agents, and numbered arrows below match [`assets/triage-guard-system.png`](assets/triage-guard-system.png). **Solid** arrows show Orchestrator to agent actions. **Dashed** arrows show agent to Orchestrator proposals. The **thick** arrow is the only time the Orchestrator writes to State. The numbers match the arrow numbers in the Transitions table of the spec._
 
-[![Triage Guard architecture — Whimsical board](assets/triage-guard-whimsical-board.png)](https://whimsical.com/board/ExceXhcWbUXuQe3Ahn63CB)
+![Triage Guard architecture](assets/triage-guard-system.png)
 
 ```mermaid
 flowchart LR
