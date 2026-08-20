@@ -47,7 +47,7 @@ _This is a one-screen map of the system, giving the rest of the document a clear
 
 ## Tech stack
 
-_This section lists the implementation technologies backing the components described above, mapping each to its role in the system._
+_This section shows the tools and technologies we are using in the project._
 
 | Component           | Tech         | Role                                                                                                                                  |
 | ------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -60,7 +60,7 @@ _This section lists the implementation technologies backing the components descr
 
 ## Conventions & scope
 
-_This section sets the vocabulary and mental model for the entire document. It explains naming conventions, the three planes a case exists in, who can write State, and the overall approach to handling failures. Please read this first, as later sections rely on these definitions._
+_This section introduces the key terms and concepts used throughout the document. It covers naming conventions, the three planes where a case can exist, who is allowed to write State, and how failures are handled. Please start here, since later sections depend on these definitions._
 
 - **Events** are `UPPERCASE_SNAKE`; **states** are `lowercase_snake`; **guards** are boolean predicates; **actions** are verbs.
 - The machine has **three state planes**:
