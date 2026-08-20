@@ -5,7 +5,7 @@
 
 **What this is.** This document is the complete specification for **Triage Guard**, an AI-governed emergency-room (ER) triage system. It is designed to be self-contained, with each section starting with a brief introduction explaining its content and purpose. Please read the **Conventions & scope** section first, since all later sections rely on its definitions.
 
-**Companion diagram.** This document matches the Triage Guard Whimsical board. The **arrow numbers** in the Transitions table and scenario paths are the same as those shown on the diagram, so you can easily find any row in both places. Agent names, world statuses, and the "notify user" list also correspond directly to the board. Mermaid versions of the architecture and the control-plane state machine are included in the companion file **[`diagrams.md`](diagrams.md)**.
+**Companion diagram.** This document matches the Triage Guard architecture diagram at [`assets/triage-guard-system.png`](assets/triage-guard-system.png). The **arrow numbers** in the Transitions table and scenario paths are the same as those shown on the diagram, so you can easily find any row in both places. Agent names, world statuses, and the "notify user" list also correspond directly to the diagram. Mermaid versions of the architecture and the control-plane state machine are included in the companion file **[`diagrams.md`](diagrams.md)**.
 
 **Open items.** One design decision remains unresolved: the safety-fail branch of the human gate, which is listed at the end under **Open design question**. Document intake uses **mock questionnaire data (no live OCR)**, and the method along with its demo cases is explained in **Document intake & demo data**. In other sections, items that still need to be finalized are marked as _(to confirm)_ or _(to define)_.
 
@@ -267,7 +267,7 @@ When an error or timeout occurs, the Orchestrator retries up to the agent's own 
 
 ## Transitions (complete table)
 
-This table is the core of the state machine. Each edge is shown as **current state + `EVENT` [guard] → next state / actions**. The **Arrow** column matches the diagram, keeping this table and the Whimsical board aligned. After the table, you’ll find the named scenario paths (regression cases) and the forbidden sequences that the safety layer must block.
+This table is the core of the state machine. Each edge is shown as **current state + `EVENT` [guard] → next state / actions**. The **Arrow** column matches the diagram, keeping this table and [`assets/triage-guard-system.png`](assets/triage-guard-system.png) aligned. After the table, you’ll find the named scenario paths (regression cases) and the forbidden sequences that the safety layer must block.
 
 | Arrow         | Current (control)          | Event                                             | Guard                                                | Actions                                                                                  | Next (control)               | World effect                              |
 | ------------- | -------------------------- | ------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------- | ----------------------------------------- |
