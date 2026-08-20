@@ -1,7 +1,7 @@
 # Triage Guard: Architecture and State-Machine Specification
 
 **Project:** Triage Guard, an AI-Governed ER Triage System
-**Authors:** Idan Beck, Barak Amir
+<br>**Authors:** Idan Beck, Barak Amir
 
 **What this is.** This document is the complete specification for **Triage Guard**, an AI-governed emergency-room (ER) triage system. It is designed to be self-contained, with each section starting with a brief introduction explaining its content and purpose. Please read the **Conventions & scope** section first, since all later sections rely on its definitions.
 
