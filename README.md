@@ -177,29 +177,29 @@ This section shows what the nurse actually sees: the kanban column for each pati
 
 Inputs that move the state machine come from external sources such as humans or channels, as well as from internal agent proposals, timers, or errors. The details in each payload matter. For example, `APPROVAL_RESPONSE_RECEIVED` now includes a resolution choice, and `RELEASE_REQUESTED` includes a reason.
 
-| Event                        | Source                     | Payload                                                    | Type                      |
-| ---------------------------- | -------------------------- | ---------------------------------------------------------- | ------------------------- |
-| `CASE_SUBMITTED`             | Channel (PDF/website)      | raw doc + channel                                          | external                  |
-| `FIELDS_SUBMITTED`           | Nurse                      | missing field values                                       | external (human)          |
-| `MOVE_REQUESTED`             | Nurse                      | target status                                              | external (human)          |
-| `APPROVAL_RESPONSE_RECEIVED` | Charge Nurse               | `{resolution: accept_system \| keep_nurse, resolver_role}` | external (human)          |
-| `MESSAGE_NORMALIZED`         | Input Normalizer           | unified message                                            | internal                  |
-| `DATA_PARSED`                | Intake Parser              | parsed fields (incl. `nurse_proposed_acuity`)              | internal (proposal)       |
-| `MISSING_FIELDS_DETECTED`    | Intake Parser              | list of gaps                                               | internal                  |
-| `PARSE_FAILED_RESCAN`        | Intake Parser              | error reason                                               | internal (error)          |
-| `WRONG_DOC_DETECTED`         | Intake Parser / PII filter | reason (wrong form / injection)                            | internal (error/security) |
-| `REDACT_ROUTE_DONE`          | Understanding/routing      | redacted payload + urgency                                 | internal                  |
-| `ACUITY_PROPOSED`            | Acuity Classifier          | acuity + confidence                                        | internal (proposal)       |
-| `VERDICT_PROPOSED`           | Safety Validation          | pass/fail + reasons                                        | internal (proposal)       |
-| `ESCALATION_PROPOSED`        | Human Escalation           | needed? (bool)                                             | internal (proposal)       |
-| `REASSESSMENT_TIMEOUT`       | Waiting Room Monitor       | patient id                                                 | timer                     |
-| `DETERIORATION_DETECTED`     | Waiting Room Monitor       | patient id + signal                                        | internal                  |
-| `TRANSITION_ACCEPTED`        | Orchestrator → user        | new status                                                 | notification              |
-| `RELEASE_REQUESTED`          | Nurse                      | `{reason: discharge \| ama \| transfer \| admit, actor}`   | external (human)          |
-| `AGENT_FAILED`               | Orchestrator               | `{agent, error, attempts}`                                 | internal (error)          |
-| `GATE_TIMER_1`               | Waiting Room Monitor       | case id                                                    | timer                     |
-| `GATE_TIMER_2`               | Waiting Room Monitor       | case id                                                    | timer                     |
-| `EVENT_LOGGED`               | Orchestrator               | trace record                                               | emitted                   |
+| Event                            | Source                     | Payload                                                              | Type                      |
+| -------------------------------- | -------------------------- | -------------------------------------------------------------------- | ------------------------- |
+| `CASE_SUBMITTED`                 | Channel (PDF/website)      | raw doc + channel                                                    | external                  |
+| `FIELDS_SUBMITTED`               | Nurse                      | missing field values                                                 | external (human)          |
+| `MOVE_REQUESTED`                 | Nurse                      | target status                                                        | external (human)          |
+| `APPROVAL_RESPONSE_RECEIVED`     | Charge Nurse               | `{resolution: use_system_acuity \| use_nurse_acuity, resolver_role}` | external (human)          |
+| `MESSAGE_NORMALIZED`             | Input Normalizer           | unified message                                                      | internal                  |
+| `DATA_PARSED`                    | Intake Parser              | parsed fields (incl. `nurse_proposed_acuity`)                        | internal (proposal)       |
+| `MISSING_FIELDS_DETECTED`        | Intake Parser              | list of gaps                                                         | internal                  |
+| `PARSE_FAILED_RESCAN`            | Intake Parser              | error reason                                                         | internal (error)          |
+| `WRONG_DOC_DETECTED`             | Intake Parser / PII filter | reason (wrong form / injection)                                      | internal (error/security) |
+| `REDACT_ROUTE_DONE`              | Understanding/routing      | redacted payload + urgency                                           | internal                  |
+| `ACUITY_PROPOSED`                | Acuity Classifier          | acuity + confidence                                                  | internal (proposal)       |
+| `VERDICT_PROPOSED`               | Safety Validation          | pass/fail + reasons                                                  | internal (proposal)       |
+| `ESCALATION_PROPOSED`            | Human Escalation           | needed? (bool)                                                       | internal (proposal)       |
+| `REASSESSMENT_TIMEOUT`           | Waiting Room Monitor       | patient id                                                           | timer                     |
+| `DETERIORATION_DETECTED`         | Waiting Room Monitor       | patient id + signal                                                  | internal                  |
+| `TRANSITION_ACCEPTED`            | Orchestrator → user        | new status                                                           | notification              |
+| `RELEASE_REQUESTED`              | Nurse                      | `{reason: discharge \| ama \| transfer \| admit, actor}`             | external (human)          |
+| `AGENT_FAILED`                   | Orchestrator               | `{agent, error, attempts}`                                           | internal (error)          |
+| `GATE_TIMER_ASSIGNED_NURSE`      | Waiting Room Monitor       | case id                                                              | timer                     |
+| `GATE_TIMER_ESCALATE_ANY_CHARGE` | Waiting Room Monitor       | case id                                                              | timer                     |
+| `EVENT_LOGGED`                   | Orchestrator               | trace record                                                         | emitted                   |
 
 ---
 
@@ -297,8 +297,8 @@ This table is the core of the state machine. Each edge is shown as **current sta
 | 11·pass       | `verdict_proposed`         | _(auto)_                                          | ¬`escalation_needed`                                 | `start_reassessment_timer`                                                               | `monitoring`                 | → `waiting`                               |
 | 12            | `awaiting_human_approval`  | `ESCALATION_PROPOSED`                             | -                                                    | `emit_event_log`                                                                         | `awaiting_human_approval`    | -                                         |
 | 20            | `awaiting_human_approval`  | _(auto)_                                          | escalation = true                                    | `notify_user("request approval")`                                                        | `awaiting_human_approval`    | → `human_review`                          |
-| 20a           | `awaiting_human_approval`  | `GATE_TIMER_1`                                    | -                                                    | notify assigned charge nurse (UI)                                                        | `awaiting_human_approval`    | -                                         |
-| 20b           | `awaiting_human_approval`  | `GATE_TIMER_2`                                    | -                                                    | re-alert / widen to any charge-role nurse                                                | `awaiting_human_approval`    | -                                         |
+| 20a           | `awaiting_human_approval`  | `GATE_TIMER_ASSIGNED_NURSE`                       | -                                                    | notify assigned charge nurse (UI)                                                        | `awaiting_human_approval`    | -                                         |
+| 20b           | `awaiting_human_approval`  | `GATE_TIMER_ESCALATE_ANY_CHARGE`                  | -                                                    | re-alert / widen to any charge-role nurse                                                | `awaiting_human_approval`    | -                                         |
 | 1b.z·acuity   | `awaiting_human_approval`  | `APPROVAL_RESPONSE_RECEIVED`                      | `actor_is_charge` (acuity branch)                    | `apply_human_acuity` → `emit_event_log`                                                  | `safety_validating`          | -                                         |
 | 1b.z·safety   | `awaiting_human_approval`  | `APPROVAL_RESPONSE_RECEIVED`                      | (safety-fail branch)                                 | **see Open design question**                                                             | **see Open design question** | **see Open design question**              |
 | 13            | `monitoring`               | _(auto)_                                          | -                                                    | `start_reassessment_timer`                                                               | `monitoring`                 | → `waiting`                               |
@@ -344,27 +344,27 @@ This table is the core of the state machine. Each edge is shown as **current sta
 
 This section lists the data the machine keeps for each case. Here you’ll find the acuity model, including `nurse_proposed_acuity` and system `acuity`, their `acuity_gap`, and the `acuity_source` lock. It also includes the queue key and the retry counters for each agent.
 
-| Variable                | Plane   | Type                                         | Set by                       | Notes                                                                                                       |
-| ----------------------- | ------- | -------------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `case_id`               | Control | id                                           | intake                       | -                                                                                                           |
-| `channel`               | Control | enum(pdf, website)                           | Channel Router               | `pdf` = uploaded questionnaire document (mock-parsed in this build)                                         |
-| `parsed_fields`         | Data    | struct                                       | Intake Parser                | schema _(to define)_                                                                                        |
-| `nurse_proposed_acuity` | Data    | enum/level                                   | nurse (via questionnaire)    | **mandatory**; absent → demo case 2 / arrow 16; **always nurse-supplied, never inferred from the document** |
-| `redacted_payload`      | Data    | struct                                       | PII filter                   | no raw PII downstream                                                                                       |
-| `urgency_scores`        | Data    | {sentiment, distress, pain}                  | Input Normalizer             | -                                                                                                           |
-| `acuity`                | Data    | enum/level                                   | Acuity Classifier            | scale _(to confirm - e.g. ESI 1–5)_                                                                         |
-| `acuity_gap`            | Data    | int                                          | derived `\|nurse − system\|` | drives the band (see Queue ordering rule)                                                                   |
-| `acuity_source`         | Data    | enum(system, auto_resolved, human_confirmed) | Orchestrator                 | **the lock** - classifier alone cannot overwrite `human_confirmed`                                          |
-| `confidence`            | Data    | float                                        | Acuity Classifier            | threshold for `confidence_ok`                                                                               |
-| `safety_verdict`        | Data    | {pass/fail, reasons}                         | Safety Validation            | -                                                                                                           |
-| `clinical_status`       | World   | enum (see World plane)                       | Orchestrator                 | board column                                                                                                |
-| `acuity_bucket`         | Data    | enum(emergent[1–2], queued[3–5])             | derived from `acuity`        | primary sort key                                                                                            |
-| `arrival_time`          | Data    | timestamp                                    | intake                       | tiebreaker within bucket                                                                                    |
-| `order_key`             | World   | (bucket, arrival_time)                       | Orchestrator                 | **assigned at system entry**; persists across state changes                                                 |
-| `release_reason`        | Data    | enum(discharge, ama, transfer, admit)        | nurse                        | recorded at close                                                                                           |
-| `wait_timer`            | World   | timer                                        | Orchestrator                 | per-acuity interval; drives `REASSESSMENT_TIMEOUT`                                                          |
-| `gate_timer`            | World   | timer                                        | Orchestrator                 | drives `GATE_TIMER_1`/`GATE_TIMER_2` notify-ladder (distinct from `wait_timer`)                             |
-| `retry_count[agent]`    | Control | int per agent                                | Orchestrator                 | per-agent budget for agent-failure handling                                                                 |
+| Variable                | Plane   | Type                                         | Set by                       | Notes                                                                                                          |
+| ----------------------- | ------- | -------------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `case_id`               | Control | id                                           | intake                       | -                                                                                                              |
+| `channel`               | Control | enum(pdf, website)                           | Channel Router               | `pdf` = uploaded questionnaire document (mock-parsed in this build)                                            |
+| `parsed_fields`         | Data    | struct                                       | Intake Parser                | schema _(to define)_                                                                                           |
+| `nurse_proposed_acuity` | Data    | enum/level                                   | nurse (via questionnaire)    | **mandatory**; absent → demo case 2 / arrow 16; **always nurse-supplied, never inferred from the document**    |
+| `redacted_payload`      | Data    | struct                                       | PII filter                   | no raw PII downstream                                                                                          |
+| `urgency_scores`        | Data    | {sentiment, distress, pain}                  | Input Normalizer             | -                                                                                                              |
+| `acuity`                | Data    | enum/level                                   | Acuity Classifier            | scale _(to confirm - e.g. ESI 1–5)_                                                                            |
+| `acuity_gap`            | Data    | int                                          | derived `\|nurse − system\|` | drives the band (see Queue ordering rule)                                                                      |
+| `acuity_source`         | Data    | enum(system, auto_resolved, human_confirmed) | Orchestrator                 | **the lock** - classifier alone cannot overwrite `human_confirmed`                                             |
+| `confidence`            | Data    | float                                        | Acuity Classifier            | threshold for `confidence_ok`                                                                                  |
+| `safety_verdict`        | Data    | {pass/fail, reasons}                         | Safety Validation            | -                                                                                                              |
+| `clinical_status`       | World   | enum (see World plane)                       | Orchestrator                 | board column                                                                                                   |
+| `acuity_bucket`         | Data    | enum(emergent[1–2], queued[3–5])             | derived from `acuity`        | primary sort key                                                                                               |
+| `arrival_time`          | Data    | timestamp                                    | intake                       | tiebreaker within bucket                                                                                       |
+| `order_key`             | World   | (bucket, arrival_time)                       | Orchestrator                 | **assigned at system entry**; persists across state changes                                                    |
+| `release_reason`        | Data    | enum(discharge, ama, transfer, admit)        | nurse                        | recorded at close                                                                                              |
+| `wait_timer`            | World   | timer                                        | Orchestrator                 | per-acuity interval; drives `REASSESSMENT_TIMEOUT`                                                             |
+| `gate_timer`            | World   | timer                                        | Orchestrator                 | drives `GATE_TIMER_ASSIGNED_NURSE`/`GATE_TIMER_ESCALATE_ANY_CHARGE` notify-ladder (distinct from `wait_timer`) |
+| `retry_count[agent]`    | Control | int per agent                                | Orchestrator                 | per-agent budget for agent-failure handling                                                                    |
 
 ---
 
@@ -465,7 +465,7 @@ This is the one part of the core logic that is still not designed. The system en
 
 `awaiting_human_approval` is entered by **two situations that ask the human different questions**:
 
-- **Acuity discrepancy** (gap ≥2, arrow 9c → 1b.z·acuity) - **resolved.** Question: "which acuity is right?" Options: `accept_system` / `keep_nurse`.
+- **Acuity discrepancy** (gap ≥2, arrow 9c → 1b.z·acuity) - **resolved.** Question: "which acuity is right?" Options: `use_system_acuity` / `use_nurse_acuity`.
 - **Safety-validation failure** (arrows 10·fail and 11 via `escalation_needed` - verdict fail / low confidence / policy hit, plus `AF·safety` when the validator is down) - **UNRESOLVED** (arrow 1b.z·safety). There is no acuity dispute here.
 
 **To decide:**
