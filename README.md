@@ -88,7 +88,7 @@ The Intake Parser reads the mocked questionnaire and produces one of four possib
 | 1 - Clean parse                     | complete questionnaire, all required fields present                             | `DATA_PARSED` (`required_fields_complete` and `doc_is_valid_template`) | 4     | `data_parsed` → continues  | proceed to redaction, then classification                                                                                       |
 | 2 - Partial or missing fields       | some required fields are absent or not extracted cleanly                        | `MISSING_FIELDS_DETECTED`                                              | 16    | `missing_fields_requested` | generate a form listing **exactly the missing fields**; nurse completes it, then `FIELDS_SUBMITTED` (arrow 1b.x), then re-parse |
 | 3 - Unreadable or total failure     | nothing usable could be extracted                                               | `PARSE_FAILED_RESCAN`                                                  | 17    | `scan_failed`              | offer to **resubmit the document** or switch to **full manual entry** (nurse fills the whole form)                              |
-| 4 - Wrong, irrelevant, or injection | unrecognized document, wrong form, or prompt-injection text inside the document | `WRONG_DOC_DETECTED` (not `doc_is_valid_template`)                     | 18    | `erroneous_file_rejected`  | reject; notify "wrong document"; log a security event; **never proceeds to classify**                                           |
+| 4 - Wrong, irrelevant, or injection | unrecognized document, wrong form, or prompt-injection text inside the document | `WRONG_DOC_DETECTED`                                                   | 18    | `erroneous_file_rejected`  | reject; notify "wrong document"; log a security event; **never proceeds to classify**                                           |
 
 > **Acuity is never taken from the document alone.** The nurse must always supply or confirm `nurse_proposed_acuity`. If this field is missing, the case is handled as demo case 2 (missing fields) and not by making an automatic guess.
 >
@@ -108,10 +108,10 @@ This section lists all participants in a case: the Orchestrator, each proposing 
 | Safety Validation Agent                           | Deterministic        | proposed classification | verdict (pass/fail)                                                 | No                     | Prolog / Datalog / Z3 / OPA      |
 | Human Escalation Agent                            | Bridge to human      | case + verdict          | escalation + human response                                         | No                     | UI/queue _(to confirm)_          |
 | Waiting Room Monitor Agent                        | Timer / watcher      | status + timers         | timeout / deterioration triggers                                    | No                     | _(to confirm)_                   |
-| Audit Agent                                       | Sink                 | event log               | persists trace                                                      | No (write-only to log) | append-only store _(to confirm)_ |
-| Channel Router                                    | Ingress              | raw input               | routes PDF vs website                                               | No                     | -                                |
+| Audit Agent                                       | Logger               | event log               | persists trace                                                      | No (write-only to log) | append-only store _(to confirm)_ |
+| Channel Router                                    | Ingress              | raw input               | route PDF/website                                                   | No                     | -                                |
 | Input Normalizer + PII filter + Sentiment/Urgency | Pre-processor        | routed input            | redacted message + distress/pain score                              | No                     | BERT                             |
-| Triage Nurse / Charge Nurse / Clinician           | Human                | board + detail panel    | status changes, approvals, acuity, missing fields, release sign-off | via Orchestrator only  | -                                |
+| Triage Nurse / Charge Nurse                       | Human                | board + detail panel    | status changes, approvals, acuity, missing fields, release sign-off | via Orchestrator only  | -                                |
 | Technician                                        | Human (ops)          | agent-failure alerts    | fixes / acknowledges                                                | No                     | -                                |
 
 ---
@@ -156,15 +156,14 @@ This section explains error handling, following the lecture checklist. Each row 
 
 This section shows what the nurse actually sees: the kanban column for each patient. The system sets these columns, except where marked with a hand symbol for human input. The release rule and the manual-edit rule below are the two main constraints.
 
-| Status                         | Who sets it             | Meaning                                                | Reachable from                                            |
-| ------------------------------ | ----------------------- | ------------------------------------------------------ | --------------------------------------------------------- |
-| `waiting`                      | system                  | queued for bed/provider, priority-sorted (1 = highest) | after triage decision                                     |
-| `human_review`                 | system                  | flagged uncertainty; clinician must resolve            | acuity gap ≥2 / safety fail / low confidence              |
-| `reassessment_required`        | system                  | vitals/condition changed → re-triage                   | any status, on deterioration/timeout                      |
-| `treatment_started`            | human ✋                | active care begun                                      | `waiting` (manual)                                        |
-| `formal_validation`            | system                  | final sign-off before close                            | `treatment_started`                                       |
-| `patient_released`             | **human ✋ (required)** | discharged - leaves the board                          | **any active state** (discharge / AMA / transfer / admit) |
-| `in_transition` _(to confirm)_ | system                  | transient during a requested move                      | during `MOVE_REQUESTED` handling                          |
+| Status                  | Who sets it             | Meaning                                                | Reachable from                                            |
+| ----------------------- | ----------------------- | ------------------------------------------------------ | --------------------------------------------------------- |
+| `waiting`               | system                  | queued for bed/provider, priority-sorted (1 = highest) | after triage decision                                     |
+| `human_review`          | system                  | flagged uncertainty; charge nurse must resolve         | acuity gap ≥2 / safety fail / low confidence              |
+| `reassessment_required` | system                  | vitals/condition changed → re-triage                   | any status, on deterioration/timeout                      |
+| `treatment_started`     | human ✋                | active care begun                                      | `waiting` (manual)                                        |
+| `formal_validation`     | system                  | final sign-off before close                            | `treatment_started`                                       |
+| `patient_released`      | **human ✋ (required)** | discharged - leaves the board                          | **any active state** (discharge / AMA / transfer / admit) |
 
 > **Release rule:** `patient_released` is reachable from **any** live state, not only the treatment path. Every release **requires an authorized nurse sign-off** (`actor_authorized`) plus a valid `release_reason`. "Left the ward vs. left the hospital" is out of scope - both close the card.
 >
@@ -455,9 +454,8 @@ These are the items that still need a decision before the specification is final
 2. `confidence_ok`: **wire in** (low confidence → gate) **or delete** it (see Guards).
 3. Per-agent retry budgets `N` (see Per-agent failure model).
 4. Formalisms for the **no-approval-bypass**, **sole-writer**, and **injection-rejected** rules.
-5. `in_transition` status: real status or transient?
-6. `parsed_fields` schema (see Context / State variables).
-7. Safety-fail branch of the human gate - see Open design question.
+5. `parsed_fields` schema (see Context / State variables).
+6. Safety-fail branch of the human gate - see Open design question.
 
 ---
 
