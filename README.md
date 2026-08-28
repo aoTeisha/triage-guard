@@ -5,4 +5,4 @@ Under-triage of patients in hospital waiting rooms getting caught too late and p
 **Docs:**
 
 - [Architecture and State-Machine Specification](docs/SPECIFICATION.md)
-- [System Model](docs/SYSTEM_MODELING.md)
+- [System Modeling](docs/SYSTEM_MODELING.md)

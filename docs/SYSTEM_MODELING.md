@@ -1,4 +1,4 @@
-# Triage Guard — System Model
+# Triage Guard — System Modeling
 
 Triage Guard is an AI-assisted emergency-department triage system. This document is the
 architectural specification: the outcome it commits to, the separation of decision,
@@ -23,9 +23,9 @@ whole.
 
 ## 1. System Definition
 
-*This section defines the system: the outcome it commits to, who may decide and execute,
+_This section defines the system: the outcome it commits to, who may decide and execute,
 what must never be sacrificed, what happens on component failure, and what is assumed
-versus genuinely unknown.*
+versus genuinely unknown._
 
 ### Business Outcome
 
@@ -68,7 +68,7 @@ through to release.
   Escalation bridge. Required for acuity discrepancies (a gap of two or more between the
   nurse's and the system's acuity) and for safety-validation failures. The bridge conveys
   the question and returns the human's decision but holds no authority itself; the
-  authority rests with the authorized person behind it. Human authority is *not* required
+  authority rests with the authorized person behind it. Human authority is _not_ required
   when the nurse and system agree, or for an ordinary release, so the human is a gate for
   contested and unsafe cases only, not a bottleneck on every case.
 
@@ -107,7 +107,7 @@ guards safety (not compromisable — it needs a human substitute).
 - **Safety Validation unavailable — degrade-to-human.** Do not halt the line. Route every
   case to the charge nurse for manual safety approval, and alert the technician. The
   safety-and-approval guarantee holds by substituting a human validator for the automated
-  one; routing *all* cases, not just suspicious ones, is the safe choice, because without
+  one; routing _all_ cases, not just suspicious ones, is the safe choice, because without
   the validator the system cannot tell safe from unsafe. Cost: the human approval queue
   spikes — quantified in the capacity model.
 
@@ -162,18 +162,18 @@ made-up number looks like a fact until it fails in production.
 
 ## 1a. The Safety-Fail Branch of the Human-Approval Gate
 
-*A case can enter the approval gate for two different reasons. The acuity-discrepancy
+_A case can enter the approval gate for two different reasons. The acuity-discrepancy
 reason is specified elsewhere; the safety-fail reason is resolved here. The resolution
 holds to two constraints: never bypass safety or approval, and never silently return the
-same case to the queue without changing `acuity`, `clinical_status`, or `safety_verdict`.*
+same case to the queue without changing `acuity`, `clinical_status`, or `safety_verdict`._
 
 ### The core distinction: correction versus override
 
 When safety validation returns "fail," it has given the system **information** — a
 specific signal that this case is dangerous. So the nurse's role at the gate is to
 **correct**, not to **approve a bypass**. The system has no "ignore safety" path at all.
-This one decision shapes everything below: a safety failure becomes a *request to fix*,
-never a *request for permission to skip*.
+This one decision shapes everything below: a safety failure becomes a _request to fix_,
+never a _request for permission to skip_.
 
 ### Resolution
 
@@ -210,17 +210,17 @@ never a *request for permission to skip*.
 These look similar — both send a case to a human — but they are inverses, and treating
 them the same would be dangerous:
 
-- **Validation returned "fail"** — the validator *worked* and produced a specific danger
+- **Validation returned "fail"** — the validator _worked_ and produced a specific danger
   signal. Resolution: correct-and-revalidate (above). No override, because there is a
   concrete reason to distrust this case.
-- **Validator is down** — the validator produced *no information*; the system is blind,
+- **Validator is down** — the validator produced _no information_; the system is blind,
   not warned. Resolution: the separate safe fallback (route every case to the charge nurse
-  for manual approval). Here the human *provides* the safety judgment the dead machine
+  for manual approval). Here the human _provides_ the safety judgment the dead machine
   could not.
 
 Neither case is an override. In the first, a human corrects and the machine re-checks. In
 the second, a human performs the check in place of the machine. In both, safety is
-*evaluated*, never *skipped*. That is why the system builds no override mechanism at all:
+_evaluated_, never _skipped_. That is why the system builds no override mechanism at all:
 the moment an "ignore safety" button exists, it could also be used in the first case,
 where the validator flagged real danger — the forbidden move. "Override" and
 "human-provided validation" look alike but are opposites: one skips a check, the other
@@ -242,9 +242,9 @@ the button.
 
 ## 2. Context & Components
 
-*This section draws what is inside the system boundary and what is external, and gives
+_This section draws what is inside the system boundary and what is external, and gives
 every arrow a semantic name, so the authority separation is visible and checkable. There
-is no direct arrow from the LLM to an irreversible action, by design.*
+is no direct arrow from the LLM to an irreversible action, by design._
 
 ### Context diagram
 
@@ -253,6 +253,7 @@ is no direct arrow from the LLM to an irreversible action, by design.*
 ### Entities
 
 **Inside the boundary**
+
 - **Orchestrator** — decision authority; the sole writer to state.
 - **Acuity Classifier** — the LLM; proposes only.
 - **Safety Validation** — the binding safety gate.
@@ -262,33 +263,34 @@ is no direct arrow from the LLM to an irreversible action, by design.*
 - **Audit Store** — the append-only record of every state change.
 
 **Outside the boundary**
+
 - **Intake nurse (via webform)** — human actor; supplies the case and the proposed acuity.
 - **Charge nurse** — human authority; resolves discrepancies and safety failures.
 - **CRM** — source of patient history; not always available.
 - **Downstream treatment system** — what the Gateway actually drives to start treatment.
 
-*Not shown: the Waiting Room Monitor exists in the system (it watches cases parked for
+_Not shown: the Waiting Room Monitor exists in the system (it watches cases parked for
 correction, per the safety-fail resolution), but it is omitted from this reduced context
 diagram, which shows only the decision-and-execution path. Its omission here is
-deliberate, not an inconsistency.*
+deliberate, not an inconsistency._
 
 ### Arrows (semantics)
 
-| From → To | Message | Meaning |
-|---|---|---|
-| Intake nurse → Orchestrator | `CASE_SUBMITTED { complaint, vitals, nurse_proposed_acuity }` | A new case enters; carries the nurse's proposed acuity among other fields. |
-| Orchestrator → Acuity Classifier | `classify_request { case_payload }` | Ask for an acuity proposal. Payload carries **no identifiers**. |
-| Acuity Classifier → Orchestrator | `ActionProposal { proposed_acuity, confidence }` | A proposal, not a fact — the Orchestrator decides what to do with it. |
-| Orchestrator → Safety Validation | `ValidationRequest { case_payload, proposed_acuity }` | Check the proposal against the case before any write. |
-| Safety Validation → Orchestrator | `SafetyVerdict { pass \| fail, reason }` | A binding verdict; `reason` drives the correction path on `fail`. |
-| Orchestrator → CRM | `HistoryLookup { patient_id }` | The only arrow that carries the identifier. |
-| CRM → Orchestrator | `PatientHistory { prior_visits, conditions }` | History merged into the current case. |
-| Orchestrator → Human Escalation | `EscalationRequest { case, reason: discrepancy \| safety_fail }` | Reason determines which question the human gets. |
-| Human Escalation → Orchestrator | `ApprovalToken { decision, actor_is_charge, approval_id, expires_at }` | An authenticated, time-bounded decision — must be re-checked as valid at execution time. |
-| Orchestrator → Tool Gateway | `ActionRequest { move_to_treatment, request_id, action_hash, idempotency_key, issued_at, approval_id, expires_at }` | The irreversible act — sent only after `safety_passed ∧ approved`. |
-| Tool Gateway → Downstream | `move_to_treatment { case_id, idempotency_key }` | The execution against the outside world. |
-| Downstream → Tool Gateway | `ToolReceipt { started \| failed }` — **or nothing (timeout)** | Three outcomes, not two — the missing receipt is the UNKNOWN. |
-| Orchestrator → Audit Store | `AuditRecord { action, actor, timestamp, before → after, reason }` | Every state change is recorded — the auditability constraint. |
+| From → To                        | Message                                                                                                             | Meaning                                                                                  |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Intake nurse → Orchestrator      | `CASE_SUBMITTED { complaint, vitals, nurse_proposed_acuity }`                                                       | A new case enters; carries the nurse's proposed acuity among other fields.               |
+| Orchestrator → Acuity Classifier | `classify_request { case_payload }`                                                                                 | Ask for an acuity proposal. Payload carries **no identifiers**.                          |
+| Acuity Classifier → Orchestrator | `ActionProposal { proposed_acuity, confidence }`                                                                    | A proposal, not a fact — the Orchestrator decides what to do with it.                    |
+| Orchestrator → Safety Validation | `ValidationRequest { case_payload, proposed_acuity }`                                                               | Check the proposal against the case before any write.                                    |
+| Safety Validation → Orchestrator | `SafetyVerdict { pass \| fail, reason }`                                                                            | A binding verdict; `reason` drives the correction path on `fail`.                        |
+| Orchestrator → CRM               | `HistoryLookup { patient_id }`                                                                                      | The only arrow that carries the identifier.                                              |
+| CRM → Orchestrator               | `PatientHistory { prior_visits, conditions }`                                                                       | History merged into the current case.                                                    |
+| Orchestrator → Human Escalation  | `EscalationRequest { case, reason: discrepancy \| safety_fail }`                                                    | Reason determines which question the human gets.                                         |
+| Human Escalation → Orchestrator  | `ApprovalToken { decision, actor_is_charge, approval_id, expires_at }`                                              | An authenticated, time-bounded decision — must be re-checked as valid at execution time. |
+| Orchestrator → Tool Gateway      | `ActionRequest { move_to_treatment, request_id, action_hash, idempotency_key, issued_at, approval_id, expires_at }` | The irreversible act — sent only after `safety_passed ∧ approved`.                       |
+| Tool Gateway → Downstream        | `move_to_treatment { case_id, idempotency_key }`                                                                    | The execution against the outside world.                                                 |
+| Downstream → Tool Gateway        | `ToolReceipt { started \| failed }` — **or nothing (timeout)**                                                      | Three outcomes, not two — the missing receipt is the UNKNOWN.                            |
+| Orchestrator → Audit Store       | `AuditRecord { action, actor, timestamp, before → after, reason }`                                                  | Every state change is recorded — the auditability constraint.                            |
 
 ### Authority separation — why the arrows are shaped this way
 
@@ -318,11 +320,11 @@ never arrive — the origin of the UNKNOWN problem modeled next.
 
 ## 3. Execution State Machine
 
-*This section models the **treatment-move execution**, the only irreversible
+_This section models the **treatment-move execution**, the only irreversible
 side effect in the system. The aim is to make the UNKNOWN explicit. A timeout is not a
 failure, and treating it as one would let a blind retry start treatment twice. The
 machine below keeps "we know it failed" and "we don't know" as separate states, so a
-retry can happen only once we have evidence the move did not occur.*
+retry can happen only once we have evidence the move did not occur._
 
 ### State machine
 
@@ -330,20 +332,20 @@ retry can happen only once we have evidence the move did not occur.*
 
 ### States
 
-| State | Meaning | Final? |
-|---|---|---|
-| `READY` | `ActionRequest` built, not yet sent. | no |
-| `PENDING` | Sent to the Tool Gateway, awaiting a receipt. | no |
-| `CONFIRMED` | Receipt "started" received — treatment began. | **yes** |
-| `FAILED` | Receipt "failed" received — we have evidence the move did **not** happen; safe to retry. | no |
-| `UNKNOWN` | Timeout, no receipt — we do **not** know whether the move happened. Never retried blindly. | no |
-| `RECONCILING` | Querying the source of truth to establish whether the move actually happened. | no |
-| `ESCALATED_TO_HUMAN` | Retry budget exhausted — a human must intervene manually. | **yes** |
+| State                | Meaning                                                                                    | Final?  |
+| -------------------- | ------------------------------------------------------------------------------------------ | ------- |
+| `READY`              | `ActionRequest` built, not yet sent.                                                       | no      |
+| `PENDING`            | Sent to the Tool Gateway, awaiting a receipt.                                              | no      |
+| `CONFIRMED`          | Receipt "started" received — treatment began.                                              | **yes** |
+| `FAILED`             | Receipt "failed" received — we have evidence the move did **not** happen; safe to retry.   | no      |
+| `UNKNOWN`            | Timeout, no receipt — we do **not** know whether the move happened. Never retried blindly. | no      |
+| `RECONCILING`        | Querying the source of truth to establish whether the move actually happened.              | no      |
+| `ESCALATED_TO_HUMAN` | Retry budget exhausted — a human must intervene manually.                                  | **yes** |
 
 Two things make this machine safe, rather than a naive success/fail pair:
 
 - **`FAILED` and `UNKNOWN` are distinct.** `FAILED` means positive evidence the action did
-  not occur (a "failed" log). `UNKNOWN` is the *absence* of evidence (a timeout). The move
+  not occur (a "failed" log). `UNKNOWN` is the _absence_ of evidence (a timeout). The move
   may or may not have happened. That difference is what the model exists to capture.
 - **There are two final states, and every path reaches one.** A case ends in `CONFIRMED`
   (success) or `ESCALATED_TO_HUMAN` (automatic attempts exhausted). No case can silently
@@ -354,18 +356,18 @@ Two things make this machine safe, rather than a naive success/fail pair:
 Each event names the authoritative producer — the component allowed to cause the
 transition — and, where relevant, the source of evidence it relies on.
 
-| Event | Transition | Producer | Evidence source |
-|---|---|---|---|
-| `send_request` | READY → PENDING | Orchestrator | — |
-| `receipt_started` | PENDING → CONFIRMED | Tool Gateway | downstream system |
-| `receipt_failed` | PENDING → FAILED | Tool Gateway | downstream system |
-| `timeout` | PENDING → UNKNOWN | Orchestrator | its own timer |
-| `reconcile_result` | RECONCILING → CONFIRMED / FAILED | Orchestrator | Audit Store (+ downstream re-query) |
-| `retry` | FAILED → PENDING | Orchestrator | its own retry counter |
-| `retry_limit_reached` | FAILED → ESCALATED_TO_HUMAN | Orchestrator | its own retry counter |
-| `reconcile_unresolved` | RECONCILING → UNKNOWN | Orchestrator | — (source unreachable) |
+| Event                  | Transition                       | Producer     | Evidence source                     |
+| ---------------------- | -------------------------------- | ------------ | ----------------------------------- |
+| `send_request`         | READY → PENDING                  | Orchestrator | —                                   |
+| `receipt_started`      | PENDING → CONFIRMED              | Tool Gateway | downstream system                   |
+| `receipt_failed`       | PENDING → FAILED                 | Tool Gateway | downstream system                   |
+| `timeout`              | PENDING → UNKNOWN                | Orchestrator | its own timer                       |
+| `reconcile_result`     | RECONCILING → CONFIRMED / FAILED | Orchestrator | Audit Store (+ downstream re-query) |
+| `retry`                | FAILED → PENDING                 | Orchestrator | its own retry counter               |
+| `retry_limit_reached`  | FAILED → ESCALATED_TO_HUMAN      | Orchestrator | its own retry counter               |
+| `reconcile_unresolved` | RECONCILING → UNKNOWN            | Orchestrator | — (source unreachable)              |
 
-**Producer versus evidence source.** The producer is the component allowed to *cause* the
+**Producer versus evidence source.** The producer is the component allowed to _cause_ the
 transition, not whichever component supplied a fact along the way. For `reconcile_result`
 the Audit Store answers the question "did the move happen?", but the Orchestrator is the
 producer: it starts the reconciliation, reads the source, decides what the answer means,
@@ -402,11 +404,11 @@ Gateway can recognize it as the same action and refuse to start treatment twice.
 
 ### Design notes
 
-- Reconciliation does not create a new outcome — it *resolves* `UNKNOWN` into one of the
+- Reconciliation does not create a new outcome — it _resolves_ `UNKNOWN` into one of the
   states we already have (`CONFIRMED` or `FAILED`). Its job is to turn "don't know" into
   "know".
-- Retrying the *reconciliation* is safe (a query changes nothing in the world); retrying
-  the *action* is dangerous and strictly bounded. The machine separates the two, which is
+- Retrying the _reconciliation_ is safe (a query changes nothing in the world); retrying
+  the _action_ is dangerous and strictly bounded. The machine separates the two, which is
   why `RECONCILING → UNKNOWN` (re-query) is allowed but `UNKNOWN → PENDING` (re-act) is
   forbidden.
 - A third budget appears here too — the machine retry limit — matching the human
@@ -417,9 +419,9 @@ Gateway can recognize it as the same action and refuse to start treatment twice.
 
 ## 4. Interface Contract & Failure Handling
 
-*This section defines what may cross the interface for the irreversible treatment-move,
+_This section defines what may cross the interface for the irreversible treatment-move,
 and what the system does when it cannot tell whether the move happened. The contract and
-the failure model both build on the execution state machine above.*
+the failure model both build on the execution state machine above._
 
 ### The ActionRequest contract
 
@@ -443,11 +445,11 @@ moment. The distinction is the point: schema and semantic checks run once, at bu
 runtime checks re-verify, at the last moment, things that can change between decision and
 execution.
 
-| Level | Checks | Example | When |
-|---|---|---|---|
-| **Schema** | Shape | All fields present; `action_type` is a valid value; `idempotency_key` is a well-formed string. | On receiving the request |
-| **Semantic** | Meaning | `case_id` points to a case that exists and passed safety; `approval_id` points to a real approval. | When building the request |
-| **Runtime** | Still-true | `now < expires_at`; `action_hash` matches; the approval is bound to this case and came from a charge-role actor. | At the moment of execution |
+| Level        | Checks     | Example                                                                                                          | When                       |
+| ------------ | ---------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| **Schema**   | Shape      | All fields present; `action_type` is a valid value; `idempotency_key` is a well-formed string.                   | On receiving the request   |
+| **Semantic** | Meaning    | `case_id` points to a case that exists and passed safety; `approval_id` points to a real approval.               | When building the request  |
+| **Runtime**  | Still-true | `now < expires_at`; `action_hash` matches; the approval is bound to this case and came from a charge-role actor. | At the moment of execution |
 
 The three runtime checks all guard against the same thing — the world moving between
 preparation and execution:
@@ -463,7 +465,7 @@ preparation and execution:
   the hash will not match and execution stops. This blocks an approval being reused for a
   different action, and can only be checked once the final action is known.
 - **The approval is bound and authorized (`approval_id`).** Not enough that an
-  `approval_id` exists: it must belong to *this* case (not lifted from another), and it
+  `approval_id` exists: it must belong to _this_ case (not lifted from another), and it
   must come from an authorized signer (`actor_is_charge`). This blocks two attacks — an
   approval stolen from another case, and an approval from someone not permitted to give
   one.
@@ -509,12 +511,12 @@ To reconstruct what happened after the fact, evidence has to cover every critica
 transition, not just the start and end. A hard case runs send → timeout → reconcile →
 retry → confirm, and each junction needs its own record.
 
-| Evidence | Proves | Critical for |
-|---|---|---|
-| `request_id`, `idempotency_key`, `issued_at` | what was sent, and when | identifying a duplicate execution |
-| `tool_receipt` **or** `timeout@T` (no receipt) | what came back, or that nothing did | why the case entered `UNKNOWN` |
-| `reconcile_record { queried_at, source, result: done \| not_done \| unresolved }` | what reconciliation found | justifying the retry |
-| `approval_id`, `actor_is_charge`, `expires_at` | who approved, and under what validity | legal defense / no-bypass |
+| Evidence                                                                          | Proves                                | Critical for                      |
+| --------------------------------------------------------------------------------- | ------------------------------------- | --------------------------------- |
+| `request_id`, `idempotency_key`, `issued_at`                                      | what was sent, and when               | identifying a duplicate execution |
+| `tool_receipt` **or** `timeout@T` (no receipt)                                    | what came back, or that nothing did   | why the case entered `UNKNOWN`    |
+| `reconcile_record { queried_at, source, result: done \| not_done \| unresolved }` | what reconciliation found             | justifying the retry              |
+| `approval_id`, `actor_is_charge`, `expires_at`                                    | who approved, and under what validity | legal defense / no-bypass         |
 
 The one that is easy to miss is `reconcile_record`. Without it, the trail shows "timeout,
 then retry, then success" but cannot show that a check confirmed the retry was safe. If a
@@ -531,21 +533,21 @@ reconciliation — before any further attempt.
 
 ## 5. Latency, Capacity & the Reversibility Split
 
-*This section checks whether the architecture can meet its timing and load targets, using
+_This section checks whether the architecture can meet its timing and load targets, using
 representative nominal service times and load figures. The target: initial containment at
-P95 within 8 seconds.*
+P95 within 8 seconds._
 
 ### Nominal service times
 
-| Stage | Time |
-|---|---|
-| Ingestion | 0.4s |
-| Retrieval | 0.7s |
-| Classification | 0.3s |
-| LLM | 1.5s |
-| Policy | 0.2s |
-| Tool Gateway | 0.2s |
-| External Tool | 1.1s |
+| Stage                          | Time  |
+| ------------------------------ | ----- |
+| Ingestion                      | 0.4s  |
+| Retrieval                      | 0.7s  |
+| Classification                 | 0.3s  |
+| LLM                            | 1.5s  |
+| Policy                         | 0.2s  |
+| Tool Gateway                   | 0.2s  |
+| External Tool                  | 1.1s  |
 | Human Approval (when required) | +4.0s |
 
 ### Latency budget
@@ -561,8 +563,8 @@ sort every case from fast to slow, drop the slowest 5%, and read the time at pos
 Each stage has its own distribution, and in a series the tails accumulate — one slow stage
 is enough to make the whole path slow, and with several stages the chance that at least
 one is slow on a given request rises. So the P95 of the total sits well above the nominal
-sum. A nominal figure can rule compliance *out* (the with-approval path at 8.4s already
-fails) but cannot prove it *in*; that needs measured percentiles.
+sum. A nominal figure can rule compliance _out_ (the with-approval path at 8.4s already
+fails) but cannot prove it _in_; that needs measured percentiles.
 
 Human approval is the largest and most variable term (4.0s of the 8.4s), and the only one
 that does not scale with compute — a free nurse answers in seconds, a busy one in tens of
@@ -600,7 +602,7 @@ Only two things lower ρ below 1:
   added like a server, and under real ED load may not be free at all.
 - **Lower λ** — send fewer cases to the human gate in the first place. This is the
   architectural lever, and it connects back to the failure model: when Safety Validation
-  is down, *every* case is routed to a human, which is exactly what floods the queue. In
+  is down, _every_ case is routed to a human, which is exactly what floods the queue. In
   normal operation only genuinely contested cases (discrepancy or safety-fail) need a
   human; keeping the gate strict about what it escalates keeps λ down.
 
@@ -609,10 +611,10 @@ Only two things lower ρ below 1:
 The costly, unscalable step is any action that needs a human. So split actions by
 reversibility:
 
-| Type | Actions | Handling |
-|---|---|---|
-| **Reversible (containment)** | Queue placement / re-ordering by acuity | Automatic, fast, no human |
-| **Irreversible** | Move to treatment · patient release | Under safety validation + human approval, never automatic |
+| Type                         | Actions                                 | Handling                                                  |
+| ---------------------------- | --------------------------------------- | --------------------------------------------------------- |
+| **Reversible (containment)** | Queue placement / re-ordering by acuity | Automatic, fast, no human                                 |
+| **Irreversible**             | Move to treatment · patient release     | Under safety validation + human approval, never automatic |
 
 **Reversible containment: queue position.** The moment the system suspects a patient is
 high-acuity, it moves them up the queue automatically, protecting them from a dangerous
@@ -643,8 +645,8 @@ scarce human capacity for the two actions that genuinely require it.
 
 ## 6. Monitoring & Consistency
 
-*This section checks that all views tell the same story, then defines the runtime metrics.
-Each metric is tied to a requirement or an assumption, with a threshold and a response.*
+_This section checks that all views tell the same story, then defines the runtime metrics.
+Each metric is tied to a requirement or an assumption, with a threshold and a response._
 
 ### Consistency check — all pass
 
@@ -667,17 +669,17 @@ cross-checked. Everything lines up:
 
 Two metrics, each guarding something fragile that earlier steps surfaced.
 
-| # | Metric | Guards | Threshold | Response |
-|---|---|---|---|---|
-| 1 | Stuck / spiking `UNKNOWN` cases | The assumption that a receipt means real execution; the requirement that no case gets silently stuck | More than N cases in `UNKNOWN` beyond Y seconds (N, Y fixed from data) | The stuck case escalates to `ESCALATED_TO_HUMAN`; a spike pages the on-call technician for a Gateway/reconciliation outage |
-| 2 | Human-approval utilization, ρ = λ/μ | The capacity requirement — the human approval queue must stay stable (ρ < 1) | ρ > 0.8 | Lower λ first (verify reversible containment is carrying its share and only irreversible/contested cases reach the gate); then raise μ (page a nurse) |
+| #   | Metric                              | Guards                                                                                               | Threshold                                                              | Response                                                                                                                                              |
+| --- | ----------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Stuck / spiking `UNKNOWN` cases     | The assumption that a receipt means real execution; the requirement that no case gets silently stuck | More than N cases in `UNKNOWN` beyond Y seconds (N, Y fixed from data) | The stuck case escalates to `ESCALATED_TO_HUMAN`; a spike pages the on-call technician for a Gateway/reconciliation outage                            |
+| 2   | Human-approval utilization, ρ = λ/μ | The capacity requirement — the human approval queue must stay stable (ρ < 1)                         | ρ > 0.8                                                                | Lower λ first (verify reversible containment is carrying its share and only irreversible/contested cases reach the gate); then raise μ (page a nurse) |
 
 #### Metric 1 — stuck or spiking UNKNOWN cases
 
 A case entering `UNKNOWN` is normal and expected — a timeout happens occasionally, and
 reconciliation exists to resolve it. So the metric does not alert on every entry, which
-would fire constantly. What matters is a case that *stays* in `UNKNOWN`, or a sudden
-*spike* of them:
+would fire constantly. What matters is a case that _stays_ in `UNKNOWN`, or a sudden
+_spike_ of them:
 
 - A case stuck in `UNKNOWN` past Y seconds means reconciliation cannot resolve it (source
   unreachable or hung).
@@ -726,7 +728,7 @@ decide and act, what must be true before an irreversible action happens, what ha
 a component is unavailable or returns nothing, and how every action is recorded so it can
 be reconstructed afterward. The classifier is one component inside that system, and it
 only proposes; the Orchestrator decides, safety validation gates, the Tool Gateway
-executes, and the audit store records. The model optimizes for being *right*; the system
+executes, and the audit store records. The model optimizes for being _right_; the system
 has to stay safe even when the model is wrong, unavailable, or uncertain. That is why
 almost all of the design is about authorities, states, failure handling, and evidence, and
 almost none of it about the classifier's accuracy.
@@ -737,7 +739,7 @@ An early, non-obvious question is what happens when safety validation fails and 
 has to intervene. The human-approval gate is entered for two different reasons — an acuity
 discrepancy and a safety-validation failure — and the second needs its own resolution.
 The design conclusion is that the system contains no safety-override path at all: a
-safety failure is a request to *correct and revalidate*, never permission to skip the
+safety failure is a request to _correct and revalidate_, never permission to skip the
 check. The reason is that the moment an "ignore safety"
 button exists, it can also be used on a case the validator genuinely flagged as dangerous
 — so the safe design is to never build the button. A one-line request to "help triage
