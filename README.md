@@ -11,7 +11,7 @@ deteriorated, which improves ER capacity logistics and treatment.
 
 ## The Triage guard app
 
-A crewAI JSON-first skeleton, one file per agent. This is skeleton only — no implementation yet, that comes later. Nothing calls an LLM: in mock mode each agent returns canned output and records one step in Langfuse, so you can see the shape of the trace before wiring in any reasoning.
+A crewAI skeleton, one file per agent. This is skeleton only — no implementation yet, that comes later. Nothing calls an LLM: in mock mode each agent returns canned output and records one step in Langfuse, so you can see the shape of the trace before wiring in any reasoning.
 
 ```
 app/
@@ -41,18 +41,6 @@ uv run triage-guard
 
 This prints the three mock agent outputs and sends a `triage-case` trace to
 [http://localhost:3000](http://localhost:3000), with one nested span per agent.
-
-A config-only check validates every `.jsonc` without running anything:
-
-```bash
-uv run python -c "
-from dotenv import load_dotenv; load_dotenv()
-from pathlib import Path
-from crewai.project import load_crew
-crew, _ = load_crew(Path('app/crew.jsonc'))
-print(len(crew.agents), '|', crew.manager_agent.role, '|', [t.agent.role for t in crew.tasks])
-"
-```
 
 ### Adding an agent
 
