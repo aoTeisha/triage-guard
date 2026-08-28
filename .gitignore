@@ -3,3 +3,6 @@
 .venv/
 __pycache__/
 *.pyc
+
+# Task artifacts — crewAI creates output/ on the first real kickoff
+output/
