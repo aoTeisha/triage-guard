@@ -1,4 +1,4 @@
-# Triage Guard — System Modeling
+# Triage Guard — System Model
 
 Triage Guard is an AI-assisted emergency-department triage system. This document is the
 architectural specification: the outcome it commits to, the separation of decision,
@@ -11,13 +11,13 @@ whole.
 ## Contents
 
 - [1. System Definition](#1-system-definition)
-- [1a. The Safety-Fail Branch of the Human-Approval Gate](#1a-the-safety-fail-branch-of-the-human-approval-gate)
-- [2. Context & Components](#2-context--components)
-- [3. Execution State Machine](#3-execution-state-machine)
-- [4. Interface Contract & Failure Handling](#4-interface-contract--failure-handling)
-- [5. Latency, Capacity & the Reversibility Split](#5-latency-capacity--the-reversibility-split)
-- [6. Monitoring & Consistency](#6-monitoring--consistency)
-- [7. Design Rationale](#7-design-rationale)
+- [2. The Safety-Fail Branch of the Human-Approval Gate](#2-the-safety-fail-branch-of-the-human-approval-gate)
+- [3. Context & Components](#3-context--components)
+- [4. Execution State Machine](#4-execution-state-machine)
+- [5. Interface Contract & Failure Handling](#5-interface-contract--failure-handling)
+- [6. Latency, Capacity & the Reversibility Split](#6-latency-capacity--the-reversibility-split)
+- [7. Monitoring & Consistency](#7-monitoring--consistency)
+- [8. Design Rationale](#8-design-rationale)
 
 ---
 
@@ -160,7 +160,7 @@ made-up number looks like a fact until it fails in production.
 
 ---
 
-## 1a. The Safety-Fail Branch of the Human-Approval Gate
+## 2. The Safety-Fail Branch of the Human-Approval Gate
 
 _A case can enter the approval gate for two different reasons. The acuity-discrepancy
 reason is specified elsewhere; the safety-fail reason is resolved here. The resolution
@@ -240,7 +240,7 @@ the button.
 
 ---
 
-## 2. Context & Components
+## 3. Context & Components
 
 _This section draws what is inside the system boundary and what is external, and gives
 every arrow a semantic name, so the authority separation is visible and checkable. There
@@ -318,7 +318,7 @@ never arrive — the origin of the UNKNOWN problem modeled next.
 
 ---
 
-## 3. Execution State Machine
+## 4. Execution State Machine
 
 _This section models the **treatment-move execution**, the only irreversible
 side effect in the system. The aim is to make the UNKNOWN explicit. A timeout is not a
@@ -417,7 +417,7 @@ Gateway can recognize it as the same action and refuse to start treatment twice.
 
 ---
 
-## 4. Interface Contract & Failure Handling
+## 5. Interface Contract & Failure Handling
 
 _This section defines what may cross the interface for the irreversible treatment-move,
 and what the system does when it cannot tell whether the move happened. The contract and
@@ -531,7 +531,7 @@ reconciliation — before any further attempt.
 
 ---
 
-## 5. Latency, Capacity & the Reversibility Split
+## 6. Latency, Capacity & the Reversibility Split
 
 _This section checks whether the architecture can meet its timing and load targets, using
 representative nominal service times and load figures. The target: initial containment at
@@ -643,7 +643,7 @@ scarce human capacity for the two actions that genuinely require it.
 
 ---
 
-## 6. Monitoring & Consistency
+## 7. Monitoring & Consistency
 
 _This section checks that all views tell the same story, then defines the runtime metrics.
 Each metric is tied to a requirement or an assumption, with a threshold and a response._
@@ -717,7 +717,7 @@ and this metric watches that the split holds in production (ρ stays low).
 
 ---
 
-## 7. Design Rationale
+## 8. Design Rationale
 
 ### Model versus system
 
