@@ -1,12 +1,6 @@
 # Triage Guard - System Model
 
-Triage Guard is an AI-assisted emergency-department triage system. This document is the
-architectural specification: the outcome it commits to, the separation of decision,
-execution, and human authority, the state and failure model for the one irreversible
-action in the system, and the capacity and monitoring design that keeps it safe under
-load. Its focus is the seams - the decision-to-execution gap, the human gate, and the
-approval queue - where a system of individually-correct components can still fail as a
-whole.
+Triage Guard is an AI-assisted emergency-department triage system. This document models the parts of it that carry the most risk - not the whole system, but the seams where a set of individually-correct components can still fail as a whole: the gap between deciding on an action and executing it, the human-approval gate, and the approval queue under load. For those parts it sets out the outcome the system commits to, the separation of decision, execution, and human authority, the state and failure model for the one irreversible action, and the capacity and monitoring design that keeps it safe.
 
 ## Contents
 
@@ -742,8 +736,9 @@ The design conclusion is that the system contains no safety-override path at all
 safety failure is a request to _correct and revalidate_, never permission to skip the
 check. The reason is that the moment an "ignore safety"
 button exists, it can also be used on a case the validator genuinely flagged as dangerous
+
 - so the safe design is to never build the button. A one-line request to "help triage
-patients safely" could never have implied that rule; the model is what exposed it.
+  patients safely" could never have implied that rule; the model is what exposed it.
 
 ### The assumption that would force a redesign
 
