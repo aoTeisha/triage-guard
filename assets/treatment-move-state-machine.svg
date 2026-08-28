@@ -1,0 +1,73 @@
+<svg width="100%" viewBox="0 0 680 640" role="img" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+<title>Treatment-move execution state machine</title>
+<desc>States for the irreversible treatment-move: READY, PENDING, CONFIRMED, FAILED, UNKNOWN, RECONCILING, and ESCALATED_TO_HUMAN. UNKNOWN must pass through RECONCILING before any retry; the direct UNKNOWN to PENDING retry is forbidden.</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+<marker id="arrowred" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="#A32D2D" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<rect x="270" y="30" width="140" height="44" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<text x="340" y="52" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="500" fill="#2C2C2A">READY</text>
+
+<rect x="270" y="130" width="140" height="50" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="340" y="148" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="500" fill="#0C447C">PENDING</text>
+<text x="340" y="166" text-anchor="middle" dominant-baseline="central" font-size="12" fill="#185FA5">awaiting receipt</text>
+
+<rect x="60" y="255" width="150" height="50" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="135" y="273" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="500" fill="#085041">CONFIRMED</text>
+<text x="135" y="291" text-anchor="middle" dominant-baseline="central" font-size="12" fill="#0F6E56">final · started</text>
+
+<rect x="270" y="255" width="140" height="50" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="340" y="273" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="500" fill="#633806">FAILED</text>
+<text x="340" y="291" text-anchor="middle" dominant-baseline="central" font-size="12" fill="#854F0B">evidence: not started</text>
+
+<rect x="470" y="255" width="150" height="50" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+<text x="545" y="273" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="500" fill="#791F1F">UNKNOWN</text>
+<text x="545" y="291" text-anchor="middle" dominant-baseline="central" font-size="12" fill="#A32D2D">timeout · no evidence</text>
+
+<rect x="470" y="380" width="150" height="50" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="545" y="398" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="500" fill="#3C3489">RECONCILING</text>
+<text x="545" y="416" text-anchor="middle" dominant-baseline="central" font-size="12" fill="#534AB7">did it happen?</text>
+
+<rect x="245" y="530" width="190" height="50" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<text x="340" y="548" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="500" fill="#2C2C2A">ESCALATED_TO_HUMAN</text>
+<text x="340" y="566" text-anchor="middle" dominant-baseline="central" font-size="12" fill="#5F5E5A">final · manual intervention</text>
+
+<line x1="340" y1="74" x2="340" y2="128" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="352" y="104" text-anchor="start" font-size="12" fill="#5F5E5A">send</text>
+
+<line x1="270" y1="165" x2="210" y2="270" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="205" y="210" text-anchor="start" font-size="12" fill="#5F5E5A">receipt: started</text>
+
+<line x1="340" y1="180" x2="340" y2="253" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="352" y="220" text-anchor="start" font-size="12" fill="#5F5E5A">receipt: failed</text>
+
+<line x1="410" y1="165" x2="500" y2="253" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="470" y="205" text-anchor="start" font-size="12" fill="#5F5E5A">timeout</text>
+
+<line x1="545" y1="305" x2="545" y2="378" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="557" y="345" text-anchor="start" font-size="12" fill="#5F5E5A">reconcile</text>
+
+<path d="M 470 405 L 340 405 L 340 307" stroke="#5F5E5A" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+<text x="352" y="360" text-anchor="start" font-size="12" fill="#5F5E5A">found: not done</text>
+
+<path d="M 470 395 L 135 395 L 135 307" stroke="#5F5E5A" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+<text x="150" y="378" text-anchor="start" font-size="12" fill="#5F5E5A">found: done</text>
+
+<path d="M 620 405 L 650 405 L 650 280 L 622 280" stroke="#5F5E5A" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+<text x="628" y="345" text-anchor="start" font-size="12" fill="#5F5E5A">can't</text>
+<text x="628" y="360" text-anchor="start" font-size="12" fill="#5F5E5A">reach</text>
+
+<path d="M 300 305 L 300 340 L 240 340 L 240 145 L 268 145" stroke="#5F5E5A" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+<text x="175" y="330" text-anchor="start" font-size="12" fill="#5F5E5A">retry (same key)</text>
+
+<line x1="340" y1="305" x2="340" y2="528" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="352" y="440" text-anchor="start" font-size="12" fill="#5F5E5A">retry limit reached</text>
+
+<line x1="470" y1="280" x2="412" y2="280" stroke="#A32D2D" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrowred)"/>
+<text x="415" y="242" text-anchor="start" font-size="12" fill="#A32D2D">forbidden: blind retry</text>
+</svg>
