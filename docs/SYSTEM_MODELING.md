@@ -83,7 +83,7 @@ system is most tempted to break under load, which is when it matters most.
   is indefensible clinically and legally.
 - **Acuity-ordered fairness.** An emergent patient is never ordered behind a less-acute
   one. Never traded for throughput - a displaced critical patient deteriorates in the
-  queue. (This is the Business Outcome, restated as an inviolable rule.)
+  queue. (This is the Business Outcome from section 1, expressed as a constraint)
 
 ### Safe Fallbacks
 
