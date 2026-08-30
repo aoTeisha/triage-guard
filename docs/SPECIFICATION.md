@@ -20,6 +20,7 @@
 - [Conventions & scope](#conventions--scope)
 - [Document intake & demo data](#document-intake--demo-data)
 - [Identity resolution & patient data](#identity-resolution--patient-data)
+- [Local CRM stub (SQLite)](#local-crm-stub-sqlite)
 - [Actors / Agents](#actors--agents)
 - [States](#states)
 - [Events](#events)
@@ -136,6 +137,78 @@ The Intake Parser validates the submitted webform and produces one of four possi
 
 **Write-back.** This visit's new clinical data is persisted to the CRM (`patch_patient_data`) so the record stays current; when the DB was unreachable, the write-back is deferred and reconciled once it returns.
 
+> **Implementation note.** There is no external CRM in this project. The CRM is a **local
+> SQLite database** with mock patient records, behind the same contract the rest of the
+> system uses (`fetch_patient_data`, `patch_patient_data`, with `found` / `not-found` /
+> `db-error` outcomes). Because the contract is identical, the local stub can later be
+> swapped for a real CRM without changing the architecture. Schema and interface are in
+> **[Local CRM stub (SQLite)](#local-crm-stub-sqlite)**.
+
+---
+
+## Local CRM stub (SQLite)
+
+_The CRM is the one external dependency the system reads patient history from. In this
+project it is not a real external system - it is a local SQLite database with mock records,
+implemented behind the exact contract described above so it can be replaced by a real CRM
+without touching the rest of the architecture. This section defines that stub's schema,
+interface, and failure behavior._
+
+**Why SQLite (not an in-memory mock).** A local SQLite file gives real persistence
+(write-backs survive restarts), a real query surface, and a way to simulate a `db-error`
+(close or lock the connection) so the CRM's fail-open path can be exercised, not just
+described - none of which a plain in-memory dict provides. It needs no server and no
+container, and ships as a single file in the repo.
+
+### Schema
+
+One table is enough for the contract. History is stored as JSON so a record maps directly
+to the `PatientRecord` the Orchestrator expects.
+
+| Column              | Type                 | Notes                                                  |
+| ------------------- | -------------------- | ------------------------------------------------------ |
+| `stable_patient_id` | TEXT, primary key    | national ID; the only lookup key                       |
+| `name`              | TEXT                 | held by the CRM layer only, never in the model payload |
+| `date_of_birth`     | TEXT (ISO date)      | identifier-class data                                  |
+| `known_conditions`  | TEXT (JSON array)    | e.g. `["diabetes", "hypertension"]`                    |
+| `prior_visits`      | TEXT (JSON array)    | prior visits: date, acuity, notes                      |
+| `last_updated`      | TEXT (ISO timestamp) | set on every write-back                                |
+
+_All identifier-class columns (`name`, `date_of_birth`) stay on the CRM/Orchestrator side
+under `actor_authorized` and are dropped when the model-facing payload is built - the same
+"no identifiers in model input" rule the rest of the spec enforces._
+
+### Interface
+
+The stub implements exactly the two actions the spec already names, plus a health check,
+so the Orchestrator code is identical whether the CRM is local or real.
+
+| Operation                                           | Returns                                    | Maps to                            |
+| --------------------------------------------------- | ------------------------------------------ | ---------------------------------- |
+| `fetch_patient_data(stable_patient_id)`             | `found(record)` / `not_found` / `db_error` | `fetch_patient_data`, arrow 4b     |
+| `patch_patient_data(stable_patient_id, visit_data)` | `ok` / `db_error`                          | `patch_patient_data` write-back    |
+| `is_available()`                                    | `true` / `false`                           | health check for degrade decisions |
+
+The three `fetch` outcomes map onto the guards already in the spec:
+`found` and `not_found` both mean `db_reachable` is true (a new patient with no record is a
+normal empty, not a failure); `db_error` means `¬db_reachable`, which triggers the
+fail-open degrade path (continue on intake-only data, flag, `alert_technician`, defer the
+write-back).
+
+### Simulating `db-error`
+
+The stub exposes a switch (for example an env flag `CRM_SIMULATE_DOWN=true` or a test
+helper) that forces `fetch`/`patch` to return `db_error`, so the `AF·db` transition and
+the CRM fail-open row in the per-agent failure model can be tested end-to-end rather than
+only described. When the switch is cleared, deferred write-backs reconcile as normal.
+
+### Swap-out path
+
+Because the interface above is the whole contract, replacing the stub with a real CRM
+means providing another implementation of the same three operations. No state, guard,
+transition, or invariant elsewhere in the spec depends on the CRM being local - the stub is
+a dependency, not part of the system boundary.
+
 ---
 
 ## Actors / Agents
@@ -153,7 +226,7 @@ This section lists all participants in a case: the Orchestrator, each proposing 
 | Audit Agent                                       | Logger                                            | event log                                      | persists trace                                                                                            | No                    | append-only store _(to confirm)_           |
 | Channel Router                                    | Ingress                                           | raw input                                      | route website submission                                                                                  | No                    |                                            |
 | Input Normalizer + PII filter + Sentiment/Urgency | Pre-processor                                     | routed input                                   | model-facing payload (identifiers excluded) + distress/pain score                                         | No                    | Schema-drop (identifiers) + BERT (urgency) |
-| CRM / Patient DB                                  | Data store                                        | stable patient ID                              | patient record (history)                                                                                  | No                    | CRM (non-critical, fail-open)              |
+| CRM / Patient DB                                  | Data store (local SQLite stub)                    | stable patient ID                              | patient record (history)                                                                                  | No                    | CRM (non-critical, fail-open)              |
 | Triage Nurse / Charge Nurse                       | Human                                             | board + detail panel                           | status changes, approvals, acuity, missing fields, release sign-off                                       | via Orchestrator only |                                            |
 | Technician                                        | Human (ops)                                       | agent-failure alerts                           | fixes / acknowledges                                                                                      | No                    |                                            |
 
