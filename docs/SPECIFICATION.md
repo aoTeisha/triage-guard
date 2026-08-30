@@ -10,7 +10,7 @@
 
 **Open items.** The safety-fail branch of the human gate - previously the one unresolved core decision - is now **resolved**; the resolution is recorded in the resolved section below and modeled in detail in the "Safety-Fail Branch" section of [`SYSTEM_MODELING.md`](./SYSTEM_MODELING.md). Document intake uses **mock questionnaire data (no live OCR)**, and the method along with its demo cases is explained in **Document intake & demo data**. In other sections, items that still need to be finalized are marked as _(to confirm)_ or _(to define)_.
 
-**Companion system model.** A focused risk-model of the highest-risk parts of the system - the treatment-move execution (including its `UNKNOWN` state and reconciliation), the interface contract, the safety-fail branch, and the capacity/reversibility design - is in [`docs/SYSTEM_MODELING.md`](./SYSTEM_MODELING.md). Sections below reference it where relevant.
+**Companion system model.** A focused risk-model of the highest-risk parts of the system - the treatment-move execution (including its `UNKNOWN` state and reconciliation), the interface contract, the safety-fail branch, and the capacity/reversibility design - is in [`SYSTEM_MODELING.md`](./SYSTEM_MODELING.md). Sections below reference it where relevant.
 
 **Contents**
 
