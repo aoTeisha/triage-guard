@@ -6,16 +6,16 @@
 
 **What this is.** This document is the complete specification for **Triage Guard**, an AI-governed emergency-room (ER) triage system. It is designed to be self-contained, with each section starting with a brief introduction explaining its content and purpose. Please read the **Conventions & scope** section first, since all later sections rely on its definitions.
 
-**Companion diagram.** This document matches the Triage Guard architecture diagram at [`triage-guard-system.png`](assets/triage-guard-system.png). The **arrow numbers** in the Transitions table and scenario paths are the same as those shown on the diagram, so you can easily find any row in both places. Agent names, world statuses, and the "notify user" list also correspond directly to the diagram. Mermaid versions of the architecture and the control-plane state machine are included in the companion file **[`diagrams.md`](diagrams.md)**.
+**Companion diagram.** This document matches the Triage Guard architecture diagram at [`triage-guard-system.png`](../assets/triage-guard-system.png). The **arrow numbers** in the Transitions table and scenario paths are the same as those shown on the diagram, so you can easily find any row in both places. Agent names, world statuses, and the "notify user" list also correspond directly to the diagram. Mermaid versions of the architecture and the control-plane state machine are included in the companion file **[`diagrams.md`](../diagrams.md)**.
 
-**Open items.** The safety-fail branch of the human gate - previously the one unresolved core decision - is now **resolved**; the resolution is recorded in the resolved section below and modeled in detail in the "Safety-Fail Branch" section of [`SYSTEM_MODELING.md`](docs/SYSTEM_MODELING.md). Document intake uses **mock questionnaire data (no live OCR)**, and the method along with its demo cases is explained in **Document intake & demo data**. In other sections, items that still need to be finalized are marked as _(to confirm)_ or _(to define)_.
+**Open items.** The safety-fail branch of the human gate - previously the one unresolved core decision - is now **resolved**; the resolution is recorded in the resolved section below and modeled in detail in the "Safety-Fail Branch" section of [`SYSTEM_MODELING.md`](./SYSTEM_MODELING.md). Document intake uses **mock questionnaire data (no live OCR)**, and the method along with its demo cases is explained in **Document intake & demo data**. In other sections, items that still need to be finalized are marked as _(to confirm)_ or _(to define)_.
 
-**Companion system model.** A focused risk-model of the highest-risk parts of the system - the treatment-move execution (including its `UNKNOWN` state and reconciliation), the interface contract, the safety-fail branch, and the capacity/reversibility design - is in [`docs/SYSTEM_MODELING.md`](docs/SYSTEM_MODELING.md). Sections below reference it where relevant.
+**Companion system model.** A focused risk-model of the highest-risk parts of the system - the treatment-move execution (including its `UNKNOWN` state and reconciliation), the interface contract, the safety-fail branch, and the capacity/reversibility design - is in [`docs/SYSTEM_MODELING.md`](./SYSTEM_MODELING.md). Sections below reference it where relevant.
 
 **Contents**
 
 - [Problem definition & system value](#problem-definition--system-value)
-- [How the pieces fit (diagram groups)](#how-the-pieces-fit-diagram-groups)
+- [How the pieces fit together](#how-the-pieces-fit-together)
 - [Tech stack](#tech-stack)
 - [Conventions & scope](#conventions--scope)
 - [Document intake & demo data](#document-intake--demo-data)
@@ -226,7 +226,7 @@ This section shows what the nurse actually sees: the kanban column for each pati
 > blind retry from `UNKNOWN` could start treatment twice, so from `UNKNOWN` the system
 > first **reconciles** - queries the source of truth (audit / downstream re-query) to learn
 > whether the move happened - and only a reconciled `FAILED` permits a retry, carrying the
-> same `idempotency_key`. Full state machine, contract, and evidence: see the "Execution State Machine" and "Interface Contract & Failure Handling" sections of [`SYSTEM_MODELING.md`](docs/SYSTEM_MODELING.md).
+> same `idempotency_key`. Full state machine, contract, and evidence: see the "Execution State Machine" and "Interface Contract & Failure Handling" sections of [`SYSTEM_MODELING.md`](./SYSTEM_MODELING.md).
 
 ---
 
@@ -335,7 +335,7 @@ These actions are the side effects a transition can trigger.
 > recognize a repeated request and refuse to start treatment twice. Evidence retained for
 > after-the-fact proof: `request_id` + `idempotency_key` + `issued_at`, the `ToolReceipt`
 > **or** a `timeout@T` marker, a `reconcile_record { queried_at, source, result }`, and
-> `approval_id` + `actor_is_charge` + `expires_at`. Full model: see the "Interface Contract & Failure Handling" section of [`SYSTEM_MODELING.md`](docs/SYSTEM_MODELING.md).
+> `approval_id` + `actor_is_charge` + `expires_at`. Full model: see the "Interface Contract & Failure Handling" section of [`SYSTEM_MODELING.md`](./SYSTEM_MODELING.md).
 
 ### Per-agent failure model (`AGENT_FAILED`)
 
@@ -504,7 +504,7 @@ Consequences:
 > approval. **Irreversible** actions - the treatment move and release - always stay under
 > safety validation and human approval, never automatic. Keeping reversible work off the
 > human gate is what holds the approval queue stable under load; routing it _through_ the
-> gate would overload the scarce human approvers. Capacity analysis: see the "Latency, Capacity & the Reversibility Split" section of [`SYSTEM_MODELING.md`](docs/SYSTEM_MODELING.md).
+> gate would overload the scarce human approvers. Capacity analysis: see the "Latency, Capacity & the Reversibility Split" section of [`SYSTEM_MODELING.md`](./SYSTEM_MODELING.md).
 
 ---
 
@@ -609,7 +609,7 @@ Items still needing a decision before the spec is final. The OCR question is set
 
 `awaiting_human_approval` is entered for two different reasons, each asking the human a
 different question. Both are now resolved. The safety-fail resolution is modeled in full in the "Safety-Fail Branch" section of
-[`SYSTEM_MODELING.md`](docs/SYSTEM_MODELING.md); the summary is below.
+[`SYSTEM_MODELING.md`](./SYSTEM_MODELING.md); the summary is below.
 
 `awaiting_human_approval` is entered by **two situations that ask the human different questions**:
 
