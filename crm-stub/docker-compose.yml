@@ -1,0 +1,30 @@
+services:
+  crm:
+    # ponytail: no Dockerfile — official uv image + bind mount is the whole build.
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    container_name: triage-guard-crm
+    working_dir: /app
+    ports:
+      - "8000:8000"
+    environment:
+      # SQLite file lives in the bind-mounted project dir, so it persists on the host.
+      CRM_DB_PATH: /app/patients.db
+      # Set to "true" to simulate a DB outage (exercises the fail-open path).
+      CRM_SIMULATE_DOWN: "false"
+      # Must bind 0.0.0.0 in the container for the published port to work.
+      CRM_HOST: 0.0.0.0
+      # Keep the container venv out of the host .venv.
+      UV_PROJECT_ENVIRONMENT: /opt/venv
+      # Skip the dev group (pytest/httpx) — the container only serves.
+      UV_NO_DEV: "1"
+    volumes:
+      - .:/app
+    # Same entry point as `uv run crm` locally; it seeds the DB if missing.
+    command: ["uv", "run", "crm"]
+    healthcheck:
+      # Uses the /health endpoint; reports the CRM as healthy while reachable.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s

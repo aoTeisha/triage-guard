@@ -45,3 +45,45 @@ This prints the three mock agent outputs and sends a `triage-case` trace to
 ### Adding an agent
 
 See [app/README.md](app/README.md) for a worked example.
+
+## The CRM stub
+
+A local stand-in for the patient-history CRM the crew reads from: a SQLite DB of
+20 mock patients behind the exact contract in the spec, wrapped in FastAPI. Not a
+real external system — but because the contract matches, a real CRM can replace
+it without touching the rest of the architecture.
+
+```
+crm-stub/
+├── crm/
+│   ├── models.py       # PatientRecord, FetchResult/PatchResult, status enums
+│   ├── repository.py   # SQLite implementation of the three operations
+│   ├── seed.py         # 20 varied mock patients
+│   └── api.py          # FastAPI wrapper + `uv run crm` entrypoint
+├── tests/
+├── pyproject.toml      # its own uv project, separate from the app
+└── docker-compose.yml  # run the crm from docker
+```
+
+| Operation | Endpoint | Returns |
+|---|---|---|
+| `fetch_patient_data(id)` | `GET /patients/{id}` | `200` found / `404` not_found / `503` db_error |
+| `patch_patient_data(id, visit)` | `PATCH /patients/{id}` | `200` ok / `503` db_error |
+| `is_available()` | `GET /health` | `{"available": true\|false}` |
+
+`db_error` is the only outcome that trips the CRM fail-open path; `not_found` is
+a normal empty (new patient), not a failure. `POST /admin/simulate-down?enabled=true`
+forces `db_error` at runtime, so the degrade path can be demoed without a real outage.
+
+### Run
+
+```bash
+cd crm-stub
+uv sync
+uv run crm        # seeds patients.db on first run, then serves on :8000
+```
+
+Or in a container, same entry point: `cd crm-stub && docker compose up`.
+Interactive API docs at [http://localhost:8000/docs](http://localhost:8000/docs).
+
+See [crm-stub/README.md](crm-stub/README.md) for the full details.
