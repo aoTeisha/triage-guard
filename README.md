@@ -87,3 +87,21 @@ Or in a container, same entry point: `cd crm-stub && docker compose up`.
 Interactive API docs at [http://localhost:8000/docs](http://localhost:8000/docs).
 
 See [crm-stub/README.md](crm-stub/README.md) for the full details.
+
+## The intake channel
+
+A standalone nurse-facing intake form, standing in for the real website intake
+described in the spec.it's a small HTTP service like the
+CRM stub: look up a patient, pick one of four mock submission types (clean /
+missing / failed / injection), submit, and the payload runs through the
+`parse_intake` task and shows up as a Langfuse span.
+
+### Run
+
+```bash
+cd intake-channel
+uv sync
+uv run intake-channel   # serves on :8001, needs the CRM stub on :8000
+```
+
+See [intake-channel/README.md](intake-channel/README.md) for the full details.
