@@ -1,0 +1,44 @@
+[project]
+name = "triage-guard-intake-channel"
+version = "0.1.0"
+description = "Standalone intake UI for Triage Guard — a nurse-facing stand-in for the real website intake form (SPECIFICATION.md § Input Channel), used to submit the four mock intake outcomes to the Intake Parser."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "httpx>=0.27",
+    "python-dotenv>=1.2.3",
+    # The root triage-guard package (app/), for app.mock_data and
+    # app.observability — intake-channel calls into app/, never the other
+    # way around. Path dependency: both live in the same repo checkout.
+    "triage-guard",
+]
+
+[tool.uv.sources]
+triage-guard = { path = "../", editable = true }
+
+# A uv dependency group, not an extra: uv installs it on `uv sync` by default,
+# so `uv run tests` works with no flags. Containers set UV_NO_DEV=1 to skip it.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "respx>=0.21",
+]
+
+[project.scripts]
+intake-channel = "channel.api:run"
+tests = "pytest:console_main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["channel"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

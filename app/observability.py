@@ -2,7 +2,13 @@
 
 from contextlib import contextmanager
 
+from dotenv import load_dotenv
 from langfuse import get_client
+
+# get_client() reads LANGFUSE_* at call time, and this module builds the client
+# at import — so the .env has to be loaded here, before any caller's own
+# load_dotenv() (which runs too late, inside run()/after imports).
+load_dotenv()
 
 langfuse = get_client()
 

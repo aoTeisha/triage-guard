@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Triage Guard — intake-channel</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 3rem auto; color: #1a1a1a; }
+    fieldset { margin-bottom: 1.25rem; border: 1px solid #ddd; border-radius: 6px; padding: 1rem; }
+    legend { font-weight: 600; padding: 0 0.4rem; }
+    label { display: block; margin: 0.4rem 0; }
+    input[type="text"] { padding: 0.4rem; width: 12rem; }
+    button { padding: 0.4rem 0.9rem; cursor: pointer; }
+    #lookup-result, #submit-result { margin-top: 0.6rem; padding: 0.6rem; border-radius: 6px; font-size: 0.9rem; }
+    .status-found { background: #e6f4ea; color: #1e7e34; }
+    .status-not_found { background: #fff8e1; color: #8a6d00; }
+    .status-db_error { background: #fff3e0; color: #a15c00; }
+    pre { background: #f5f5f5; padding: 0.6rem; border-radius: 6px; overflow-x: auto; font-size: 0.85rem; }
+    #missing-fields-note { font-size: 0.85rem; color: #555; margin-top: 0.4rem; }
+  </style>
+</head>
+<body>
+  <h1>intake-channel</h1>
+  <p style="color:#555; font-size:0.9rem;">
+    Nurse-facing demo intake — stands in for the real webform. See
+    <code>docs/SPECIFICATION.md</code> for the four intake outcomes this exercises.
+  </p>
+
+  <fieldset>
+    <legend>1. Patient</legend>
+    <label for="patient-id">Patient ID</label>
+    <input type="text" id="patient-id" placeholder="P-1005" />
+    <button id="lookup-btn">Lookup</button>
+    <div id="lookup-result"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>2. Submission type</legend>
+    <label><input type="radio" name="submission_type" value="clean" checked /> Clean submission</label>
+    <label><input type="radio" name="submission_type" value="missing" /> Missing fields</label>
+    <label><input type="radio" name="submission_type" value="failed" /> Failed submission</label>
+    <label><input type="radio" name="submission_type" value="injection" /> Injection attempt</label>
+  </fieldset>
+
+  <button id="submit-btn" disabled>Submit</button>
+
+  <div id="submit-result"></div>
+
+  <script src="/static/channel.js"></script>
+</body>
+</html>

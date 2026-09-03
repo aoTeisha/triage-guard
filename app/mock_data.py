@@ -15,7 +15,42 @@ DEMO_CASE_1 = {
     "free_text": "Patient reports pressure in the chest, worse on exertion.",
 }
 
-# Keyed by task name in crew.jsonc.
+# Canned parse_intake outcomes, keyed by the intake-channel's submission_type
+# (clean / missing / failed / injection — the four demo cases in
+# docs/SPECIFICATION.md § Document intake & demo data). Consumed by
+# intake-channel's POST /submit; parsed_fields is left empty (rather than
+# echoing the built payload) since the real submitted case is what should be
+# shown back to the caller, not a canned duplicate of it.
+MOCK_PARSE_RESULTS = {
+    "clean": {
+        "outcome": "DATA_PARSED",
+        "parsed_fields": {},
+        "missing_fields": [],
+        "reason": None,
+    },
+    "missing": {
+        "outcome": "MISSING_FIELDS_DETECTED",
+        "parsed_fields": {},
+        "missing_fields": ["nurse_proposed_acuity", "vitals"],
+        "reason": None,
+    },
+    "failed": {
+        "outcome": "SUBMISSION_FAILED",
+        "parsed_fields": {},
+        "missing_fields": [],
+        "reason": "submission incomplete — nothing usable received",
+    },
+    "injection": {
+        "outcome": "INVALID_INPUT_DETECTED",
+        "parsed_fields": {},
+        "missing_fields": [],
+        "reason": "injection",
+    },
+}
+
+# Keyed by task name in crew.jsonc. Used by app/main.py's own mock loop
+# (unrelated to intake-channel, which uses MOCK_PARSE_RESULTS above for
+# parse_intake specifically).
 MOCK_OUTPUTS = {
     "parse_intake": {
         "outcome": "DATA_PARSED",
