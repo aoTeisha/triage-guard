@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "intake-channel",
+      "type": "python",
+      "request": "launch",
+      "python": "${workspaceFolder}/intake-channel/.venv/bin/python",
+      "module": "uvicorn",
+      "args": ["channel.api:app", "--reload", "--host", "0.0.0.0", "--port", "8001"],
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}/intake-channel"
+    },
+    {
+      "name": "crm-stub",
+      "type": "python",
+      "request": "launch",
+      "python": "${workspaceFolder}/crm-stub/.venv/bin/python",
+      "module": "uvicorn",
+      "args": ["crm.api:app", "--reload", "--host", "0.0.0.0", "--port", "8000"],
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}/crm-stub"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "All services",
+      "configurations": ["crm-stub", "intake-channel"]
+    }
+  ]
+}
