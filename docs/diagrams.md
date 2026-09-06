@@ -6,9 +6,9 @@ _This is a companion to `triage-guard-spec.md`. It shows two views of the same s
 
 ## Architecture diagram
 
-_The diagram groups, agents, and numbered arrows below match [`assets/triage-guard-system.png`](assets/triage-guard-system.png). **Solid** arrows show Orchestrator to agent actions. **Dashed** arrows show agent to Orchestrator proposals. The **thick** arrow is the only time the Orchestrator writes to State. The numbers match the arrow numbers in the Transitions table of the spec._
+_The diagram groups, agents, and numbered arrows below match [`../assets/triage-guard-system.png`](../assets/triage-guard-system.png). **Solid** arrows show Orchestrator to agent actions. **Dashed** arrows show agent to Orchestrator proposals. The **thick** arrow is the only time the Orchestrator writes to State. The numbers match the arrow numbers in the Transitions table of the spec._
 
-![Triage Guard architecture](assets/triage-guard-system.png)
+![Triage Guard architecture](../assets/triage-guard-system.png)
 
 ```mermaid
 flowchart LR
