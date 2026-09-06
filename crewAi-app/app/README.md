@@ -53,16 +53,17 @@ Tasks must stay inline here — the loader requires `"tasks"` to be a list of ob
 
 ## 4. Add the output schema
 
-New model in `[schemas.py](schemas.py)`:
+New file `schemas/greeting.py`:
 
 ```python
 class Greeting(BaseModel):
     message: str = Field(description="The greeting, one sentence")
 ```
 
-Reference it as `"schemas.Greeting"` — the loader resolves python refs relative to
-`crew.jsonc`'s own directory, **not** the package root, so `"app.schemas.Greeting"`
-fails.
+Re-export it from [schemas/__init__.py](schemas/__init__.py) (`from .greeting import Greeting`,
+add to `__all__`). Reference it as `"schemas.Greeting"` — the loader resolves python refs
+relative to `crew.jsonc`'s own directory, **not** the package root, so
+`"app.schemas.Greeting"` fails.
 
 ## 5. Add the mock output
 

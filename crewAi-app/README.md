@@ -11,7 +11,8 @@ crewAi-app/
 │   │   ├── intake_parser.jsonc
 │   │   ├── acuity_classifier.jsonc
 │   │   └── safety_validator.jsonc
-│   ├── schemas.py          # Pydantic models for structured task output
+│   ├── schemas/             # one Pydantic model per file, structured task output
+│   ├── guards/              # one deterministic guard concern per file
 │   ├── mock_data.py        # demo case 1 + canned agent outputs
 │   ├── observability.py    # Langfuse client + agent_span()
 │   └── main.py             # entrypoint
