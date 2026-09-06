@@ -20,12 +20,21 @@
       "args": ["crm.api:app", "--reload", "--host", "0.0.0.0", "--port", "8000"],
       "justMyCode": false,
       "cwd": "${workspaceFolder}/crm-stub"
+    },
+    {
+      "name": "crewAi-app",
+      "type": "python",
+      "request": "launch",
+      "python": "${workspaceFolder}/crewAi-app/.venv/bin/python",
+      "module": "app.main",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}/crewAi-app"
     }
   ],
   "compounds": [
     {
       "name": "All services",
-      "configurations": ["crm-stub", "intake-channel"]
+      "configurations": ["crm-stub", "intake-channel", "crewAi-app"]
     }
   ]
 }

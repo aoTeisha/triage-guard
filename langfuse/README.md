@@ -1,7 +1,7 @@
 # Langfuse (self-hosted)
 
 Observability backend for Triage Guard — traces, logs, and the eval pipeline.
-The crew that sends traces here lives in [`../app/`](../app/); see the
+The crew that sends traces here lives in [`../crewAi-app/app/`](../crewAi-app/app/); see the
 [root README](../README.md) to run it.
 
 ## Run

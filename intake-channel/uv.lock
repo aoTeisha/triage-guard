@@ -3514,9 +3514,10 @@ wheels = [
 [[package]]
 name = "triage-guard"
 version = "0.1.0"
-source = { editable = "../" }
+source = { editable = "../crewAi-app" }
 dependencies = [
     { name = "crewai", extra = ["tools"] },
+    { name = "httpx" },
     { name = "langfuse" },
     { name = "python-dotenv" },
 ]
@@ -3524,8 +3525,15 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "crewai", extras = ["tools"], specifier = ">=1.15.16" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "langfuse", specifier = ">=4.14.4" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "respx", specifier = ">=0.21" },
 ]
 
 [[package]]
@@ -3554,7 +3562,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
-    { name = "triage-guard", editable = "../" },
+    { name = "triage-guard", editable = "../crewAi-app" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
 

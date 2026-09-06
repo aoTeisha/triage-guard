@@ -5,11 +5,11 @@ real website intake form described in the main `SPECIFICATION.md`
 ("Input Channel"), so the pipeline can be exercised end-to-end before a real
 webform exists.
 
-It is **not** part of the crewAI crew — it never appears in `app/crew.jsonc`
+It is **not** part of the crewAI crew — it never appears in `crewAi-app/app/crew.jsonc`
 and never calls an agent directly. It is a small independent HTTP service,
 the same pattern as `crm-stub/`: it looks up a patient over HTTP, builds a
 mock intake payload, and hands that payload to the Intake Parser task the
-same way `app/main.py` does today.
+same way `crewAi-app/app/main.py` does today.
 
 ## `intake-channel` vs. the board
 
@@ -30,7 +30,7 @@ They are opposite in direction and are separate services:
    injection) and clicks **Submit**.
 3. The service builds the corresponding payload and runs it through the
    `parse_intake` task (still mock output, no LLM call yet — same as
-   `app/main.py`), emitting a Langfuse span.
+   `crewAi-app/app/main.py`), emitting a Langfuse span.
 
 No state machine yet: this stage proves the pipeline from UI to agent works
 and is visible in the trace. See `docs/SPECIFICATION.md` for the four intake

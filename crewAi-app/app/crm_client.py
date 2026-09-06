@@ -1,17 +1,13 @@
-"""Thin client over the CRM stub's GET /patients/{id}.
+"""The one client over the CRM stub's patient endpoints.
 
 Maps the CRM's three-outcome fetch (found / not_found / db_error) to a small
 result type the UI can render directly, without parsing HTTP status codes in
 JS. Mirrors crm-stub's own FetchStatus split (crm/models.py) on the client
 side.
 
-Deliberately independent from app/crm_client.py: app and intake-channel are
-separately deployed services with no shared build-time source, so each
-maintains its own small client over crm-stub rather than importing the
-other's. See docs/SPECIFICATION.md — "New patient vs. DB down (both
-continue on intake-only data, different logging)" — both not_found and
-db_error are non-blocking outcomes; only the caller decides what continuing
-means.
+See docs/SPECIFICATION.md — "New patient vs. DB down (both continue on
+intake-only data, different logging)" — both not_found and db_error are
+non-blocking outcomes; only the caller decides what continuing means.
 """
 
 from __future__ import annotations
@@ -64,3 +60,19 @@ def fetch_patient(stable_patient_id: str, *, timeout: float = 5.0) -> PatientLoo
     # Unexpected status from the CRM contract — treat conservatively as
     # db_error rather than crashing the intake flow on an unmapped code.
     return PatientLookupResult(status="db_error")
+
+
+def patch_patient(
+    stable_patient_id: str, visit: dict, *, timeout: float = 5.0
+) -> Literal["ok", "db_error"]:
+    """PATCH {CRM_BASE_URL}/patients/{id} — this visit's write-back.
+
+    Never raises. A write-back failure is flagged and deferred, never fatal:
+    the triage decision is already made and must not be undone by a dead DB.
+    """
+    url = f"{CRM_BASE_URL}/patients/{stable_patient_id}"
+    try:
+        response = httpx.patch(url, json=visit, timeout=timeout)
+    except httpx.HTTPError:
+        return "db_error"
+    return "ok" if response.status_code == 200 else "db_error"

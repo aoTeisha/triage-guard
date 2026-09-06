@@ -10,14 +10,14 @@ dependencies = [
     "pydantic>=2.6",
     "httpx>=0.27",
     "python-dotenv>=1.2.3",
-    # The root triage-guard package (app/), for app.mock_data and
+    # The triage-guard package (crewAi-app/app/), for app.mock_data and
     # app.observability — intake-channel calls into app/, never the other
     # way around. Path dependency: both live in the same repo checkout.
     "triage-guard",
 ]
 
 [tool.uv.sources]
-triage-guard = { path = "../", editable = true }
+triage-guard = { path = "../crewAi-app", editable = true }
 
 # A uv dependency group, not an extra: uv installs it on `uv sync` by default,
 # so `uv run tests` works with no flags. Containers set UV_NO_DEV=1 to skip it.
