@@ -20,19 +20,29 @@ this module honours that:
 Humans (Triage/Charge Nurse, Technician) and the Human Escalation bridge are
 represented by mock inputs; wire a real UI/queue behind invoke_human_escalation.
 
-Every function here returns MOCK data you can edit. The one place to replace
-with a real crewAI Agent/Crew call is invoke_acuity_classifier — load the
-JSON-first crew from app/agents/acuity_classifier.jsonc via crewai.project
-.load_crew, exactly as the old app/main.py did.
+Every actor is defined in app/agents/<actor>.jsonc (role/type/reads/proposes/tech,
+matching the spec's Actors/Agents table) and, where it returns canned data, a
+matching app/agents/mocks/<actor>.json — edit the JSON, not this file. The one
+place to replace with a real crewAI Agent call is invoke_acuity_classifier —
+load app/agents/acuity_classifier.jsonc as a crewAI Agent directly (it's the
+only LLM actor in the table, so no crew.jsonc/manager wiring is needed).
 """
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 from typing import Any
 
 from app.crm_client import fetch_patient
 from app.flow.state import TriageState, UrgencyScores
+
+_MOCKS_DIR = Path(__file__).resolve().parent.parent / "agents" / "mocks"
+
+
+def _mock(actor: str) -> dict[str, Any]:
+    return json.loads((_MOCKS_DIR / f"{actor}.json").read_text())
 
 # ---- Acuity Classifier: the single LLM, with a deterministic pre-check ------
 
@@ -69,13 +79,9 @@ def invoke_acuity_classifier(redacted_payload: dict[str, Any]) -> dict[str, Any]
             "rationale": "Deterministic red-flag matched; forced to emergent.",
         }
 
-    # ---- MOCK LLM OUTPUT — edit freely, or swap for a real crew call --------
-    return {
-        "system_proposed_acuity": 2,
-        "confidence": 0.81,
-        "acuity_source": "system",
-        "rationale": "MOCK: elevated HR/BP with chest complaint suggests emergent band.",
-    }
+    # ---- MOCK LLM OUTPUT — edit app/agents/mocks/acuity_classifier.json, or
+    # swap this branch for a real crew call.
+    return _mock("acuity_classifier")
 
 
 # ---- Intake Parser: DETERMINISTIC schema validation ------------------------
@@ -86,12 +92,9 @@ def invoke_intake_parser(raw_payload: dict[str, Any]) -> dict[str, Any]:
     the skeleton runs clean. Replace with the guard-driven result once you want
     the four-branch behaviour under the Flow.
     """
-    return {
-        "outcome": "DATA_PARSED",
-        "parsed_fields": dict(raw_payload),
-        "missing_fields": [],
-        "reason": None,
-    }
+    result = _mock("intake_parser")
+    result["parsed_fields"] = dict(raw_payload)
+    return result
 
 
 # ---- Input Normalizer + PII schema-drop + BERT: DETERMINISTIC drop ----------
@@ -112,8 +115,9 @@ def build_model_payload(
         payload["history"] = {
             k: v for k, v in history.items() if k not in _IDENTIFIER_KEYS
         }
-    # MOCK urgency scores — replace with the BERT/NER scorer output.
-    scores = UrgencyScores(sentiment=0.2, distress=0.4, pain=0.5)
+    # MOCK urgency scores (app/agents/mocks/input_normalizer.json) — replace
+    # with the BERT/NER scorer output.
+    scores = UrgencyScores(**_mock("input_normalizer"))
     return payload, scores
 
 
@@ -134,22 +138,20 @@ def fetch_patient_data(stable_patient_id: str) -> dict[str, Any]:
 
 def invoke_safety_validation(state: TriageState) -> dict[str, Any]:
     """MOCK verdict (always pass). Real deployment: the symbolic engines.
-    Edit the return to exercise the fail → human-gate branch (10·fail).
+    Edit app/agents/mocks/safety_validator.json to exercise the fail →
+    human-gate branch (10·fail).
     """
-    return {
-        "verdict": "pass",
-        "reasons": ["MOCK: acuity within valid ESI band", "no identifiers in payload"],
-    }
+    return _mock("safety_validator")
 
 
 # ---- Human Escalation bridge: mock human response ---------------------------
 
 def invoke_human_escalation(state: TriageState, reason: str) -> dict[str, Any]:
-    """MOCK charge-nurse response. Wire a real UI/queue here.
+    """MOCK charge-nurse response (app/agents/mocks/human_escalation.json).
+    Wire a real UI/queue here.
 
     For an acuity discrepancy it returns a resolution choice; for a safety fail
     it returns a correction. Both require a charge role in the real gate.
     """
-    if reason == "discrepancy":
-        return {"decision": "use_system_acuity", "resolver_role": "charge_nurse"}
-    return {"decision": "corrected", "resolver_role": "charge_nurse"}
+    responses = _mock("human_escalation")
+    return responses["discrepancy" if reason == "discrepancy" else "safety_fail"]

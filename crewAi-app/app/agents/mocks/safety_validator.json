@@ -1,0 +1,4 @@
+{
+  "verdict": "pass",
+  "reasons": ["MOCK: acuity within valid ESI band", "no identifiers in payload"]
+}

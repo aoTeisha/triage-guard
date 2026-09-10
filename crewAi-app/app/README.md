@@ -54,23 +54,34 @@ the LLM. Every other step is code — that is the whole point of the split.
 app/
   main.py              entrypoint — seeds mock state, kickoff(), prints audit trail
   mock_cases.py        the four editable demo inputs (clean/missing/failed/injection)
+  agents/              one .jsonc per actor in the spec's Actors/Agents table
+    mocks/             one canned-output .json per actor that returns mock data
   flow/
     triage_flow.py     the Flow: @start/@listen/@router control-plane spine
     state.py           TriageState — the Data/Control/World planes as one state
     deterministic.py   order_key, acuity-gap resolution, audit, symbolic predicates
     agents.py          one function per actor; the single LLM step lives here
   guards/              deterministic intake guards (reused, unchanged)
-  schemas/             pydantic task-output schemas (reused)
+  schemas/             pydantic task-output schemas (legacy, unused)
   crm_client.py        CRM SQLite-stub client (reused)
   observability.py     Langfuse spans (reused)
 ```
 
+Every actor in the table above has a matching `app/agents/<actor>.jsonc`
+(role/type/reads/proposes/tech, copied from the spec). The ones that return
+canned data also have `app/agents/mocks/<actor>.json` — edit the JSON to
+change what a mock step returns, not the Python. The one actor that's a real
+LLM call, Acuity Classifier, keeps the extra `role`/`goal`/`backstory`/`llm`
+fields a crewAI `Agent` needs; the deterministic/human/store actors don't —
+giving them an LLM persona is exactly the pre-Flow crew-of-tasks pattern this
+app replaced.
+
 ## Wiring reality in, step by step
 
 1. **Acuity Classifier → real LLM.** In `invoke_acuity_classifier`, replace the
-   mock branch with a real crew call, e.g. load the JSON-first crew from
-   `app/agents/acuity_classifier.jsonc` via `crewai.project.load_crew` and
-   `crew.kickoff(...)`. Keep the red-flag pre-check ahead of it.
+   mock branch with a real call: load `app/agents/acuity_classifier.jsonc` as
+   a crewAI `Agent` (it's the only LLM actor, so no crew/manager wiring is
+   needed) and run it. Keep the red-flag pre-check ahead of it.
 2. **Safety Validation → symbolic engines.** Replace `invoke_safety_validation`
    and the `verify_*` predicates in `deterministic.py` with OPA / Z3 / Prolog /
    Datalog calls. The Flow already routes `pass` / `fail` and the V·* verification

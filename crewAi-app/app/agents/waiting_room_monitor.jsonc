@@ -1,0 +1,10 @@
+{
+  // Not implemented: this happy-path skeleton stops at "monitoring" and never
+  // starts a timer. Add an implementation + mock file once it's built.
+  "actor": "Waiting Room Monitor Agent",
+  "type": "Timer / watcher",
+  "reads": "status + timers",
+  "proposes": "timeout / deterioration triggers",
+  "tech": "(to confirm)",
+  "implementation": null
+}

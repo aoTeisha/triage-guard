@@ -1,0 +1,4 @@
+{
+  "discrepancy": {"decision": "use_system_acuity", "resolver_role": "charge_nurse"},
+  "safety_fail": {"decision": "corrected", "resolver_role": "charge_nurse"}
+}

@@ -1,0 +1,9 @@
+{
+  // A real person, not a step to invoke or mock.
+  "actor": "Technician",
+  "type": "Human (ops)",
+  "reads": "agent-failure alerts",
+  "proposes": "fixes / acknowledges",
+  "tech": "",
+  "implementation": null
+}

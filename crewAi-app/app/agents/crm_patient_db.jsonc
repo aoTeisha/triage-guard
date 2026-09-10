@@ -1,0 +1,10 @@
+{
+  // Real HTTP client over the crm-stub, not a literal mock — no mock file.
+  // fetch_patient_data() falls back to db_error if the stub isn't running.
+  "actor": "CRM / Patient DB",
+  "type": "Data store (local SQLite stub)",
+  "reads": "stable patient ID",
+  "proposes": "patient record (history)",
+  "tech": "CRM (non-critical, fail-open)",
+  "implementation": "app.crm_client.fetch_patient"
+}

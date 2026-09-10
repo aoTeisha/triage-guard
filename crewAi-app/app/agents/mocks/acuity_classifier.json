@@ -1,0 +1,6 @@
+{
+  "system_proposed_acuity": 2,
+  "confidence": 0.81,
+  "acuity_source": "system",
+  "rationale": "MOCK: elevated HR/BP with chest complaint suggests emergent band."
+}

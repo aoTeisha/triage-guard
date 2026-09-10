@@ -1,0 +1,10 @@
+{
+  // Bridge to a human (charge nurse). Never writes State itself — the gate does.
+  "actor": "Human Escalation Agent",
+  "type": "Bridge to human",
+  "reads": "case + verdict",
+  "proposes": "escalation + human response",
+  "tech": "UI/queue (to confirm)",
+  "implementation": "app.flow.agents.invoke_human_escalation",
+  "mock": "app/agents/mocks/human_escalation.json"
+}

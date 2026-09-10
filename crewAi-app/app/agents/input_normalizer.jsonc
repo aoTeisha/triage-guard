@@ -1,0 +1,11 @@
+{
+  // Identifier drop is real deterministic schema-drop (critical, fail-closed).
+  // Urgency score is the only MOCK part here — stands in for the BERT scorer.
+  "actor": "Input Normalizer + PII filter + Sentiment/Urgency",
+  "type": "Pre-processor",
+  "reads": "routed input",
+  "proposes": "model-facing payload (identifiers excluded) + distress/pain score",
+  "tech": "Schema-drop (identifiers) + BERT (urgency)",
+  "implementation": "app.flow.agents.build_model_payload",
+  "mock": "app/agents/mocks/input_normalizer.json"
+}

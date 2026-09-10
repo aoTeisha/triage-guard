@@ -1,0 +1,10 @@
+{
+  // A real person, not a step to invoke or mock. nurse_proposed_acuity and
+  // similar values come in as part of the case input (see app/mock_cases.py).
+  "actor": "Triage Nurse / Charge Nurse",
+  "type": "Human",
+  "reads": "board + detail panel",
+  "proposes": "status changes, approvals, acuity, missing fields, release sign-off",
+  "tech": "",
+  "implementation": null
+}

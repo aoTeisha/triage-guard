@@ -1,0 +1,9 @@
+{
+  // Real logic already (append-only trace), not a mock — no mock file.
+  "actor": "Audit Agent",
+  "type": "Logger",
+  "reads": "event log",
+  "proposes": "persists trace",
+  "tech": "append-only store (to confirm)",
+  "implementation": "app.flow.deterministic.emit_event_log"
+}

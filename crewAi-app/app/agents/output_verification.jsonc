@@ -1,0 +1,11 @@
+{
+  // Post-agent check (guards are pre-agent). Skeleton: always passes; no
+  // separate mock file — the fixed-pass return IS the skeleton, not a canned
+  // payload to edit. Wire real schema+range+invariant checks here.
+  "actor": "Output Verification Agent",
+  "type": "Validator (deterministic)",
+  "reads": "agent output + expected schema + prior state",
+  "proposes": "VERIFICATION_PASSED / VERIFICATION_FAILED + violation list",
+  "tech": "Schema validation + Datalog + OPA",
+  "implementation": "app.flow.deterministic.verify_output"
+}

@@ -1,0 +1,10 @@
+{
+  // Inline in the Flow's entry step, not a separate invoke_* function — no
+  // mock file, there's no canned output to swap, just the arrival bookkeeping.
+  "actor": "Channel Router",
+  "type": "Ingress",
+  "reads": "raw input",
+  "proposes": "route website submission",
+  "tech": "",
+  "implementation": "app.flow.triage_flow.TriageFlow.intake_received"
+}
