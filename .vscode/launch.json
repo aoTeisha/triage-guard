@@ -5,7 +5,7 @@
       "name": "intake-channel",
       "type": "python",
       "request": "launch",
-      "python": "${workspaceFolder}/intake-channel/.venv/bin/python",
+      "python": "${workspaceFolder}/intake-channel/.venv/Scripts/python.exe",
       "module": "uvicorn",
       "args": ["channel.api:app", "--reload", "--host", "0.0.0.0", "--port", "8001"],
       "justMyCode": false,
@@ -15,26 +15,26 @@
       "name": "crm-stub",
       "type": "python",
       "request": "launch",
-      "python": "${workspaceFolder}/crm-stub/.venv/bin/python",
+      "python": "${workspaceFolder}/crm-stub/.venv/Scripts/python.exe",
       "module": "uvicorn",
       "args": ["crm.api:app", "--reload", "--host", "0.0.0.0", "--port", "8000"],
       "justMyCode": false,
       "cwd": "${workspaceFolder}/crm-stub"
     },
     {
-      "name": "crewAi-app",
+      "name": "triage-app",
       "type": "python",
       "request": "launch",
-      "python": "${workspaceFolder}/crewAi-app/.venv/bin/python",
+      "python": "${workspaceFolder}/triage-app/.venv/Scripts/python.exe",
       "module": "app.main",
       "justMyCode": false,
-      "cwd": "${workspaceFolder}/crewAi-app"
+      "cwd": "${workspaceFolder}/triage-app"
     }
   ],
   "compounds": [
     {
       "name": "All services",
-      "configurations": ["crm-stub", "intake-channel", "crewAi-app"]
+      "configurations": ["crm-stub", "intake-channel", "triage-app"]
     }
   ]
 }

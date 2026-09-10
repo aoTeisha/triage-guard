@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-triage-guard = { path = "../crewAi-app", editable = true }
+triage-guard = { path = "../triage-app", editable = true }
 
 # A uv dependency group, not an extra: uv installs it on `uv sync` by default,
 # so `uv run tests` works with no flags. Containers set UV_NO_DEV=1 to skip it.

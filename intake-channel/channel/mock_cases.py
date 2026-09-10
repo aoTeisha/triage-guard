@@ -15,7 +15,7 @@ from typing import Literal
 
 from .patient_lookup import PatientLookupResult
 
-SubmissionType = Literal["clean", "missing", "failed", "injection"]
+SubmissionType = Literal["clean", "missing", "failed", "injection", "gap"]
 
 # A recognizable injection attempt, targeting the acuity field specifically —
 # the most relevant attack vector for this domain (an attacker trying to
@@ -75,6 +75,20 @@ def build_case(
         return {
             "case_id": case_id,
             "channel": "website",
+        }
+
+    if submission_type == "gap":
+        # Nurse says 5 (non-urgent); the red-flag pre-check forces emergent (2).
+        # Gap of 3 -> arrow 9c -> the case pauses for a charge nurse. This is the
+        # only submission type that exercises the human gate from the UI.
+        return {
+            "case_id": case_id,
+            "channel": "website",
+            "stable_patient_id": stable_patient_id,
+            "nurse_proposed_acuity": 5,
+            "chief_complaint": "chest pain radiating to the left arm",
+            "vitals": {"hr": 122, "bp": "162/98", "spo2": 94, "temp_c": 37.0},
+            "free_text": "Sudden crushing chest pain while climbing stairs.",
         }
 
     if submission_type == "injection":

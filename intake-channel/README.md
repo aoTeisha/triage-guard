@@ -5,11 +5,11 @@ real website intake form described in the main `SPECIFICATION.md`
 ("Input Channel"), so the pipeline can be exercised end-to-end before a real
 webform exists.
 
-It is **not** part of the crewAI crew — it never appears in `crewAi-app/app/crew.jsonc`
-and never calls an agent directly. It is a small independent HTTP service,
-the same pattern as `crm-stub/`: it looks up a patient over HTTP, builds a
-mock intake payload, and hands that payload to the Intake Parser task the
-same way `crewAi-app/app/main.py` does today.
+It is a small independent HTTP service, the same pattern as `crm-stub/`: it looks
+up a patient over HTTP, builds an intake payload, and runs that payload through
+the **real LangGraph control plane** in `triage-app/`. It depends on that package
+(an editable path dependency) but the dependency only points one way — the graph
+never calls back into the channel.
 
 ## `intake-channel` vs. the board
 
@@ -28,15 +28,36 @@ They are opposite in direction and are separate services:
    / `db_error`.
 2. Nurse picks one of four mock submission types (clean / missing / failed /
    injection) and clicks **Submit**.
-3. The service builds the corresponding payload and runs it through the
-   `parse_intake` task (still mock output, no LLM call yet — same as
-   `crewAi-app/app/main.py`), emitting a Langfuse span.
+3. The service builds the payload and invokes the graph. The response carries the
+   real control state, the settled acuity, and the full audit trail with the
+   spec's arrow labels.
+4. If the case pauses at a gate, the UI renders it and the nurse resolves it —
+   `POST /resume/{case_id}` continues the checkpointed case.
 
-No state machine yet: this stage proves the pipeline from UI to agent works
-and is visible in the trace. See `docs/SPECIFICATION.md` for the four intake
-outcomes and `../STAGE1_INTAKE_CHANNEL_PLAN.md` for the full implementation
-plan, including what's deliberately deferred (the missing-fields completion
-screen needs the state machine from the next stage).
+### Submission types
+
+| Type | Exercises |
+| --- | --- |
+| clean | the happy path through to `monitoring` |
+| missing | arrow 16 — missing fields, no acuity ever guessed |
+| failed | arrow 17 — nothing usable |
+| gap | arrow 9c — nurse and system disagree by ≥2, **pauses for a charge nurse** |
+| injection | arrow 18 — rejected before anything reaches the model |
+
+`gap` is the interesting one: it suspends the case to a checkpoint and waits. Try
+resolving it as `nurse` rather than `charge_nurse` to see a `BLK` refusal that
+leaves the case exactly where it was.
+
+### Endpoints
+
+| | |
+| --- | --- |
+| `GET /lookup/{id}` | CRM proxy — found / not_found / db_error all return 200 |
+| `POST /submit` | build a case and run it through the graph |
+| `POST /resume/{case_id}` | answer a human gate |
+| `GET /case/{case_id}` | read the checkpointed state and audit trail |
+
+See `docs/SPECIFICATION.md` for the intake outcomes and the gate.
 
 ## Running
 

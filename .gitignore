@@ -6,3 +6,7 @@ __pycache__/
 
 # Task artifacts — crewAI creates output/ on the first real kickoff
 output/
+
+# LangGraph checkpoint store (SQLite writes -wal/-shm sidecars alongside it)
+.triage_state.db*
+*.db-journal

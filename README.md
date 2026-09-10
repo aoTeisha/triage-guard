@@ -11,22 +11,37 @@ deteriorated, which improves ER capacity logistics and treatment.
 
 ## The Triage guard app
 
-A crewAI skeleton, one file per agent — the full crew (the Orchestrator plus its specialist agents: Intake Parser, Acuity Classifier, Safety Validator, per docs/SPECIFICATION.md § Actors / Agents). This is skeleton only — no implementation yet, that comes later. Nothing calls an LLM: in mock mode each agent returns canned output and records one step in Langfuse, so you can see the shape of the trace before wiring in any reasoning.
+A **LangGraph** skeleton: the Transitions table from `docs/SPECIFICATION.md`
+transcribed into a `StateGraph`, so the set of allowed moves is declared data the
+framework validates and can draw. Skeleton only — the actors return canned output
+and the symbolic engines are stubs — but nothing is faked away to make it run: the
+human gate really suspends the case to a checkpoint, retry budgets really count,
+and an unauthorized action is really refused (`BLK`) without moving the case.
+
+Eleven of the twelve actors are deterministic code, humans, or data stores. The
+one generative step, the Acuity Classifier, is mocked by default and needs no key.
 
 ### Run
 
 ```bash
 cd langfuse && docker compose up -d && cd ..   # Langfuse stack, if not already up
-cp .env.example .env                            # fill in the LANGFUSE_* values, stays at repo root
-cd crewAi-app
+cp triage-app/.env.example triage-app/.env      # optional — mock mode needs nothing in it
+cd triage-app
 uv sync
-uv run triage-guard
+uv run triage-guard            # clean / missing / failed / injection
+uv run pytest                  # 92 tests, offline
 ```
 
-This prints the three mock agent outputs and sends a `triage-case` trace to
-[http://localhost:3000](http://localhost:3000), with one nested span per agent.
+Each run prints the final state and the full audit trail, labelled with the arrows
+from the Transitions table. With Langfuse configured it also sends one trace per
+run, with a span per node.
 
-See [crewAi-app/README.md](crewAi-app/README.md) for the full details.
+To drive it from a browser instead — including pausing at the acuity gate and
+resolving it as a charge nurse — run `intake-channel/`.
+
+See [triage-app/README.md](triage-app/README.md) for the full details, and
+[docs/plans/2026-09-10-langgraph-migration-design.md](docs/plans/2026-09-10-langgraph-migration-design.md)
+for why this is LangGraph and not CrewAI.
 
 ## The CRM stub
 

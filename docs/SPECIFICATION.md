@@ -54,13 +54,13 @@
 
 ## How the pieces fit together
 
-_This is a one-screen map of the system, giving the rest of the document a clear starting point. The system runs as a CrewAI Flow: a deterministic workflow whose steps are wired in code, supported by specialist agents and services._
+_This is a one-screen map of the system, giving the rest of the document a clear starting point. The system runs as a LangGraph state graph: a deterministic workflow whose allowed transitions are declared as a graph, supported by specialist agents and services._
 
 - **Input Channel** is where a case starts: the **website** intake form (a structured webform).
 - **Input processing** uses an **API Gateway** to pass along the raw input.
 - **Intake Parser (ingestion)** reads the submitted form and turns it into a single, unified message. In this version, the form uses **mock / structured data** (no live OCR). A real deployment could add an OCR or extraction adapter behind the same interface.
 - **Understanding, safety & routing** includes a **PII / sensitive-data filter** (keeps identifiers off the model payload), a **policy gate**, and a **sentiment/urgency** scorer (distress or pain).
-- **Agent Core** is six specialist agents: Intake Parser, Acuity Classifier, Safety Validation, Human Escalation, Waiting Room Monitor, and Audit, sequenced by a CrewAI Flow. Each step reads the shared Flow state and writes its own results back to it; routing is decided in code by the guards.
+- **Agent Core** is six specialist agents: Intake Parser, Acuity Classifier, Safety Validation, Human Escalation, Waiting Room Monitor, and Audit, sequenced by a LangGraph `StateGraph`. Each node reads the shared graph state and returns its own results to be merged into it; routing is decided by the guards, declared as conditional-edge maps so the set of legal moves is data the framework validates rather than a convention.
 - **Knowledge & Memory** covers the Knowledge Base, policy vector store, CRM (patient profile and history), and session memory.
 - **Monitoring & Evaluation** includes user and agent feedback, an evaluation pipeline (test cases and regression checks), logs and traces, and a metrics dashboard.
 
@@ -72,7 +72,7 @@ _This section shows the tools and technologies we are using in the project._
 
 | Component              | Tech                                                      | Role                                                                                                                                                 |
 | ---------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Workflow orchestration | **CrewAI Flows**                                          | A deterministic Flow over the specialist agents (Intake Parser, Acuity Classifier, Safety Validation, Human Escalation, Waiting Room Monitor, Audit) |
+| Workflow orchestration | **LangGraph**                                             | A deterministic `StateGraph` over the specialist agents (Intake Parser, Acuity Classifier, Safety Validation, Human Escalation, Waiting Room Monitor, Audit). The Transitions table below is transcribed into its conditional-edge maps; per-node `RetryPolicy` carries the retry budgets and `interrupt()` carries the human gate. |
 | Text analysis          | **BERT (or another BERT-based model trained for Hebrew)** | sentiment/urgency scorer and PII detection in the Input Normalizer stage                                                                             |
 | Observability          | **Langfuse**                                              | traces, logs, and eval pipeline feeding **Monitoring & Evaluation**                                                                                  |
 | Package management     | **uv**                                                    | Python dependency management                                                                                                                         |
@@ -213,7 +213,7 @@ a dependency, not part of the system boundary.
 
 ## Actors / Agents
 
-This section lists all participants in a case: each proposing agent, the humans, and the ops technician. It explains what each one can read and what it can propose. The steps run inside a CrewAI Flow, which calls each agent in the coded order, evaluates the guards, and holds the shared state the steps read and update.
+This section lists all participants in a case: each proposing agent, the humans, and the ops technician. It explains what each one can read and what it can propose. The steps run inside a LangGraph `StateGraph`, which calls each agent in the declared order, evaluates the guards on its conditional edges, and holds the shared, checkpointed state the nodes read and update.
 
 | Actor                                             | Type                                              | Reads                                          | Proposes / Emits                                                                                          | Tech                                       |
 | ------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
@@ -607,7 +607,7 @@ _This section states the neurosymbolic split in one place: what the neural compo
 
 **Neural component.** A single LLM, the **Acuity Classifier**, reads the redacted, `case_id`-keyed clinical payload and proposes `system_proposed_acuity` with a confidence. That is the only generative model in the decision path. It runs an internal deterministic **red-flag pre-check** first: if a hard clinical trigger matches, it proposes emergent with `acuity_source = rule_forced` (advisory, overridable at the gate). The Intake Parser (validator), the PII schema-drop, and the Safety Validation layer are deterministic, not neural. BERT/NER is a non-generative classifier used only for free-text redaction and urgency scoring.
 
-**Symbolic layer.** Everything that must not be left to a stochastic model: **OPA** (authorization, no-identifiers, release), **Z3** (constraint consistency and band totality), **Prolog** (authorization inference and explanation), **Datalog** (provenance and information-flow), and **temporal logic** (sequence rules). The CrewAI Flow is the spine that sequences them. The Acuity Classifier only proposes, and the symbolic layer decides; each step writes its own results into the Flow state.
+**Symbolic layer.** Everything that must not be left to a stochastic model: **OPA** (authorization, no-identifiers, release), **Z3** (constraint consistency and band totality), **Prolog** (authorization inference and explanation), **Datalog** (provenance and information-flow), and **temporal logic** (sequence rules). The LangGraph state graph is the spine that sequences them. The Acuity Classifier only proposes, and the symbolic layer decides; each node returns its own results into the graph state.
 
 **What is never left to the model.** Final acuity (resolved at the gate, not the classifier's proposal), authorization, queue ordering, identifier handling, the move into treatment, and release. The model proposes; the symbolic layer disposes.
 

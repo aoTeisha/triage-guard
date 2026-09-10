@@ -1,0 +1,63 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	intake_received(intake_received)
+	parsing(parsing)
+	missing_fields_requested(missing_fields_requested)
+	submission_failed(submission_failed)
+	input_rejected(input_rejected)
+	data_parsed(data_parsed)
+	resolving_identity(resolving_identity)
+	redacting_routing(redacting_routing)
+	classifying(classifying)
+	acuity_proposed(acuity_proposed)
+	safety_validating(safety_validating)
+	verdict_proposed(verdict_proposed)
+	awaiting_human_approval(awaiting_human_approval)
+	monitoring(monitoring)
+	agent_failed(agent_failed)
+	action_denied(action_denied)
+	classifier_fallback(classifier_fallback)
+	safety_fallback(safety_fallback)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> intake_received;
+	acuity_proposed -. &nbsp;Route.ESCALATE&nbsp; .-> awaiting_human_approval;
+	acuity_proposed -. &nbsp;Route.PROCEED&nbsp; .-> safety_validating;
+	awaiting_human_approval -. &nbsp;Route.EXHAUSTED&nbsp; .-> __end__;
+	awaiting_human_approval -. &nbsp;Route.DENIED&nbsp; .-> action_denied;
+	awaiting_human_approval -. &nbsp;Route.PROCEED&nbsp; .-> safety_validating;
+	classifier_fallback --> safety_validating;
+	classifying -. &nbsp;Route.PROCEED&nbsp; .-> acuity_proposed;
+	classifying -. &nbsp;Route.EXHAUSTED&nbsp; .-> classifier_fallback;
+	data_parsed --> resolving_identity;
+	intake_received --> parsing;
+	parsing -. &nbsp;Event.DATA_PARSED&nbsp; .-> data_parsed;
+	parsing -. &nbsp;Event.INVALID_INPUT_DETECTED&nbsp; .-> input_rejected;
+	parsing -. &nbsp;Event.MISSING_FIELDS_DETECTED&nbsp; .-> missing_fields_requested;
+	parsing -. &nbsp;Event.SUBMISSION_FAILED&nbsp; .-> submission_failed;
+	redacting_routing -. &nbsp;Route.HALT&nbsp; .-> agent_failed;
+	redacting_routing -. &nbsp;Route.PROCEED&nbsp; .-> classifying;
+	resolving_identity -. &nbsp;Route.PROCEED&nbsp; .-> redacting_routing;
+	safety_fallback --> awaiting_human_approval;
+	safety_validating -. &nbsp;Route.ESCALATE&nbsp; .-> awaiting_human_approval;
+	safety_validating -. &nbsp;Route.EXHAUSTED&nbsp; .-> safety_fallback;
+	safety_validating -. &nbsp;Route.CLEARED&nbsp; .-> verdict_proposed;
+	verdict_proposed -. &nbsp;Route.ESCALATE&nbsp; .-> awaiting_human_approval;
+	verdict_proposed -. &nbsp;Route.CLEARED&nbsp; .-> monitoring;
+	action_denied --> __end__;
+	agent_failed --> __end__;
+	input_rejected --> __end__;
+	missing_fields_requested --> __end__;
+	monitoring --> __end__;
+	submission_failed --> __end__;
+	classifying -. &nbsp;Route.RETRY&nbsp; .-> classifying;
+	redacting_routing -. &nbsp;Route.RETRY&nbsp; .-> redacting_routing;
+	resolving_identity -. &nbsp;Route.RETRY&nbsp; .-> resolving_identity;
+	safety_validating -. &nbsp;Route.RETRY&nbsp; .-> safety_validating;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
