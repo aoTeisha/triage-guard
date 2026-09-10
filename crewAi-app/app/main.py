@@ -1,44 +1,66 @@
 #!/usr/bin/env python
-"""Triage Guard entrypoint.
+"""Triage Guard entrypoint — runs the deterministic CrewAI Flow.
 
-Loads the crew from crew.jsonc (which validates every agents/*.jsonc) and walks
-its tasks, emitting one Langfuse span per agent with canned output. No LLM is
-called yet — this exists to prove the wiring and the trace shape.
+Kicks off TriageFlow with a mock intake case and prints the resulting state
+and audit trail. No LLM is called (the one LLM step returns mock output), and
+no external services are required — this proves the Flow wiring and the
+control-plane shape end to end.
+
+Usage:
+    uv run triage-guard            # runs the clean demo case
+    uv run triage-guard missing    # runs a different demo case (clean/missing/failed/injection)
 """
 
-import json
-from pathlib import Path
+from __future__ import annotations
 
-from crewai.project import load_crew
+import json
+import sys
+
 from dotenv import load_dotenv
 
-from app.mock_data import DEMO_CASE_1, MOCK_OUTPUTS
-from app.observability import agent_span, langfuse
+from app.flow import TriageFlow, TriageState
+from app.mock_cases import DEMO_CASES
 
 
-def run():
+def run() -> None:
     load_dotenv()
 
-    crew, default_inputs = load_crew(Path(__file__).with_name("crew.jsonc"))
-    inputs = {**default_inputs, "case": json.dumps(DEMO_CASE_1, indent=2)}
+    which = sys.argv[1] if len(sys.argv) > 1 else "clean"
+    case = DEMO_CASES.get(which, DEMO_CASES["clean"])
 
-    with agent_span("triage-case", case_id=DEMO_CASE_1["case_id"]) as root:
-        root.update(input=DEMO_CASE_1)
+    # Seed the state from the mock case. Everything downstream reads/writes
+    # self.state; nothing else writes it.
+    flow = TriageFlow()
+    flow.state.raw_payload = dict(case)
+    flow.state.case_id = case["case_id"]
+    flow.state.nurse_proposed_acuity = case.get("nurse_proposed_acuity")
 
-        results = {}
-        for task in crew.tasks:
-            output = MOCK_OUTPUTS[task.name]
-            with agent_span(task.agent.role, task=task.name) as span:
-                span.update(input=task.description.format(**inputs), output=output)
-            results[task.name] = output
-            print(f"\n=== {task.agent.role} / {task.name} ===")
-            print(json.dumps(output, indent=2))
+    flow.kickoff()
 
-        root.update(output=results)
+    _report(flow.state, which)
 
-    # ponytail: replace the loop above with crew.kickoff(inputs=inputs) once the
-    # agents do real work, and swap manual spans for CrewAIInstrumentor().
-    langfuse.flush()
+
+def _report(state: TriageState, which: str) -> None:
+    print(f"\n=== Triage Guard Flow — demo case: {which} ===")
+    print(f"final control_state : {state.control_state}")
+    print(f"intake_outcome      : {state.intake_outcome}")
+    print(f"acuity (final)      : {state.acuity}  (source={state.acuity_source}, gap={state.acuity_gap})")
+    print(f"clinical_status     : {state.clinical_status}")
+    print(f"order_key           : {state.order_key}")
+    print(f"safety_passed       : {state.safety_passed}   approved: {state.approved}")
+    if state.degraded:
+        print(f"degraded agents     : {state.degraded}")
+    if state.flags:
+        print(f"flags               : {state.flags}")
+
+    print("\n--- audit trail (emit_event_log) ---")
+    for row in state.audit_log:
+        print(f"  [{row.get('arrow','—'):>12}] {row['action']:<24} {row['explanation']}")
+
+
+def plot() -> None:
+    """Generate the interactive Flow plot (TriageFlowPlot.html)."""
+    TriageFlow().plot("TriageFlowPlot")
 
 
 if __name__ == "__main__":

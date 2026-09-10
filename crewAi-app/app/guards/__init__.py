@@ -11,6 +11,21 @@ from .fields import REQUIRED_FIELDS, missing_fields, nothing_usable, not_require
 from .injection import detect_injection
 from .validity import not_input_is_valid, required_fields_complete_and_valid
 
+
+def classify_intake_payload(payload: dict) -> str:
+    """Deterministic four-way intake outcome as a plain string, for the Flow's
+    router. Same priority order as the state_machine's classify_intake:
+    injection > nothing-usable > gaps > clean. No LLM — the payload decides.
+    """
+    if not_input_is_valid(payload)[0]:
+        return "INVALID_INPUT_DETECTED"
+    if nothing_usable(payload):
+        return "SUBMISSION_FAILED"
+    if missing_fields(payload):
+        return "MISSING_FIELDS_DETECTED"
+    return "DATA_PARSED"
+
+
 __all__ = [
     "REQUIRED_FIELDS",
     "missing_fields",
@@ -19,4 +34,5 @@ __all__ = [
     "detect_injection",
     "not_input_is_valid",
     "required_fields_complete_and_valid",
+    "classify_intake_payload",
 ]

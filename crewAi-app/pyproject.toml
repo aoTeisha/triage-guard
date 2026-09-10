@@ -14,6 +14,7 @@ dependencies = [
 [project.scripts]
 triage-guard = "app.main:run"
 run_crew = "app.main:run"
+plot = "app.main:plot"
 tests = "pytest:console_main"
 
 [build-system]

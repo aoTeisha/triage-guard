@@ -1,112 +1,92 @@
-# Adding an agent
+# Triage Guard — CrewAI Flow (skeleton)
 
-Worked example: a throwaway **Greeter** agent. Same five steps for any real one.
+This app runs Triage Guard as a **CrewAI `Flow`** — a deterministic workflow
+whose steps are wired in code, with exactly one LLM call. It replaces the earlier
+crew-of-tasks wiring (`crew.jsonc` + `main.py`'s manual task loop) with the Flow
+described in `docs/SPECIFICATION.md` ("The system runs as a CrewAI Flow").
 
-## 1. Define the agent
+Built against <https://docs.crewai.com/v1.15.17/en/concepts/flows> using
+`@start` / `@listen` / `@router` / `or_`.
 
-New file `agents/greeter.jsonc`:
+Everything is a **skeleton**: mock input/output flows end to end with no LLM, no
+running CRM stub, and no formal-layer engine. Swap the mock producers one at a
+time; the state shape and the routing stay put.
 
-```jsonc
-{
-  "role": "Greeter",
-  "goal": "Say hello to the person named in the input.",
-  "backstory": "You are a friendly assistant. You keep it to one sentence.",
-  "llm": "openrouter/anthropic/claude-sonnet-4",
-  "tools": [],
-  "allow_delegation": false,
-  "verbose": true,
-}
-```
-
-Keep `"allow_delegation": false` on every specialist — only the Orchestrator
-delegates, and letting specialists re-delegate creates loops.
-
-## 2. Register it in `crew.jsonc`
-
-Add the **filename stem** to `"agents"`:
-
-```jsonc
-"agents": ["intake_parser", "acuity_classifier", "safety_validator", "greeter"],
-```
-
-The Orchestrator is deliberately absent from that list — it is named separately as
-`"manager_agent"`, and crewAI rejects a manager that also appears in `"agents"`.
-
-## 3. Add its task
-
-Append to the `"tasks"` array. `"context"` names the tasks whose output this one
-receives; omit it if the task needs nothing from earlier ones.
-
-```jsonc
-{
-  "name": "say_hello",
-  "description": "Greet {name} in one short sentence.",
-  "expected_output": "A one-sentence greeting.",
-  "agent": "greeter",
-  "output_pydantic": { "python": "schemas.Greeting" },
-  "output_file": "output/greeting.json",
-}
-```
-
-Tasks must stay inline here — the loader requires `"tasks"` to be a list of objects
-(`json_loader.py:441`), so there is no `tasks/` folder.
-
-## 4. Add the output schema
-
-New file `schemas/greeting.py`:
-
-```python
-class Greeting(BaseModel):
-    message: str = Field(description="The greeting, one sentence")
-```
-
-Re-export it from [schemas/__init__.py](schemas/__init__.py) (`from .greeting import Greeting`,
-add to `__all__`). Reference it as `"schemas.Greeting"` — the loader resolves python refs
-relative to `crew.jsonc`'s own directory, **not** the package root, so
-`"app.schemas.Greeting"` fails.
-
-## 5. Add the mock output
-
-New entry in `[mock_data.py](mock_data.py)` under `MOCK_OUTPUTS`, keyed by the
-**task name** (`say_hello`), not the agent name:
-
-```python
-"say_hello": {"message": "Hello, world!"},
-```
-
-`main.py` walks `crew.tasks` and looks up each one, so a missing key raises `KeyError`.
-
-## 6. Verify
+## Run it
 
 ```bash
-uv run python -c "
-from dotenv import load_dotenv; load_dotenv()
-from pathlib import Path
-from crewai.project import load_crew
-crew, _ = load_crew(Path('app/crew.jsonc'))
-print(len(crew.agents), '|', crew.manager_agent.role, '|', [t.agent.role for t in crew.tasks])
-"
-uv run triage-guard
+uv run triage-guard            # clean demo case (full happy path)
+uv run triage-guard missing    # arrow 16 — missing fields
+uv run triage-guard failed     # arrow 17 — nothing usable
+uv run triage-guard injection  # arrow 18 — prompt-injection rejected
+
+uv run tests                   # smoke tests (routing shape) + guard tests
 ```
 
-The first command validates every `.jsonc` and resolves the schema refs without
-running anything. The second prints the mock outputs and sends one Langfuse span
-per agent. Span names come from the loaded crew, so a correct trace is itself
-proof the config parsed.
+Each run prints the final state plus the full `emit_event_log` audit trail with
+the spec's arrow labels.
 
-## Adding a tool
+## What's deterministic vs. LLM
 
-Create `tools/<name>.py` (the folder does not exist yet — make it with the first
-tool) as a `BaseTool` subclass, then reference it from an agent as
-`"tools": ["custom:<name>"]`.
+The split follows the **Actors / Agents** table in `docs/SPECIFICATION.md`. The
+neuro-symbolic rule is enforced structurally: the deterministic actors are plain
+Python, and only one function is allowed to call a model.
 
-```python
-from crewai.tools import BaseTool
+| Actor / step (spec)                | Here                                   | Kind          |
+| ---------------------------------- | -------------------------------------- | ------------- |
+| Acuity Classifier                  | `flow/agents.py:invoke_acuity_classifier` | **LLM** (mock) — with a deterministic red-flag pre-check first |
+| Intake Parser                      | `guards/` + `flow/triage_flow.py:parsing` | deterministic |
+| Input Normalizer + PII schema-drop | `flow/agents.py:build_model_payload`   | deterministic |
+| Safety Validation                  | `flow/agents.py:invoke_safety_validation` | deterministic (mock; real = Prolog/Datalog/Z3/OPA) |
+| Output Verification                | `flow/deterministic.py:verify_output`  | deterministic |
+| CRM / Patient DB                   | `crm_client.py`                        | deterministic |
+| Audit                              | `flow/deterministic.py:emit_event_log` | deterministic |
+| Human Escalation / Nurses / Tech   | `flow/agents.py:invoke_human_escalation` | human (mock)  |
 
-class ShoutTool(BaseTool):
-    name: str = "shout"
-    description: str = "Uppercase a string."
+**The only place a model is ever called is `invoke_acuity_classifier`.** Its
+red-flag pre-check is deliberately deterministic and runs *before* the model, so
+a hard clinical trigger forces emergent (`acuity_source = rule_forced`) without
+the LLM. Every other step is code — that is the whole point of the split.
 
-    def _run(self, text: str) -> str:
-        return text.upper()
+## Layout
+
 ```
+app/
+  main.py              entrypoint — seeds mock state, kickoff(), prints audit trail
+  mock_cases.py        the four editable demo inputs (clean/missing/failed/injection)
+  flow/
+    triage_flow.py     the Flow: @start/@listen/@router control-plane spine
+    state.py           TriageState — the Data/Control/World planes as one state
+    deterministic.py   order_key, acuity-gap resolution, audit, symbolic predicates
+    agents.py          one function per actor; the single LLM step lives here
+  guards/              deterministic intake guards (reused, unchanged)
+  schemas/             pydantic task-output schemas (reused)
+  crm_client.py        CRM SQLite-stub client (reused)
+  observability.py     Langfuse spans (reused)
+```
+
+## Wiring reality in, step by step
+
+1. **Acuity Classifier → real LLM.** In `invoke_acuity_classifier`, replace the
+   mock branch with a real crew call, e.g. load the JSON-first crew from
+   `app/agents/acuity_classifier.jsonc` via `crewai.project.load_crew` and
+   `crew.kickoff(...)`. Keep the red-flag pre-check ahead of it.
+2. **Safety Validation → symbolic engines.** Replace `invoke_safety_validation`
+   and the `verify_*` predicates in `deterministic.py` with OPA / Z3 / Prolog /
+   Datalog calls. The Flow already routes `pass` / `fail` and the V·* verification
+   outcomes off their results.
+3. **CRM.** Start `crm-stub/` and set `CRM_BASE_URL`; `fetch_patient_data`
+   already maps found / not_found / db_error to the degrade path (`AF·db`).
+4. **Human Escalation.** Put a real UI/queue behind `invoke_human_escalation`.
+5. **Monitoring / treatment-move / release.** The skeleton ends at `monitoring`;
+   extend with the World-plane transitions (`1b.y`, `19`, `FV`, `REL`) and the
+   treatment-move execution state machine from `SYSTEM_MODELING.md`.
+
+## Note on `plot()`
+
+`app.main:plot` calls `Flow.plot("TriageFlowPlot")`. Because the routers return
+their labels from `if` branches rather than as static literals, CrewAI's static
+plotter prints "events not statically inferable" warnings and may omit some edges
+in the picture — runtime routing is unaffected (the smoke tests cover it). If you
+want a complete static plot, hoist the router return values into module-level
+label constants the plotter can see.
