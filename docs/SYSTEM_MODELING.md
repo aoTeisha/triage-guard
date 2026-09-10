@@ -49,12 +49,12 @@ through to release.
 
 ### Authorities
 
-- **Decision authority - the Orchestrator.** It is the sole writer to State. Agents,
-  including the Acuity Classifier, only propose; they never decide or write. The
-  classifier emits a proposed acuity and a confidence; the Orchestrator passes that
-  proposal through the safety layers and is the only component that writes it to state.
+- **Decision authority - the Flow.** The Flow decides; the agents, including the
+  Acuity Classifier, only propose. The
+  classifier emits a proposed acuity and a confidence; the Flow passes that
+  proposal through the safety layers, and its steps write the results to state.
 - **Execution authority - the Tool Gateway.** It is the single execution point against
-  the outside world for the irreversible treatment-move. The Orchestrator authorizes the
+  the outside world for the irreversible treatment-move. The Flow authorizes the
   move; the Gateway executes it. This split between the decider and the executor is what
   creates the UNKNOWN risk modeled later: the component that decides never gets certainty
   from the component that executes.
@@ -67,7 +67,7 @@ through to release.
   contested and unsafe cases only, not a bottleneck on every case.
 
 The LLM never has a direct arrow to an irreversible action. The path is: classifier
-proposes → Orchestrator → safety validation and approval → Tool Gateway executes. Three
+proposes → Flow → safety validation and approval → Tool Gateway executes. Three
 steps sit between the proposal and the irreversible act.
 
 ### Hard Constraints
@@ -143,7 +143,7 @@ made-up number looks like a fact until it fails in production.
 
 - The exit boundary is asymmetric: release is final, treatment is not (re-triage can
   follow), so the system must keep watching a case after treatment starts.
-- The decision/execution split (Orchestrator authorizes, Gateway executes) is the origin
+- The decision/execution split (Flow authorizes, Gateway executes) is the origin
   of the UNKNOWN risk modeled next.
 - Two live assumptions rest on actors outside the boundary: nurse acuity, and a "done"
   receipt meaning treatment truly started.
@@ -248,7 +248,7 @@ is no direct arrow from the LLM to an irreversible action, by design._
 
 **Inside the boundary**
 
-- **Orchestrator** - decision authority; the sole writer to state.
+- **Flow** - decision authority. Its steps write state.
 - **Acuity Classifier** - the LLM; proposes only.
 - **Safety Validation** - the binding safety gate.
 - **Human Escalation bridge** - the conduit to the human authority.
@@ -270,27 +270,27 @@ deliberate, not an inconsistency._
 
 ### Arrows (semantics)
 
-| From → To                        | Message                                                                                                             | Meaning                                                                                  |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Intake nurse → Orchestrator      | `CASE_SUBMITTED { complaint, vitals, nurse_proposed_acuity }`                                                       | A new case enters; carries the nurse's proposed acuity among other fields.               |
-| Orchestrator → Acuity Classifier | `classify_request { case_payload }`                                                                                 | Ask for an acuity proposal. Payload carries **no identifiers**.                          |
-| Acuity Classifier → Orchestrator | `ActionProposal { proposed_acuity, confidence }`                                                                    | A proposal, not a fact - the Orchestrator decides what to do with it.                    |
-| Orchestrator → Safety Validation | `ValidationRequest { case_payload, proposed_acuity }`                                                               | Check the proposal against the case before any write.                                    |
-| Safety Validation → Orchestrator | `SafetyVerdict { pass \| fail, reason }`                                                                            | A binding verdict; `reason` drives the correction path on `fail`.                        |
-| Orchestrator → CRM               | `HistoryLookup { patient_id }`                                                                                      | The only arrow that carries the identifier.                                              |
-| CRM → Orchestrator               | `PatientHistory { prior_visits, conditions }`                                                                       | History merged into the current case.                                                    |
-| Orchestrator → Human Escalation  | `EscalationRequest { case, reason: discrepancy \| safety_fail }`                                                    | Reason determines which question the human gets.                                         |
-| Human Escalation → Orchestrator  | `ApprovalToken { decision, actor_is_charge, approval_id, expires_at }`                                              | An authenticated, time-bounded decision - must be re-checked as valid at execution time. |
-| Orchestrator → Tool Gateway      | `ActionRequest { move_to_treatment, request_id, action_hash, idempotency_key, issued_at, approval_id, expires_at }` | The irreversible act - sent only after `safety_passed ∧ approved`.                       |
-| Tool Gateway → Downstream        | `move_to_treatment { case_id, idempotency_key }`                                                                    | The execution against the outside world.                                                 |
-| Downstream → Tool Gateway        | `ToolReceipt { started \| failed }` - **or nothing (timeout)**                                                      | Three outcomes, not two - the missing receipt is the UNKNOWN.                            |
-| Orchestrator → Audit Store       | `AuditRecord { action, actor, timestamp, before → after, reason }`                                                  | Every state change is recorded - the auditability constraint.                            |
+| From → To                 | Message                                                                                                             | Meaning                                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Intake nurse → Flow       | `CASE_SUBMITTED { complaint, vitals, nurse_proposed_acuity }`                                                       | A new case enters; carries the nurse's proposed acuity among other fields.               |
+| Flow → Acuity Classifier  | `classify_request { case_payload }`                                                                                 | Ask for an acuity proposal. Payload carries **no identifiers**.                          |
+| Acuity Classifier → Flow  | `ActionProposal { proposed_acuity, confidence }`                                                                    | A proposal, not a fact; the Flow decides what to do with it.                             |
+| Flow → Safety Validation  | `ValidationRequest { case_payload, proposed_acuity }`                                                               | Check the proposal against the case before any write.                                    |
+| Safety Validation → Flow  | `SafetyVerdict { pass \| fail, reason }`                                                                            | A binding verdict; `reason` drives the correction path on `fail`.                        |
+| Flow → CRM                | `HistoryLookup { patient_id }`                                                                                      | The only arrow that carries the identifier.                                              |
+| CRM → Flow                | `PatientHistory { prior_visits, conditions }`                                                                       | History merged into the current case.                                                    |
+| Flow → Human Escalation   | `EscalationRequest { case, reason: discrepancy \| safety_fail }`                                                    | Reason determines which question the human gets.                                         |
+| Human Escalation → Flow   | `ApprovalToken { decision, actor_is_charge, approval_id, expires_at }`                                              | An authenticated, time-bounded decision - must be re-checked as valid at execution time. |
+| Flow → Tool Gateway       | `ActionRequest { move_to_treatment, request_id, action_hash, idempotency_key, issued_at, approval_id, expires_at }` | The irreversible act - sent only after `safety_passed ∧ approved`.                       |
+| Tool Gateway → Downstream | `move_to_treatment { case_id, idempotency_key }`                                                                    | The execution against the outside world.                                                 |
+| Downstream → Tool Gateway | `ToolReceipt { started \| failed }` - **or nothing (timeout)**                                                      | Three outcomes, not two - the missing receipt is the UNKNOWN.                            |
+| Flow → Audit Store        | `AuditRecord { action, actor, timestamp, before → after, reason }`                                                  | Every state change is recorded - the auditability constraint.                            |
 
 ### Authority separation - why the arrows are shaped this way
 
 The diagram separates three authorities so that no single component can both decide and
 act. The Acuity Classifier only emits an `ActionProposal`; it never writes state and has
-no path to execution. The Orchestrator is the sole decider and the sole writer to state:
+no path to execution. The Flow is the sole decider, and its steps write state:
 every proposal, verdict, and approval converges on it, and only it authorizes action. The
 Tool Gateway is the single execution point for the irreversible treatment-move, reached
 only after `SafetyVerdict = pass` and, where required, an `ApprovalToken` from the charge
@@ -302,11 +302,11 @@ never arrive - the origin of the UNKNOWN problem modeled next.
 ### Two boundary facts the diagram makes checkable
 
 - **The identifier stops at the CRM lookup.** `patient_id` travels only on the
-  Orchestrator ↔ CRM arrows. Every arrow into the classifier and the safety validator
+  Flow ↔ CRM arrows. Every arrow into the classifier and the safety validator
   carries `case_payload` with no identifiers. If any arrow forwarded `patient_id` toward
   the model, that would be a visible violation of the privacy boundary.
 - **Two different kinds of return arrow.** `SafetyVerdict` is a binding verdict (the
-  Orchestrator must respect it); `ApprovalToken` is a time-bounded token (the Orchestrator
+  Flow must respect it); `ApprovalToken` is a time-bounded token (the Flow
   must re-verify it is still valid at execution time). Naming them differently keeps the
   distinction visible: a proposal is weighed, a verdict is obeyed, a token is verified.
 
@@ -352,36 +352,36 @@ transition - and, where relevant, the source of evidence it relies on.
 
 | Event                  | Transition                       | Producer     | Evidence source                     |
 | ---------------------- | -------------------------------- | ------------ | ----------------------------------- |
-| `send_request`         | READY → PENDING                  | Orchestrator | -                                   |
+| `send_request`         | READY → PENDING                  | Flow         | -                                   |
 | `receipt_started`      | PENDING → CONFIRMED              | Tool Gateway | downstream system                   |
 | `receipt_failed`       | PENDING → FAILED                 | Tool Gateway | downstream system                   |
-| `timeout`              | PENDING → UNKNOWN                | Orchestrator | its own timer                       |
-| `reconcile_result`     | RECONCILING → CONFIRMED / FAILED | Orchestrator | Audit Store (+ downstream re-query) |
-| `retry`                | FAILED → PENDING                 | Orchestrator | its own retry counter               |
-| `retry_limit_reached`  | FAILED → ESCALATED_TO_HUMAN      | Orchestrator | its own retry counter               |
-| `reconcile_unresolved` | RECONCILING → UNKNOWN            | Orchestrator | - (source unreachable)              |
+| `timeout`              | PENDING → UNKNOWN                | Flow         | its own timer                       |
+| `reconcile_result`     | RECONCILING → CONFIRMED / FAILED | Flow         | Audit Store (+ downstream re-query) |
+| `retry`                | FAILED → PENDING                 | Flow         | its own retry counter               |
+| `retry_limit_reached`  | FAILED → ESCALATED_TO_HUMAN      | Flow         | its own retry counter               |
+| `reconcile_unresolved` | RECONCILING → UNKNOWN            | Flow         | - (source unreachable)              |
 
 **Producer versus evidence source.** The producer is the component allowed to _cause_ the
 transition, not whichever component supplied a fact along the way. For `reconcile_result`
-the Audit Store answers the question "did the move happen?", but the Orchestrator is the
+the Audit Store answers the question "did the move happen?", but the Flow is the
 producer: it starts the reconciliation, reads the source, decides what the answer means,
 and writes the new state. The Audit Store is the evidence source, the way the classifier
 is the evidence source for an acuity decision - it informs, it does not decide.
 
-**Why almost every event is produced by the Orchestrator.** Only events that originate in
+**Why almost every event is produced by the Flow.** Only events that originate in
 the outside world - `receipt_started`, `receipt_failed` - belong to the Tool Gateway.
-Every other event is a decision or a measurement derived from state the Orchestrator alone
+Every other event is a decision or a measurement derived from state the Flow alone
 holds: the timer for `timeout`, the retry counter for `retry` and `retry_limit_reached`,
 the reconciliation outcome for `reconcile_result`. That is a consequence of the
-Orchestrator owning the state (below): any event derived from state is its to produce.
+Flow owning the state (below): any event derived from state is its to produce.
 
 ### State owner
 
-The critical state variable `execution_state` has a single owner: the **Orchestrator**.
-Most transitions are derived from state the Orchestrator holds, so the owner has to be
-single. If two components could write `execution_state`, they would race - the Gateway
-writing `CONFIRMED` at the same moment the Orchestrator writes `timeout → UNKNOWN`. A
-single owner rules that out: the Gateway reports facts (receipts), and the Orchestrator
+The critical state variable `execution_state` has a single owner: **one Flow step**.
+Most transitions are derived from state that step holds, so the owner has to be
+single. If two components could write `execution_state`, they would race: the Gateway
+writing `CONFIRMED` at the same moment the step writes `timeout → UNKNOWN`. A
+single owner rules that out. The Gateway reports facts (receipts), and that one step
 alone turns facts and timers into state.
 
 ### Forbidden transition
@@ -449,7 +449,7 @@ The three runtime checks all guard against the same thing - the world moving bet
 preparation and execution:
 
 - **Validity still holds (`expires_at`).** An approval is checked as valid when it
-  arrives, but time passes before the Orchestrator sends the action - the case may have
+  arrives, but time passes before the Flow sends the action, so the case may have
   waited in the queue, or gone through reconciliation. If `expires_at` has passed, the
   approval is stale and the action is no longer backed by a live approval. So the check is
   `now < expires_at`, verified in the moment before sending.
@@ -490,7 +490,7 @@ receipt.
   evidence the move did not occur - never from `UNKNOWN`. Every retry carries the **same**
   `idempotency_key`. The retry count is bounded; on exhaustion the case escalates to a
   human.
-- **Reconciliation.** From `UNKNOWN`, before any further attempt, the Orchestrator asks the
+- **Reconciliation.** From `UNKNOWN`, before any further attempt, the Flow asks the
   source of truth whether the move happened. The answer maps to `CONFIRMED` (happened -
   leave it) or `FAILED` (did not - safe to try). A reconciliation is a query and changes
   nothing in the world, so it is safe to repeat.
@@ -649,10 +649,10 @@ cross-checked. Everything lines up:
 
 - **Execution authority = Tool Gateway** - the same in the Canvas, the Diagram, the State
   Machine, and the Contract.
-- **Sole writer / state owner = Orchestrator** - the same in the Canvas, the Diagram, and
+- **State owner = one Flow step** - the same in the Canvas, the Diagram, and
   the State Machine, which names the single owner of `execution_state`.
 - **Every event producer exists as a component.** The catalog's producers are the
-  Orchestrator and the Tool Gateway, and both appear in the Diagram.
+  Flow and the Tool Gateway, and both appear in the Diagram.
 - **Timing fields are consistent.** `expires_at` and the retry budget appear the same way
   wherever they are relevant. The retry budget is consistently an undefined-but-finite
   value, not a guessed number - "not yet defined everywhere" is itself consistent.
@@ -721,7 +721,7 @@ concern. The system around it answers a different set of questions: who is allow
 decide and act, what must be true before an irreversible action happens, what happens when
 a component is unavailable or returns nothing, and how every action is recorded so it can
 be reconstructed afterward. The classifier is one component inside that system, and it
-only proposes; the Orchestrator decides, safety validation gates, the Tool Gateway
+only proposes; the Flow decides, safety validation gates, the Tool Gateway
 executes, and the audit store records. The model optimizes for being _right_; the system
 has to stay safe even when the model is wrong, unavailable, or uncertain. That is why
 almost all of the design is about authorities, states, failure handling, and evidence, and
