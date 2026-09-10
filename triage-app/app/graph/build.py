@@ -17,14 +17,15 @@ invisible.
 
 from __future__ import annotations
 
+from langgraph.errors import NodeError
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import RetryPolicy
+from langgraph.types import Command, RetryPolicy
 
 from app.budgets import RETRY_BUDGET
 from app.events import Event
 from app.graph import nodes, routers
 from app.graph.state import TriageState
-from app.labels import Route
+from app.labels import Arrow, Route
 from app.states import State
 
 # Control states the spec names that this slice does not wire. Listed, not
@@ -53,6 +54,65 @@ def _retry_policy(state: State) -> RetryPolicy | None:
     return RetryPolicy(max_attempts=attempts) if attempts > 1 else None
 
 
+# Error handlers run after the retry policy is spent. Without them a raising
+# actor propagates out of `invoke` and kills the run — the AF-* rows would only
+# cover an actor that returned something unusable, never one that crashed, which
+# is the case the failure model is actually written about.
+#
+# The `error: NodeError` parameter is injected BY TYPE ANNOTATION, not by
+# position. Drop the annotation and LangGraph calls the handler with the state
+# alone and it fails with a missing-argument TypeError.
+
+
+# `goto` may only name a destination already declared for the failing node. The
+# degrade nodes are those destinations, so a handler records why the actor crashed
+# and hands over to the same fallback the verification path uses — one degrade
+# implementation per agent, reached from both directions.
+
+
+def _crash(state: TriageState, node: State, agent: str, error: NodeError) -> dict:
+    return {
+        "audit_log": [
+            nodes.audit(state.case_id, node, "alert_technician",
+                        f"{agent} raised after its retry budget: {error.error}",
+                        Arrow.AF_RECOVER)
+        ]
+    }
+
+
+def _on_classifier_error(state: TriageState, error: NodeError) -> Command:
+    """AF·classifier — non-critical, fail-open. Degrade to the nurse's acuity."""
+    return Command(
+        update=_crash(state, State.CLASSIFYING, "acuity_classifier", error),
+        goto="classifier_fallback",
+    )
+
+
+def _on_safety_error(state: TriageState, error: NodeError) -> Command:
+    """AF·safety — critical, degrade-to-human. Route every case to a charge nurse
+    so no-approval-bypass still holds while the validator is out.
+    """
+    return Command(
+        update=_crash(state, State.SAFETY_VALIDATING, "safety_validation", error),
+        goto="safety_fallback",
+    )
+
+
+def _on_crm_error(state: TriageState, error: NodeError) -> Command:
+    """AF·db — non-critical, fail-open. Continue on intake-only data."""
+    return Command(
+        update=nodes.crm_fallback(state, str(error.error)),
+        goto=State.REDACTING_ROUTING.value,
+    )
+
+
+_ERROR_HANDLERS = {
+    State.CLASSIFYING: _on_classifier_error,
+    State.SAFETY_VALIDATING: _on_safety_error,
+    State.RESOLVING_IDENTITY: _on_crm_error,
+}
+
+
 def build_graph(checkpointer=None):
     """Compile the control plane.
 
@@ -69,13 +129,16 @@ def build_graph(checkpointer=None):
     b.add_node(State.INPUT_REJECTED, nodes.input_rejected)
     b.add_node(State.DATA_PARSED, nodes.data_parsed)
     b.add_node(State.RESOLVING_IDENTITY, nodes.resolving_identity,
-               retry_policy=_retry_policy(State.RESOLVING_IDENTITY))
+               retry_policy=_retry_policy(State.RESOLVING_IDENTITY),
+               error_handler=_ERROR_HANDLERS[State.RESOLVING_IDENTITY])
     b.add_node(State.REDACTING_ROUTING, nodes.redacting_routing)
     b.add_node(State.CLASSIFYING, nodes.classifying,
-               retry_policy=_retry_policy(State.CLASSIFYING))
+               retry_policy=_retry_policy(State.CLASSIFYING),
+               error_handler=_ERROR_HANDLERS[State.CLASSIFYING])
     b.add_node(State.ACUITY_PROPOSED, nodes.acuity_proposed)
     b.add_node(State.SAFETY_VALIDATING, nodes.safety_validating,
-               retry_policy=_retry_policy(State.SAFETY_VALIDATING))
+               retry_policy=_retry_policy(State.SAFETY_VALIDATING),
+               error_handler=_ERROR_HANDLERS[State.SAFETY_VALIDATING])
     b.add_node(State.VERDICT_PROPOSED, nodes.verdict_proposed)
     b.add_node(State.AWAITING_HUMAN_APPROVAL, nodes.awaiting_human_approval)
     b.add_node(State.MONITORING, nodes.monitoring)

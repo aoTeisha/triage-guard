@@ -11,7 +11,7 @@ no graph, no checkpointer, no mocks.
 
 from __future__ import annotations
 
-from app.budgets import correction_rounds_left, retry_budget_left
+from app.budgets import confidence_ok, correction_rounds_left, retry_budget_left
 from app.events import Event
 from app.graph.state import TriageState
 from app.labels import Route
@@ -91,15 +91,28 @@ def route_after_safety(state: TriageState) -> Route:
 def route_verdict(state: TriageState) -> Route:
     """arrows 11 / 11·pass.
 
-    `escalation_needed` = "verdict fail ∨ low confidence ∨ policy hit". Reaching
-    this node already means the verdict passed (arrow 10), so only the other two
-    disjuncts can fire here. `confidence_ok` is marked optional in the Guards
-    table with its threshold "(to confirm)", and "policy hit" has no definition —
-    so with neither wired, arrow 11 is currently unreachable and every clean
-    verdict takes 11·pass. See the migration notes; this is a spec gap, not a
-    shortcut, and the branch is left in place so wiring a threshold later is a
-    one-line change.
+    `escalation_needed` = "verdict fail ∨ low confidence ∨ policy hit" is a
+    cross-cutting condition, not a single-node guard: it names every reason to
+    invoke the Human Escalation agent, and each disjunct fires wherever its reason
+    arises. "verdict fail" fires on the 10·fail edge, which never reaches this
+    node, so what is left to test here is the confidence disjunct.
+
+    "policy hit" has no definition anywhere in the spec and is not wired; when it
+    gains one it becomes an `or` on the line below.
     """
+    # A human who has already answered a gate for this case has answered the very
+    # question this guard asks. Without it the gate re-fires on the way back
+    # through — resolving it does not change `confidence`, so the case would
+    # bounce between the gate and safety validation until the recursion limit.
+    #
+    # The test is `human_decision`, which only the gate writes. NOT
+    # `acuity_source == human_confirmed`: arrow 9a sets that when the nurse and
+    # the system merely agree, with no human consulted, so it would suppress the
+    # gate for exactly the cases that never reached one.
+    if state.human_decision is not None:
+        return Route.CLEARED
+    if not confidence_ok(state.confidence, state.gate_disabled):
+        return Route.ESCALATE
     return Route.CLEARED
 
 

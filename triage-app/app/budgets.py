@@ -43,6 +43,25 @@ RETRY_BUDGET: dict[str, int] = {
     "human_bridge": 2,
 }
 
+# The `confidence_ok` guard: `confidence >= threshold`, where the Guards table says
+# "(threshold to confirm)". Same status as the budgets above — the guard is required,
+# the number is not given. Below it, a case that passed safety still goes to a charge
+# nurse for confirmation (arrow 11). Not applicable during a classifier outage: with
+# no system proposal there is no confidence to test.
+CONFIDENCE_THRESHOLD: float = 0.70
+
+
+def confidence_ok(confidence: float | None, gate_disabled: bool = False) -> bool:
+    """True when the classifier was sure enough to skip the confirmation gate.
+
+    A missing confidence is not "low" — it means no model proposal was made
+    (classifier outage), which the spec excludes from this guard.
+    """
+    if gate_disabled or confidence is None:
+        return True
+    return confidence >= CONFIDENCE_THRESHOLD
+
+
 # docs/SYSTEM_MODELING.md § 188 / § 229: "There is a maximum number of correction
 # rounds. When exhausted, the case escalates." Same status as RETRY_BUDGET — the
 # bound is required by the spec, the number is not given. Bounds the

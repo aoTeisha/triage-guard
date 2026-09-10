@@ -27,10 +27,16 @@ from app.actors import load_mock
 # Reasons the gate can be entered. One control state, two causes (§ Transitions:
 # 9c for the acuity discrepancy, 10·fail / AF·safety for the safety branch).
 DISCREPANCY = "discrepancy"
+LOW_CONFIDENCE = "low_confidence"
 SAFETY_FAIL = "safety_fail"
+
+# Reasons that end in the human choosing an acuity. Both present the same question
+# ("which level is right?"); they differ only in what prompted the ask.
+ACUITY_REASONS = frozenset({DISCREPANCY, LOW_CONFIDENCE})
 
 _OPTIONS: dict[str, list[str]] = {
     DISCREPANCY: ["use_nurse_acuity", "use_system_acuity"],
+    LOW_CONFIDENCE: ["use_nurse_acuity", "use_system_acuity"],
     SAFETY_FAIL: ["corrected", "escalate_further"],
 }
 

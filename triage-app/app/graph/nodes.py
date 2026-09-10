@@ -14,7 +14,12 @@ from __future__ import annotations
 from typing import Any
 
 from app.actors import acuity_classifier, human_bridge, intake, normalizer, safety
-from app.budgets import correction_rounds_left, retry_budget_left
+from app.budgets import (
+    CONFIDENCE_THRESHOLD,
+    confidence_ok,
+    correction_rounds_left,
+    retry_budget_left,
+)
 from app.crm_client import fetch_patient
 from app.deterministic import (
     actor_is_charge,
@@ -140,8 +145,12 @@ def data_parsed(state: TriageState) -> dict[str, Any]:
     """
     return {
         "control_state": State.DATA_PARSED.value,
-        "audit_log": [audit(state.case_id, State.DATA_PARSED, "emit_event_log",
-                            "submission valid", Arrow.SUBMISSION_VALID)],
+        "audit_log": [
+            audit(state.case_id, State.DATA_PARSED, "emit_event_log",
+                  "submission valid", Arrow.SUBMISSION_VALID),
+            audit(state.case_id, State.DATA_PARSED, "fetch_patient_data",
+                  "look up record", Arrow.LOOKUP),
+        ],
     }
 
 
@@ -191,6 +200,26 @@ def resolving_identity(state: TriageState) -> dict[str, Any]:
     }
 
 
+def crm_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
+    """AF·db — the CRM client raised rather than returning a status.
+
+    Same outcome as the db_error branch inside `resolving_identity`: continue on
+    intake-only data. Split into its own function so the error handler and the
+    inline branch cannot drift apart.
+    """
+    return {
+        "control_state": State.RESOLVING_IDENTITY.value,
+        "crm_status": "db_error",
+        "degraded": ["crm"],
+        "flags": ["crm_down_intake_only"],
+        "audit_log": [audit(state.case_id, State.RESOLVING_IDENTITY,
+                            "alert_technician",
+                            "CRM unreachable, degraded"
+                            + (f" ({reason})" if reason else ""),
+                            Arrow.AF_DB)],
+    }
+
+
 # ---- redacting_routing (arrows 5, 6, V·halt·PII, AF·PII) --------------------
 
 
@@ -221,7 +250,10 @@ def redacting_routing(state: TriageState) -> dict[str, Any]:
 
     try:
         scores = normalizer.score_urgency(payload)
-        scorer_update: dict[str, Any] = {"urgency_scores": scores}
+        # model_dump(): LangGraph warns that checkpointing custom classes will
+        # be blocked in a future version. Pydantic re-validates the dict on the
+        # way back in, so the field stays typed.
+        scorer_update: dict[str, Any] = {"urgency_scores": scores.model_dump()}
     except normalizer.ScorerUnavailable as exc:
         # Fail-open, safe-drop: no unredacted prose reaches the model.
         scorer_update = {
@@ -250,6 +282,9 @@ def redacting_routing(state: TriageState) -> dict[str, Any]:
 
 def classifying(state: TriageState) -> dict[str, Any]:
     """The single LLM step. A red-flag match settles the level without the model."""
+    invoked = audit(state.case_id, State.CLASSIFYING, "invoke_acuity_classifier",
+                    "run classifier (red-flag pre-check, then model)",
+                    Arrow.RUN_CLASSIFIER)
     proposal = acuity_classifier.classify(state.redacted_payload)
     check = verify_schema("acuity_classifier", proposal, type(proposal))
 
@@ -257,7 +292,8 @@ def classifying(state: TriageState) -> dict[str, Any]:
         return {
             "control_state": State.CLASSIFYING.value,
             "retry_count": _bump(state, "acuity_classifier"),
-            "audit_log": [audit(state.case_id, State.CLASSIFYING, "discard_output",
+            "audit_log": [invoked,
+                          audit(state.case_id, State.CLASSIFYING, "discard_output",
                                 "; ".join(check.violations),
                                 Arrow.V_RETRY_CLASSIFIER)],
         }
@@ -269,14 +305,14 @@ def classifying(state: TriageState) -> dict[str, Any]:
         "confidence": checked.confidence,
         "acuity_source": checked.acuity_source,
         "red_flag_fired": checked.acuity_source == "rule_forced",
-        "audit_log": [audit(state.case_id, State.CLASSIFYING,
-                            "invoke_acuity_classifier",
+        "audit_log": [invoked,
+                      audit(state.case_id, State.CLASSIFYING, "emit_event_log",
                             f"acuity proposed: {checked.system_proposed_acuity} "
                             f"({checked.acuity_source})", Arrow.ACUITY_PROPOSED)],
     }
 
 
-def classifier_fallback(state: TriageState) -> dict[str, Any]:
+def classifier_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
     """AF·classifier / V·exhausted·classifier.
 
     Drop the system acuity, fall back to the nurse's, disable the discrepancy gate
@@ -291,7 +327,8 @@ def classifier_fallback(state: TriageState) -> dict[str, Any]:
         "degraded": ["acuity_classifier"],
         "flags": ["cross_check_off_review_later"],
         "audit_log": [audit(state.case_id, State.CLASSIFYING, "fallback_manual",
-                            "classifier unusable, using nurse acuity; gate disabled",
+                            "classifier unusable, using nurse acuity; gate disabled"
+                            + (f" ({reason})" if reason else ""),
                             Arrow.V_EXHAUSTED_CLASSIFIER)],
     }
     if nurse is not None:
@@ -362,7 +399,7 @@ def safety_validating(state: TriageState) -> dict[str, Any]:
     passed = checked.verdict == "pass"
     return {
         "control_state": State.SAFETY_VALIDATING.value,
-        "safety_verdict": checked,
+        "safety_verdict": checked.model_dump(),
         "safety_passed": passed,
         "escalation_reason": None if passed else human_bridge.SAFETY_FAIL,
         "audit_log": [audit(state.case_id, State.SAFETY_VALIDATING,
@@ -373,7 +410,7 @@ def safety_validating(state: TriageState) -> dict[str, Any]:
     }
 
 
-def safety_fallback(state: TriageState) -> dict[str, Any]:
+def safety_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
     """AF·safety / V·exhausted·safety — validator down or unusable.
 
     Deliberately not a halt: route every case to a charge nurse so the
@@ -387,7 +424,8 @@ def safety_fallback(state: TriageState) -> dict[str, Any]:
         "flags": ["safety_validator_down_all_to_charge"],
         "audit_log": [audit(state.case_id, State.SAFETY_VALIDATING,
                             "invoke_human_escalation",
-                            "validator unusable, routing all cases to charge nurse",
+                            "validator unusable, routing all cases to charge nurse"
+                            + (f" ({reason})" if reason else ""),
                             Arrow.V_EXHAUSTED_SAFETY)],
     }
 
@@ -396,16 +434,29 @@ def safety_fallback(state: TriageState) -> dict[str, Any]:
 
 
 def verdict_proposed(state: TriageState) -> dict[str, Any]:
-    """Pass-through gate between a clean verdict and the queue."""
-    return {
-        "control_state": State.VERDICT_PROPOSED.value,
-        # No arrow: the spec gives verdict_proposed no on-entry arrow of its own,
-        # only the 11 / 11·pass arrows on the way out. Reusing "10" here would put
-        # a second arrow-10 record in a trail that is meant to diff against the
-        # Transitions table line by line.
-        "audit_log": [audit(state.case_id, State.VERDICT_PROPOSED, "emit_event_log",
-                            "verdict recorded")],
-    }
+    """A clean verdict, deciding whether a human should still confirm it.
+
+    The spec gives this state no on-entry arrow of its own — only 11 and 11·pass
+    on the way out — so the "verdict recorded" line carries no arrow rather than
+    reusing arrow 10 and putting a second arrow-10 record in a trail meant to diff
+    against the Transitions table line by line.
+    """
+    records = [audit(state.case_id, State.VERDICT_PROPOSED, "emit_event_log",
+                     "verdict recorded")]
+
+    if not confidence_ok(state.confidence, state.gate_disabled):
+        records.append(
+            audit(state.case_id, State.VERDICT_PROPOSED, "invoke_human_escalation",
+                  f"confidence {state.confidence} below {CONFIDENCE_THRESHOLD}; "
+                  "charge nurse confirms", Arrow.ESCALATION_NEEDED)
+        )
+        return {
+            "control_state": State.VERDICT_PROPOSED.value,
+            "escalation_reason": human_bridge.LOW_CONFIDENCE,
+            "audit_log": records,
+        }
+
+    return {"control_state": State.VERDICT_PROPOSED.value, "audit_log": records}
 
 
 # ---- awaiting_human_approval (9c / 10·fail / 1b.z·*) ------------------------
@@ -435,6 +486,13 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
     decision = (response or {}).get("decision")
     authorized, why = actor_is_charge(resolver)
 
+    # Arrow 12: the Human Escalation agent has returned. Recorded before the
+    # response is authorized or applied, so a refused response still leaves
+    # evidence that a response arrived.
+    recorded = audit(state.case_id, State.AWAITING_HUMAN_APPROVAL, "emit_event_log",
+                     f"escalation recorded: {decision} by {resolver}",
+                     Arrow.ESCALATION_RECORDED)
+
     base: dict[str, Any] = {
         "control_state": State.AWAITING_HUMAN_APPROVAL.value,
         "clinical_status": ClinicalStatus.HUMAN_REVIEW.value,
@@ -445,12 +503,13 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
     if not authorized:
         # BLK: the attempt is refused and the case does not move.
         return base | {
-            "audit_log": [audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
+            "audit_log": [recorded,
+                          audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
                                 "explain_denial", why, Arrow.BLK,
                                 denying_layer="Prolog (authorization)")],
         }
 
-    if reason == human_bridge.DISCREPANCY:
+    if reason in human_bridge.ACUITY_REASONS:
         chosen = (
             state.nurse_proposed_acuity if decision == "use_nurse_acuity"
             else state.system_proposed_acuity
@@ -462,7 +521,8 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
             "acuity_bucket": bucket_for(chosen).value if chosen is not None else None,
             "order_key": assign_order_key(chosen, arrival) if chosen is not None else None,
             "approved": True,
-            "audit_log": [audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
+            "audit_log": [recorded,
+                          audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
                                 "apply_human_acuity",
                                 f"charge nurse resolved acuity: {chosen}",
                                 Arrow.GATE_ACUITY_RESOLVED)],
@@ -472,7 +532,8 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
     return base | {
         "correction_rounds": state.correction_rounds + 1,
         "safety_passed": False,
-        "audit_log": [audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
+        "audit_log": [recorded,
+                      audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
                             "apply_correction",
                             f"correction round {state.correction_rounds + 1}, re-running safety",
                             Arrow.GATE_SAFETY_CORRECTED)],
@@ -488,9 +549,12 @@ def monitoring(state: TriageState) -> dict[str, Any]:
         "control_state": State.MONITORING.value,
         "approved": True,
         "clinical_status": ClinicalStatus.WAITING.value,
-        "audit_log": [audit(state.case_id, State.MONITORING,
-                            "start_reassessment_timer", "cleared to queue",
-                            Arrow.CLEARED_TO_QUEUE)],
+        "audit_log": [
+            audit(state.case_id, State.MONITORING, "emit_event_log",
+                  "cleared to queue", Arrow.CLEARED_TO_QUEUE),
+            audit(state.case_id, State.MONITORING, "start_reassessment_timer",
+                  "queued, timer running", Arrow.TIMER_RUNNING),
+        ],
     }
 
 

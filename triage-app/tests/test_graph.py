@@ -22,10 +22,16 @@ def test_clean_case_walks_the_documented_arrows_in_order(run):
     state, _, _ = run(DEMO_CASES["clean"])
     trail = arrows(state)
 
+    # The five agents in the spec's Actors table are traced as invoke/propose
+    # pairs: 3/4 Intake Parser, 7/8 Acuity Classifier, 9x/10 Safety Validation,
+    # 11/12 Human Escalation, 13/14 Waiting Room Monitor. The CRM (4b) and the
+    # normalizer (5/6) are not agents — those arrows are on-entry actions the
+    # Actions column names, recorded for the same traceability.
     assert trail[:4] == ["1a", "2", "3", "4"]
-    assert "5" in trail and "6" in trail          # build payload, payload clean
-    assert "8" in trail                            # acuity proposed
-    assert trail[-1] == "11·pass"                  # cleared to queue
+    assert trail.index("4b") < trail.index("4b·found" if "4b·found" in trail else "AF·db")
+    assert trail.index("5") < trail.index("6")     # build payload -> payload clean
+    assert trail.index("7") < trail.index("8")     # invoke classifier -> acuity proposed
+    assert trail[-2:] == ["11·pass", "13"]         # cleared to queue, timer running
 
 
 def test_missing_fields_stops_at_the_request(run):

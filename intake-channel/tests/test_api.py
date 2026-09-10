@@ -115,7 +115,10 @@ def test_a_submission_returns_the_real_audit_trail():
     arrows = [r["arrow"] for r in body["audit_log"] if r["arrow"]]
 
     assert arrows[0] == "1a"
-    assert arrows[-1] == "11·pass"
+    # Ends on the Waiting Room Monitor's timer (arrow 13), the invoke half of the
+    # 13/14 pair, not on the 11·pass transition that got the case there.
+    assert arrows[-2:] == ["11·pass", "13"]
+    assert arrows.index("7") < arrows.index("8")   # classifier invoke -> propose
 
 
 @respx.mock

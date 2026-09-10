@@ -625,3 +625,84 @@ re-runs after a human resolution. Correct-and-revalidate, no override path.
   and untested against a live key).
 - World plane: `reassessment_required` and `case_closed` are declared in
   `UNIMPLEMENTED_STATES`; `test_edges.py` fails if that set drifts.
+
+---
+
+# Follow-up — arrow 11 resolved 2026-09-10
+
+**The arrows are invoke/propose pairs, one pair per agent.** Not a spec bug — a
+notation collision. The Actors-table agents each get two arrows: the odd one
+calls the agent, the even one records what it proposed back.
+
+```
+3 / 4      Intake Parser        (4 splits into 16 / 17 / 18 by outcome)
+7 / 8      Acuity Classifier
+9a-c / 10  Safety Validation
+11 / 12    Human Escalation
+13 / 14    Waiting Room Monitor
+```
+
+Three details in the table confirm it: arrow 11's action is literally
+`invoke_human_escalation`; arrow 12 is a self-loop on `awaiting_human_approval`
+("escalation recorded"), which is meaningless as a state transition and exact as
+an agent return; and `11·pass` is a suffix, which only parses if 11 is the call.
+Arrows that are neither (4b, 5, 6, 20x) are on-entry actions or notifications the
+Actions column names — the CRM and the normalizer are not agents.
+
+## What that resolves
+
+**T2 is withdrawn.** `escalation_needed` = "verdict fail ∨ low confidence ∨
+policy hit" is a *cross-cutting* condition naming every reason to invoke the
+Human Escalation agent, not a guard local to `verdict_proposed`. Its disjuncts
+fire in different places: "verdict fail" on the 10·fail edge, "low confidence" at
+`verdict_proposed`, "policy hit" nowhere (still undefined). Read that way the
+definition is complete and line 711 is consistent — 10·fail is the state
+transition, arrow 11 is the agent call riding on it.
+
+Only the confidence disjunct had no home. Now wired:
+`CONFIDENCE_THRESHOLD = 0.70` in `budgets.py`, flagged as a placeholder like the
+retry budgets, skipped during a classifier outage per the Guards table's "not
+applicable" note.
+
+## Missing arrows, now emitted
+
+The invoke halves were absent from the trail: **4b, 7, 11, 12, 13**. The routing
+was right; the trace was half the story. A clean run now reads:
+
+```
+1a 2 3 4 4b (4b·found|AF·db) 5 6 7 8 9b 10 — 11·pass 13
+```
+
+## Three bugs the new tests caught
+
+**A crashing actor killed the run.** `RetryPolicy` retries and then re-raises;
+the `error_handler=` from the plan was never wired. So the AF·* rows only covered
+an actor that *returned* something unusable, never one that crashed — which is
+the case the failure model is actually written about. Handlers now route
+`classifying`, `safety_validating` and `resolving_identity` to their degrade
+paths. Two LangGraph details worth recording: the `error: NodeError` parameter is
+injected **by type annotation**, not position, and `Command(goto=...)` may only
+name a destination already declared for the failing node — hence handing over to
+the existing fallback nodes rather than jumping to their targets.
+
+**The low-confidence gate looped.** Resolving it does not change `confidence`, so
+`verdict_proposed` re-escalated the same case forever. Guarded on
+`human_decision`, which only the gate writes.
+
+**`acuity_source == human_confirmed` does not mean a human was consulted.**
+Arrow 9a sets it when the nurse and the system merely agree. The first version of
+the loop guard tested it and suppressed the gate for exactly the cases that never
+reached one. Third overloaded-field finding, alongside T5 (`acuity_source` vs the
+red-flag fact) and T1.
+
+Also cleared: `UrgencyScores` and `SafetyVerdict` were being checkpointed as
+Pydantic instances, which LangGraph warns will be blocked in a future version.
+Stored as dicts; the model re-validates them on read.
+
+**Tests 92 → 104** in triage-app (143 with intake-channel).
+
+## Still open
+
+- "policy hit" remains undefined; it is an `or` on one line in `route_verdict`
+  when it gains a definition.
+- The confidence threshold is a placeholder, not a measured value.

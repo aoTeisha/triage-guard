@@ -4,17 +4,20 @@ config:
     curve: linear
 ---
 graph TD;
-	__start__([<p>__start__</p>]):::first
+	__start__(<p>__start__</p>)
 	intake_received(intake_received)
 	parsing(parsing)
 	missing_fields_requested(missing_fields_requested)
 	submission_failed(submission_failed)
 	input_rejected(input_rejected)
 	data_parsed(data_parsed)
+	__error_handler__State\2eRESOLVING_IDENTITY(__error_handler__State.RESOLVING_IDENTITY)
 	resolving_identity(resolving_identity)
 	redacting_routing(redacting_routing)
+	__error_handler__State\2eCLASSIFYING(__error_handler__State.CLASSIFYING)
 	classifying(classifying)
 	acuity_proposed(acuity_proposed)
+	__error_handler__State\2eSAFETY_VALIDATING(__error_handler__State.SAFETY_VALIDATING)
 	safety_validating(safety_validating)
 	verdict_proposed(verdict_proposed)
 	awaiting_human_approval(awaiting_human_approval)
@@ -23,7 +26,7 @@ graph TD;
 	action_denied(action_denied)
 	classifier_fallback(classifier_fallback)
 	safety_fallback(safety_fallback)
-	__end__([<p>__end__</p>]):::last
+	__end__(<p>__end__</p>)
 	__start__ --> intake_received;
 	acuity_proposed -. &nbsp;Route.ESCALATE&nbsp; .-> awaiting_human_approval;
 	acuity_proposed -. &nbsp;Route.PROCEED&nbsp; .-> safety_validating;

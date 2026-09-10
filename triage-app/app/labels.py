@@ -2,8 +2,25 @@
 
 `Arrow` is spec traceability: every audit record carries the arrow from the
 Transitions table, so a run's log can be diffed against docs/SPECIFICATION.md line
-by line. `Route` is graph-internal — branch labels for conditional edges that have
-no spec event of their own (verification outcomes, authorization refusal).
+by line.
+
+The numbering is not arbitrary. For each agent in the Actors table the arrows come
+in an **invoke / propose** pair — the odd arrow calls the agent, the even one
+records what it proposed back:
+
+    3 / 4    Intake Parser          (4 splits into 16 / 17 / 18 by outcome)
+    7 / 8    Acuity Classifier
+    9a-c / 10  Safety Validation
+    11 / 12  Human Escalation
+    13 / 14  Waiting Room Monitor
+
+This is why arrow 12 is a self-loop on `awaiting_human_approval` and why 11's
+action is `invoke_human_escalation`: they are agent round-trips, not case
+movements. Arrows that are neither (4b, 5, 6, 20x) are on-entry actions or
+notifications named in the Actions column.
+
+`Route` is graph-internal — branch labels for conditional edges that have no spec
+event of their own (verification outcomes, authorization refusal).
 
 Split from states/events because these change when the *graph wiring* changes,
 whereas states and events change only when the spec's control plane does.
