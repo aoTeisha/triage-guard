@@ -37,6 +37,7 @@ def graph():
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL;")
     return build_graph(checkpointer=SqliteSaver(conn))
 
 
@@ -101,6 +102,14 @@ def resume_case(
 def snapshot(case_id: str) -> dict[str, Any]:
     """Current persisted state for a case, for a board or a status endpoint."""
     return graph().get_state(config_for(case_id)).values
+
+
+def history(case_id: str) -> list[dict[str, Any]]:
+    """Every checkpoint for a case, oldest first — the full state-transition trail,
+    free from the checkpointer already in use.
+    """
+    snapshots = list(graph().get_state_history(config_for(case_id)))
+    return [s.values for s in reversed(snapshots)]
 
 
 def run_to_completion(
