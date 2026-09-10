@@ -19,6 +19,7 @@ dependencies = [
 triage-guard = "app.main:run"
 kickoff = "app.main:kickoff"
 plot = "app.main:plot"
+visualize-graph = "app.visualize_graph:visualize"
 
 [build-system]
 requires = ["hatchling"]

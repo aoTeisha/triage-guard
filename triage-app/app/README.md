@@ -18,6 +18,7 @@ uv run triage-guard failed     # arrow 17 — nothing usable
 uv run triage-guard injection  # arrow 18 — prompt injection rejected
 uv run pytest                  # 92 tests, offline, ~40s
 uv run plot                    # regenerate docs/diagrams/control-plane.mmd
+uv run visualize-graph         # open the graph as a live Mermaid diagram in the browser
 ```
 
 Every run prints the final state and the full audit trail, labelled with the
@@ -70,6 +71,7 @@ safety rule that only fires when the model is switched on is not a safety rule.
 ```
 app/
   main.py            entrypoint — demo cases, audit trail, plot()
+  visualize_graph.py open the graph as a live Mermaid diagram in the browser
   runner.py          start / resume / snapshot a case (used by CLI *and* UI)
   states.py          State enum — the spec's control plane
   events.py          Event enum + IntakeOutcome
