@@ -9,6 +9,15 @@ deteriorated, which improves ER capacity logistics and treatment.
 - [Architecture and State-Machine Specification](docs/SPECIFICATION.md)
 - [System Modeling](docs/SYSTEM_MODELING.md)
 
+### Run everything at once
+
+```bash
+./run-all.sh   # langfuse (best-effort) + crm-stub :8000 + intake-channel :8001
+```
+
+Ctrl+C stops crm-stub and intake-channel together. Open `http://127.0.0.1:8001`.
+For running each service on its own, or the offline CLI/test loop, see below.
+
 ## The Triage guard app
 
 A **LangGraph** skeleton: the Transitions table from `docs/SPECIFICATION.md`
