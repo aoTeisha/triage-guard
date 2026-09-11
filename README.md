@@ -11,11 +11,13 @@ deteriorated, which improves ER capacity logistics and treatment.
 
 ### Run everything at once
 
-```bash
-./run-all.sh   # langfuse (best-effort) + crm-stub :8000 + intake-channel :8001
-```
+In VS Code, open the Run and Debug panel and pick a compound from
+`.vscode/launch.json`:
 
-Ctrl+C stops crm-stub and intake-channel together. Open `http://127.0.0.1:8001`.
+- **All services (crm-stub + intake-channel)** — both APIs, debuggable.
+- **Everything incl. triage-app demo** — same, plus the triage-app CLI run.
+
+Stopping the compound stops every service in it. Open `http://127.0.0.1:8001`.
 For running each service on its own, or the offline CLI/test loop, see below.
 
 ## The Triage guard app

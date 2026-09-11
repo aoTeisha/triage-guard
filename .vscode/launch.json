@@ -2,39 +2,63 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "intake-channel",
-      "type": "python",
+      "name": "crm-stub (:8000)",
+      "type": "debugpy",
       "request": "launch",
-      "python": "${workspaceFolder}/intake-channel/.venv/Scripts/python.exe",
+      "cwd": "${workspaceFolder}/crm-stub",
+      "python": "${workspaceFolder}/crm-stub/.venv/bin/python",
+      "windows": {
+        "python": "${workspaceFolder}/crm-stub/.venv/Scripts/python.exe"
+      },
       "module": "uvicorn",
-      "args": ["channel.api:app", "--reload", "--host", "0.0.0.0", "--port", "8001"],
+      "args": ["crm.api:app", "--host", "127.0.0.1", "--port", "8000"],
       "justMyCode": false,
-      "cwd": "${workspaceFolder}/intake-channel"
+      "console": "integratedTerminal"
     },
     {
-      "name": "crm-stub",
-      "type": "python",
+      "name": "intake-channel (:8001)",
+      "type": "debugpy",
       "request": "launch",
-      "python": "${workspaceFolder}/crm-stub/.venv/Scripts/python.exe",
+      "cwd": "${workspaceFolder}/intake-channel",
+      "python": "${workspaceFolder}/intake-channel/.venv/bin/python",
+      "windows": {
+        "python": "${workspaceFolder}/intake-channel/.venv/Scripts/python.exe"
+      },
       "module": "uvicorn",
-      "args": ["crm.api:app", "--reload", "--host", "0.0.0.0", "--port", "8000"],
+      "args": ["channel.api:app", "--host", "127.0.0.1", "--port", "8001"],
       "justMyCode": false,
-      "cwd": "${workspaceFolder}/crm-stub"
+      "console": "integratedTerminal"
     },
     {
-      "name": "triage-app",
-      "type": "python",
+      "name": "triage-app (demo case: clean)",
+      "type": "debugpy",
       "request": "launch",
-      "python": "${workspaceFolder}/triage-app/.venv/Scripts/python.exe",
+      "cwd": "${workspaceFolder}/triage-app",
+      "python": "${workspaceFolder}/triage-app/.venv/bin/python",
+      "windows": {
+        "python": "${workspaceFolder}/triage-app/.venv/Scripts/python.exe"
+      },
       "module": "app.main",
+      // swap for "missing" / "failed" / "injection" to hit the other arrows
+      "args": ["clean"],
       "justMyCode": false,
-      "cwd": "${workspaceFolder}/triage-app"
+      "console": "integratedTerminal"
     }
   ],
   "compounds": [
     {
-      "name": "All services",
-      "configurations": ["crm-stub", "intake-channel", "triage-app"]
+      "name": "All services (crm-stub + intake-channel)",
+      "configurations": ["crm-stub (:8000)", "intake-channel (:8001)"],
+      "stopAll": true
+    },
+    {
+      "name": "Everything incl. triage-app demo",
+      "configurations": [
+        "crm-stub (:8000)",
+        "intake-channel (:8001)",
+        "triage-app (demo case: clean)"
+      ],
+      "stopAll": true
     }
   ]
 }
