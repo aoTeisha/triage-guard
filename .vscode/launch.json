@@ -30,6 +30,20 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "board (:8002)",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/board",
+      "python": "${workspaceFolder}/board/.venv/bin/python",
+      "windows": {
+        "python": "${workspaceFolder}/board/.venv/Scripts/python.exe"
+      },
+      "module": "uvicorn",
+      "args": ["board.api:app", "--host", "127.0.0.1", "--port", "8002"],
+      "justMyCode": false,
+      "console": "integratedTerminal"
+    },
+    {
       "name": "triage-app (demo case: clean)",
       "type": "debugpy",
       "request": "launch",
@@ -47,8 +61,8 @@
   ],
   "compounds": [
     {
-      "name": "All services (crm-stub + intake-channel)",
-      "configurations": ["crm-stub (:8000)", "intake-channel (:8001)"],
+      "name": "All services (crm-stub + intake-channel + board)",
+      "configurations": ["crm-stub (:8000)", "intake-channel (:8001)", "board (:8002)"],
       "stopAll": true
     },
     {
@@ -56,6 +70,7 @@
       "configurations": [
         "crm-stub (:8000)",
         "intake-channel (:8001)",
+        "board (:8002)",
         "triage-app (demo case: clean)"
       ],
       "stopAll": true

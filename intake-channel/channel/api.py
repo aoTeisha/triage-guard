@@ -22,8 +22,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
-
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -32,6 +30,7 @@ from pydantic import BaseModel
 
 from app.observability import agent_span, flush
 from app.runner import resume_case, snapshot, start_case
+from app.views import case_view as _view
 
 from .mock_cases import SubmissionType, build_case
 from .patient_lookup import fetch_patient
@@ -56,27 +55,6 @@ class ResumeRequest(BaseModel):
 
     decision: str
     resolver_role: str = "charge_nurse"
-
-
-def _view(state: dict[str, Any], pending: dict[str, Any] | None) -> dict[str, Any]:
-    """What the browser needs: the outcome, the gate if any, and the trail."""
-    return {
-        "case_id": state.get("case_id"),
-        "status": "awaiting_human_approval" if pending else "settled",
-        "control_state": state.get("control_state"),
-        "outcome": state.get("intake_outcome"),
-        "missing_fields": state.get("missing_fields", []),
-        "reason": state.get("intake_reason"),
-        "acuity": state.get("acuity"),
-        "acuity_source": state.get("acuity_source"),
-        "acuity_gap": state.get("acuity_gap"),
-        "safety_passed": state.get("safety_passed"),
-        "approved": state.get("approved"),
-        "degraded": state.get("degraded", []),
-        "flags": state.get("flags", []),
-        "gate": pending,
-        "audit_log": state.get("audit_log", []),
-    }
 
 
 @app.get("/")

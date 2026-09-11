@@ -14,10 +14,11 @@ deteriorated, which improves ER capacity logistics and treatment.
 In VS Code, open the Run and Debug panel and pick a compound from
 `.vscode/launch.json`:
 
-- **All services (crm-stub + intake-channel)** — both APIs, debuggable.
+- **All services (crm-stub + intake-channel + board)** — all three APIs, debuggable.
 - **Everything incl. triage-app demo** — same, plus the triage-app CLI run.
 
-Stopping the compound stops every service in it. Open `http://127.0.0.1:8001`.
+Stopping the compound stops every service in it. Open `http://127.0.0.1:8001` for
+the intake form, `http://127.0.0.1:8002` for the board.
 For running each service on its own, or the offline CLI/test loop, see below.
 
 ## The Triage guard app
@@ -113,3 +114,27 @@ uv run intake-channel   # serves on :8001, needs the CRM stub on :8000
 ```
 
 See [intake-channel/README.md](intake-channel/README.md) for the full details.
+
+## The board
+
+The other end of the same system: where intake is one case in, the board is all
+cases out. A nurse-facing kanban of the World plane — one card per live case, one
+column per `clinical_status`, sorted by the `order_key` the control plane already
+assigned. Click a card for its acuity block and its arrow trail.
+
+It is a *view*: the board computes no triage, writes no state, and re-computes no
+ordering. Two of the six columns have a writer today (`waiting`, `human_review`);
+the other four render empty with the milestone they wait on, rather than being
+filled in by the board to look complete. It never calls the CRM, so a CRM outage
+cannot blank it.
+
+```bash
+cd board
+uv sync
+uv run seed-board   # ~15 mock cases through the real graph, for a populated board
+uv run board        # serves on :8002, needs nothing else running
+```
+
+See [board/README.md](board/README.md) for the full details, and
+[2026-09-11-board-service-design.md](2026-09-11-board-service-design.md) for the
+design it builds (milestones M0 + M1).

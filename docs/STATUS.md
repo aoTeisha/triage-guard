@@ -45,7 +45,11 @@ Those five:
       blindly could start treatment on the same patient twice. There is currently no
       code for any of it.
 - [ ] **The waiting-room timers** that flag a patient who's been waiting too long.
-- [ ] **The board** that shows staff the current queue.
+- [x] **The board** that shows staff the current queue. *Built read-only (`board/`, :8002,
+      milestones M0 + M1 of `2026-09-11-board-service-design.md`): it lists every case,
+      sorts by the persisted `order_key`, shows queue position and the arrow trail. Two of
+      its six columns have a writer today; the rest wait on items 4 / 5a / 5b below. The
+      two manual moves (M2) are deliberately not built — see item 4.*
 
 ---
 
@@ -78,7 +82,9 @@ gets treated as a leftover and discovered late.
 - [ ] **4. Design and build the treatment-move machine.** Its own project. Design first.
 - [ ] **5a.** The waiting-room timers.
 - [ ] **5b.** The release / discharge step.
-- [ ] **5c.** The board.
+- [x] **5c.** The board. Read-only board built (`board/`, :8002). Its write half —
+      `POST /move` and `/release` — stays blocked on item 4, so that the treatment-move
+      machine does not get improvised inside a UI.
 
 ---
 
