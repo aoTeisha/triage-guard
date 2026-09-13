@@ -64,7 +64,10 @@ def build_model_payload(
 
 
 def score_urgency(payload: dict[str, Any]) -> UrgencyScores:
-    """MOCK stand-in for the BERT distress/pain scorer.
+    """Currently unwired — `redacting_routing` no longer calls this, because intake
+    carries no free-text field. Kept so the degrade path is one un-comment away.
+
+    MOCK stand-in for the BERT distress/pain scorer.
 
     Edit `mocks/input_normalizer.json` to change the scores; replace this function
     body to wire the real scorer. Raise `ScorerUnavailable` to exercise the degrade

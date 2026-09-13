@@ -1,10 +1,6 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-10 (after the LangGraph migration, branch `feat/langgraph-migration`)
-
-Yes, you can start building for real. The mocked parts are each one function you can
-replace on their own. But three things in your docs have no code behind them yet, and
-one of them is important enough that it shouldn't surprise you later.
+**Last updated:** 2026-09-13 (urgency scorer switched off — see *Recent changes*)
 
 ---
 
@@ -29,8 +25,9 @@ Those five:
       it's just never been run with a key) — `app/actors/acuity_classifier.py`
 - [ ] the safety validator — right now it reads "pass" out of a file instead of
       actually checking anything — `app/actors/safety.py`
-- [ ] the text scorer that reads distress and pain from the patient's own words —
-      `app/actors/normalizer.py:score_urgency`
+- [ ] ~~the text scorer that reads distress and pain from the patient's own words~~ —
+      `app/actors/normalizer.py:score_urgency`. **Switched off, 2026-09-13.** See
+      *Recent changes*.
 - [ ] the privacy check — currently a hardcoded list of forbidden field names, where it
       should be a real policy engine — `app/deterministic.py:verify_no_identifiers`
 - [ ] the output checker — it validates the shape of what an agent returns, but not yet
@@ -46,6 +43,33 @@ Those five:
       code for any of it.
 - [ ] **The waiting-room timers** that flag a patient who's been waiting too long.
 - [ ] **The board** that shows staff the current queue.
+
+---
+
+## Recent changes
+
+**2026-09-13 — the urgency scorer is switched off.** Intake isn't going to carry a
+free-text field, so there was nothing for the scorer to read. It was also the only
+piece whose output nobody used: it produced three numbers — sentiment, distress, pain —
+that got saved and then ignored by every step after it.
+
+What changed, and how to undo it:
+
+- `app/graph/nodes/redaction.py` no longer calls the scorer. The old call is commented
+  out in place, not deleted.
+- `app/actors/normalizer.py:score_urgency` is untouched and still works; nothing calls it.
+- One test is skipped (`tests/test_failures.py`), the one covering what happens when the
+  scorer breaks.
+
+Bringing it back is un-commenting one block and removing one line. Everything else is
+where it was.
+
+**One thing to watch.** The free-text field is still read by two other pieces: the check
+for someone trying to manipulate the AI through the text box, and one of the three
+sources the red-flag rules scan for things like "chest pain". If the field really does
+disappear from intake, the manipulation check has nothing left to look at, and the
+red-flag rules drop from three sources to two. That's a separate decision and nothing
+has been changed for it yet.
 
 ---
 

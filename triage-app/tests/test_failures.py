@@ -138,6 +138,7 @@ def test_a_degraded_case_carries_no_history_into_the_payload(run):
 # ---- AF·pii_bert_ner: safe-drop of free text ---------------------------------
 
 
+@pytest.mark.skip(reason="urgency scorer unwired: no free-text field in intake")
 def test_a_dead_urgency_scorer_drops_free_text_and_continues(run, monkeypatch):
     """Fail-open, safe-drop: no unredacted prose reaches the model."""
 

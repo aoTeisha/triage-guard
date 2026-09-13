@@ -38,20 +38,23 @@ def redacting_routing(state: TriageState) -> dict[str, Any]:
                                 arrow)],
         }
 
-    try:
-        scores = normalizer.score_urgency(payload)
-        # model_dump(): LangGraph warns that checkpointing custom classes will
-        # be blocked in a future version. Pydantic re-validates the dict on the
-        # way back in, so the field stays typed.
-        scorer_update: dict[str, Any] = {"urgency_scores": scores.model_dump()}
-    except normalizer.ScorerUnavailable as exc:
-        # Fail-open, safe-drop: no unredacted prose reaches the model.
-        scorer_update = {
-            "degraded": ["pii_bert_ner"],
-            "flags": ["urgency_scores_unavailable"],
-            "audit_log": [audit(state.case_id, State.REDACTING_ROUTING,
-                                "alert_technician", str(exc), Arrow.AF_PII)],
-        }
+    # Urgency scorer disabled: intake carries no free-text field for it to read,
+    # and nothing downstream consumed the scores. Un-comment with the field.
+    # try:
+    #     scores = normalizer.score_urgency(payload)
+    #     # model_dump(): LangGraph warns that checkpointing custom classes will
+    #     # be blocked in a future version. Pydantic re-validates the dict on the
+    #     # way back in, so the field stays typed.
+    #     scorer_update: dict[str, Any] = {"urgency_scores": scores.model_dump()}
+    # except normalizer.ScorerUnavailable as exc:
+    #     # Fail-open, safe-drop: no unredacted prose reaches the model.
+    #     scorer_update = {
+    #         "degraded": ["pii_bert_ner"],
+    #         "flags": ["urgency_scores_unavailable"],
+    #         "audit_log": [audit(state.case_id, State.REDACTING_ROUTING,
+    #                             "alert_technician", str(exc), Arrow.AF_PII)],
+    #     }
+    scorer_update: dict[str, Any] = {}
 
     audit_records = [
         audit(state.case_id, State.REDACTING_ROUTING, "build_model_payload",
