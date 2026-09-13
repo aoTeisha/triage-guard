@@ -73,8 +73,8 @@ def test_a_refused_gate_changes_no_case_state(graph, run):
 
     # "The case does not move" means literally unchanged, so compare fields
     # against the paused snapshot rather than against assumed defaults.
-    # `acuity_source` is already `rule_forced` here — the classifier set it at
-    # arrow 8, long before the gate — and a denial must not clear that either.
+    # `acuity_source` is already set here — the classifier proposed at arrow 8,
+    # long before the gate — and a denial must not clear that either.
     for field in ("acuity", "acuity_source", "acuity_bucket", "order_key",
                   "approved", "safety_passed", "acuity_gap"):
         assert denied[field] == paused[field], f"{field} changed on a denied action"

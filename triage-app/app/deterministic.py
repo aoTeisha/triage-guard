@@ -47,7 +47,7 @@ def resolve_acuity(nurse: int, system: int) -> tuple[int | None, AcuitySource | 
     """Return (final_acuity, acuity_source, arrow) per the Z3-proven bands.
 
         gap 0   -> agree, keep it              (9a, human_confirmed)
-        gap 1   -> take the MORE acute (min)   (9b, auto_resolved)
+        gap 1   -> take the NURSE's value      (9b, auto_resolved)
         gap >=2 -> charge nurse decides        (9c, unresolved)
 
     The bands are total and exclusive (Z3, band totality), so exactly one arm fires
@@ -59,7 +59,10 @@ def resolve_acuity(nurse: int, system: int) -> tuple[int | None, AcuitySource | 
     if gap == 0:
         return nurse, AcuitySource.HUMAN_CONFIRMED, Arrow.ACUITY_AGREE
     if gap == 1:
-        return min(nurse, system), AcuitySource.AUTO_RESOLVED, Arrow.ACUITY_GAP_MINOR
+        # The nurse holds a gap of 1. Was `min(nurse, system)` until 2026-09-13;
+        # changed because the classifier over-triages systematically and would
+        # otherwise win every close call unseen. Both inputs are logged at 9b.
+        return nurse, AcuitySource.AUTO_RESOLVED, Arrow.ACUITY_GAP_MINOR
     return None, None, Arrow.ACUITY_GAP_MAJOR
 
 

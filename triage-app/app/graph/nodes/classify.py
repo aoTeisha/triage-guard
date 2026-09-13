@@ -39,7 +39,6 @@ def classifying(state: TriageState) -> dict[str, Any]:
         "system_proposed_acuity": checked.system_proposed_acuity,
         "confidence": checked.confidence,
         "acuity_source": checked.acuity_source,
-        "red_flag_fired": checked.acuity_source == "rule_forced",
         "audit_log": [invoked,
                       audit(state.case_id, State.CLASSIFYING, "emit_event_log",
                             f"acuity proposed: {checked.system_proposed_acuity} "

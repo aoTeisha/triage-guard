@@ -43,10 +43,16 @@ def test_gap_zero_keeps_the_agreed_level(nurse, system):
     assert arrow.value == "9a"
 
 
-@pytest.mark.parametrize("nurse,system,expected", [(3, 2, 2), (2, 3, 2), (5, 4, 4)])
-def test_gap_one_takes_the_more_acute(nurse, system, expected):
+@pytest.mark.parametrize("nurse,system", [(3, 2), (2, 3), (5, 4)])
+def test_gap_one_settles_to_the_nurse(nurse, system):
+    """Changed 2026-09-13. Was min(nurse, system) - "take the more acute".
+
+    The classifier over-triages systematically (median ESI 2.0 where experts said 3.0),
+    so it should not silently win every close call. See
+    docs/plans/2026-09-13-acuity-classifier-design.md.
+    """
     final, source, arrow = resolve_acuity(nurse, system)
-    assert final == expected
+    assert final == nurse
     assert source is AcuitySource.AUTO_RESOLVED
     assert arrow.value == "9b"
 

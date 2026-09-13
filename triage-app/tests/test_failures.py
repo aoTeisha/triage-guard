@@ -7,8 +7,6 @@ having attempted no retry at all. Each row below is now driven for real.
 
 from __future__ import annotations
 
-import pytest
-
 from app.actors import normalizer, safety
 from app.budgets import RETRY_BUDGET, retry_budget_left
 from app.mock_cases import DEMO_CASES
@@ -135,20 +133,3 @@ def test_a_degraded_case_carries_no_history_into_the_payload(run):
     assert "history" not in state["redacted_payload"]
 
 
-# ---- AF·pii_bert_ner: safe-drop of free text ---------------------------------
-
-
-@pytest.mark.skip(reason="urgency scorer unwired: no free-text field in intake")
-def test_a_dead_urgency_scorer_drops_free_text_and_continues(run, monkeypatch):
-    """Fail-open, safe-drop: no unredacted prose reaches the model."""
-
-    def boom(payload):
-        raise normalizer.ScorerUnavailable("scorer unreachable")
-
-    monkeypatch.setattr(normalizer, "score_urgency", boom)
-
-    state, _, _ = run(DEMO_CASES["clean"])
-
-    assert "pii_bert_ner" in state["degraded"]
-    assert "urgency_scores_unavailable" in state["flags"]
-    assert state["control_state"] == State.MONITORING.value

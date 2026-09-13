@@ -76,14 +76,6 @@ def test_missing_fields_case_gets_no_invented_queue_position(run):
     assert state["order_key"] is None
 
 
-def test_red_flag_forces_emergent_without_consulting_the_model(run):
-    """Demo case 1 carries 'chest tightness', a hard clinical trigger."""
-    state, _, _ = run(DEMO_CASES["clean"])
-
-    assert state["red_flag_fired"] is True
-    assert state["acuity"] <= 2
-
-
 def test_no_identifier_reaches_the_model_payload(run):
     """The privacy invariant, checked on the real payload the classifier saw."""
     state, _, _ = run(DEMO_CASES["clean"])

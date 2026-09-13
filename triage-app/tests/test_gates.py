@@ -107,7 +107,7 @@ def test_the_pause_survives_a_rebuilt_graph(tmp_path):
 
 
 def test_nurse_choice_is_honoured_when_that_is_what_the_charge_nurse_picks(graph, run):
-    """The clinician is the final authority: a red flag is advisory, not a floor."""
+    """The clinician is the final authority at the gate."""
     _, _, thread = run(GAP_CASE)
     resumed = hydrate(graph.invoke(
         Command(resume={"decision": "use_nurse_acuity", "resolver_role": "charge_nurse"}),
@@ -116,5 +116,3 @@ def test_nurse_choice_is_honoured_when_that_is_what_the_charge_nurse_picks(graph
 
     assert resumed["acuity"] == 5
     assert resumed["acuity_source"] == "human_confirmed"
-    # The red-flag fact survives the override, for firing-rate tuning.
-    assert resumed["red_flag_fired"] is True

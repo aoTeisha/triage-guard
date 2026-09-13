@@ -32,14 +32,6 @@ def merge_counts(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
     return merged
 
 
-class UrgencyScores(BaseModel):
-    """BERT-scored distress/pain. Mock zeros until the scorer is wired in."""
-
-    sentiment: float = 0.0
-    distress: float = 0.0
-    pain: float = 0.0
-
-
 class TriageState(BaseModel):
     """One case, across all three planes."""
 
@@ -64,7 +56,6 @@ class TriageState(BaseModel):
 
     # ---- Redacted, model-facing payload -------------------------------------
     redacted_payload: dict[str, Any] = Field(default_factory=dict)
-    urgency_scores: UrgencyScores = Field(default_factory=UrgencyScores)
 
     # ---- Acuity ---------------------------------------------------------------
     nurse_proposed_acuity: Optional[int] = None
@@ -73,10 +64,6 @@ class TriageState(BaseModel):
     acuity: Optional[int] = None            # final, settled acuity only
     acuity_gap: Optional[int] = None
     acuity_source: Optional[AcuitySource] = None
-    # `acuity_source` is defined as the provenance of the FINAL acuity, so 9b/9c
-    # legitimately overwrite `rule_forced`. But § 639 wants the red-flag fact kept
-    # "so red-flag firing rates can be tuned" — one field cannot do both jobs.
-    red_flag_fired: bool = False
     # Set when the classifier is down: the discrepancy gate is disabled for the
     # outage and the case is flagged "cross-check off" (AF·classifier).
     gate_disabled: bool = False

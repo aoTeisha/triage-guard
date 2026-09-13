@@ -61,7 +61,6 @@ class AcuitySource(str, Enum):
     """How the final acuity was settled. Locked once set (§ acuity_source)."""
 
     SYSTEM = "system"
-    RULE_FORCED = "rule_forced"
     AUTO_RESOLVED = "auto_resolved"
     HUMAN_CONFIRMED = "human_confirmed"
 

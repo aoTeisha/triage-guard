@@ -36,9 +36,6 @@ RETRY_BUDGET: dict[str, int] = {
     # broken and the next attempt breaks identically. Critical-closed per the failure
     # model: halt immediately rather than retry into a possible identifier leak.
     "pii_schema_drop": 0,
-    # A model service, so transient failure is plausible. On exhaustion the payload
-    # drops free text and continues (degrade, safe).
-    "pii_bert_ner": 1,
     # Network call to a UI/queue; on exhaustion fall back to manual notification.
     "human_bridge": 2,
 }

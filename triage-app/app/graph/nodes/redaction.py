@@ -1,4 +1,4 @@
-"""redacting_routing — build the model-facing payload (arrows 5, 6, V·halt·PII, AF·PII)."""
+"""redacting_routing — build the model-facing payload (arrows 5, 6, V·halt·PII)."""
 
 from __future__ import annotations
 
@@ -20,10 +20,8 @@ def redacting_routing(state: TriageState) -> dict[str, Any]:
     check after it is the OPA no-identifiers invariant. A leak here is structural,
     never retried.
     """
-    drop_free_text = "pii_bert_ner" in state.degraded
     payload = normalizer.build_model_payload(
         state.case_id, state.parsed_fields, state.patient_history,
-        drop_free_text=drop_free_text,
     )
 
     check = verify_redacted_payload(payload)
@@ -38,24 +36,6 @@ def redacting_routing(state: TriageState) -> dict[str, Any]:
                                 arrow)],
         }
 
-    # Urgency scorer disabled: intake carries no free-text field for it to read,
-    # and nothing downstream consumed the scores. Un-comment with the field.
-    # try:
-    #     scores = normalizer.score_urgency(payload)
-    #     # model_dump(): LangGraph warns that checkpointing custom classes will
-    #     # be blocked in a future version. Pydantic re-validates the dict on the
-    #     # way back in, so the field stays typed.
-    #     scorer_update: dict[str, Any] = {"urgency_scores": scores.model_dump()}
-    # except normalizer.ScorerUnavailable as exc:
-    #     # Fail-open, safe-drop: no unredacted prose reaches the model.
-    #     scorer_update = {
-    #         "degraded": ["pii_bert_ner"],
-    #         "flags": ["urgency_scores_unavailable"],
-    #         "audit_log": [audit(state.case_id, State.REDACTING_ROUTING,
-    #                             "alert_technician", str(exc), Arrow.AF_PII)],
-    #     }
-    scorer_update: dict[str, Any] = {}
-
     audit_records = [
         audit(state.case_id, State.REDACTING_ROUTING, "build_model_payload",
               "build model payload", Arrow.BUILD_PAYLOAD),
@@ -65,6 +45,5 @@ def redacting_routing(state: TriageState) -> dict[str, Any]:
     return {
         "control_state": State.REDACTING_ROUTING.value,
         "redacted_payload": check.checked,
-        **scorer_update,
-        "audit_log": audit_records + scorer_update.get("audit_log", []),
+        "audit_log": audit_records,
     }

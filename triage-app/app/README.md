@@ -54,9 +54,9 @@ package permitted to import an LLM client.
 
 | Actor / step | Here | Kind |
 | --- | --- | --- |
-| Acuity Classifier | `actors/acuity_classifier.py` | **LLM** (mock by default) — with a deterministic red-flag pre-check first |
+| Acuity Classifier | `actors/acuity_classifier.py` | **LLM** (mock by default) — ESI decision points A/B/C by judgment |
 | Intake Parser | `actors/intake.py` + `guards/` | deterministic |
-| Input Normalizer + PII drop | `actors/normalizer.py` | deterministic (BERT urgency is mocked) |
+| Input Normalizer + PII drop | `actors/normalizer.py` | deterministic |
 | Safety Validation | `actors/safety.py` | deterministic (mock; real = Prolog/Datalog/Z3/OPA) |
 | Output Verification | `verification.py` | deterministic |
 | CRM / Patient DB | `crm_client.py` | deterministic |
@@ -110,8 +110,6 @@ uses.
 1. **Safety Validation → symbolic engines.** Replace `actors/safety.py:validate`
    and the predicates in `deterministic.py`. The graph already routes pass / fail
    and the V·* rows off their results.
-2. **Urgency scorer.** Replace `actors/normalizer.py:score_urgency`; raise
-   `ScorerUnavailable` and the safe-drop degrade path is already wired.
 3. **CRM.** Start `crm-stub/` and set `CRM_BASE_URL`.
 4. **Human gate.** Already real. Point a UI at `/resume/{case_id}`.
 5. **Retry budgets.** `budgets.py` holds working defaults standing in for a
