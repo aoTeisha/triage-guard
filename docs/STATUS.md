@@ -64,12 +64,14 @@ What changed, and how to undo it:
 Bringing it back is un-commenting one block and removing one line. Everything else is
 where it was.
 
-**One thing to watch.** The free-text field is still read by two other pieces: the check
-for someone trying to manipulate the AI through the text box, and one of the three
-sources the red-flag rules scan for things like "chest pain". If the field really does
-disappear from intake, the manipulation check has nothing left to look at, and the
-red-flag rules drop from three sources to two. That's a separate decision and nothing
-has been changed for it yet.
+**2026-09-13 - the acuity classifier has a design.** Agreed, not yet built. Intake
+becomes structured only (about ten dropdowns and tick-boxes plus vitals, no prose box).
+The model reads the case and proposes an ESI level on its own; one deterministic rule
+runs after it and can raise a case to emergent when the vitals are in the danger zone.
+The hand-written red-flag list is retired - it was brittle enough to miss its own demo
+case. A disagreement of one level between nurse and model now settles to the nurse's
+number rather than the more urgent one. Full reasoning, evidence and open items:
+`docs/plans/2026-09-13-acuity-classifier-design.md`. The spec has been updated to match.
 
 ---
 
