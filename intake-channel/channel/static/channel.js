@@ -118,6 +118,7 @@ function summary(body) {
 function gatePanel({ case_id, gate }) {
   const el = document.createElement("div");
   el.className = "gate";
+  el.setAttribute("role", "alert");
 
   const heading = gate.gate === "discrepancy"
     ? `Acuity discrepancy — nurse proposed ${gate.nurse_proposed_acuity},
