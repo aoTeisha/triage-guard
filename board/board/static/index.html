@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Triage Guard — board</title>
+  <style>
+    :root {
+      --bg: #12141a; --panel: #1b1e26; --panel-2: #222631; --line: #2c313d;
+      --text: #e6e8ee; --muted: #8d94a5; --emergent: #e5484d; --ok: #30a46c;
+      --warn: #f5a524; --chip: #2b303c;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font: 14px/1.45 system-ui, sans-serif; }
+    header { padding: 0.9rem 1.2rem; border-bottom: 1px solid var(--line);
+             display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+    header h1 { font-size: 1rem; margin: 0; letter-spacing: 0.02em; }
+    header .sub { color: var(--muted); font-size: 0.8rem; }
+    #counters { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-left: auto; }
+    .counter { background: var(--panel); border: 1px solid var(--line);
+               border-radius: 8px; padding: 0.35rem 0.7rem; min-width: 5.5rem; }
+    .counter .n { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+    .counter .l { color: var(--muted); font-size: 0.7rem; text-transform: uppercase;
+                  letter-spacing: 0.06em; }
+    .counter.alert .n { color: var(--emergent); }
+
+    #notifications { display: flex; gap: 0.5rem; overflow-x: auto; padding: 0.5rem 1.2rem;
+                     border-bottom: 1px solid var(--line); background: #171a21; }
+    .note { flex: 0 0 auto; font-size: 0.78rem; background: var(--panel-2);
+            border: 1px solid var(--line); border-radius: 999px; padding: 0.2rem 0.7rem;
+            color: var(--muted); cursor: pointer; }
+    .note .arrow { color: var(--warn); font-weight: 600; }
+    .note.blk .arrow { color: var(--emergent); }
+
+    main { display: flex; gap: 0.75rem; padding: 1rem 1.2rem; align-items: flex-start;
+           overflow-x: auto; }
+    .column { flex: 1 0 15rem; background: var(--panel); border: 1px solid var(--line);
+              border-radius: 10px; padding: 0.6rem; min-height: 8rem; }
+    .column h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.07em;
+                 color: var(--muted); margin: 0 0 0.6rem; display: flex;
+                 justify-content: space-between; }
+    .column.empty-col { opacity: 0.55; }
+    .column .todo { font-size: 0.72rem; color: var(--muted); font-style: italic; }
+
+    .card { background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--line);
+            border-radius: 8px; padding: 0.5rem 0.6rem; margin-bottom: 0.5rem;
+            display: grid; grid-template-columns: 2.2rem 1fr; gap: 0.1rem 0.6rem;
+            cursor: pointer; }
+    .card:hover { border-color: #47506a; }
+    .card.emergent { border-left-color: var(--emergent); }
+    .card.selected { outline: 1px solid #5b6ee1; }
+    .card.just-arrived { animation: arrived 6s ease-out; }
+    @keyframes arrived {
+      0%, 60% { background: #1e3a2b; box-shadow: 0 0 0 1px var(--ok); }
+      100% { background: var(--panel-2); box-shadow: none; }
+    }
+    .pos { grid-row: span 3; font-size: 1.5rem; font-variant-numeric: tabular-nums;
+           color: var(--muted); align-self: center; text-align: center; }
+    .who { font-weight: 600; }
+    .who small { color: var(--muted); font-weight: 400; }
+    .meta { color: var(--muted); font-size: 0.78rem; }
+    .meta .wait.red { color: var(--emergent); }
+    .chips { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-top: 0.15rem; }
+    .chip { font-size: 0.68rem; background: var(--chip); border-radius: 4px;
+            padding: 0.05rem 0.35rem; color: var(--muted); }
+    .chip.acuity { color: var(--text); }
+    .chip.acuity.emergent { background: #46171a; color: #ff9ea1; }
+    .chip.gate { background: #4a3708; color: #ffd479; }
+    .chip.degraded { background: #3a2a10; color: var(--warn); }
+    .chip.redflag { background: #46171a; color: #ff9ea1; }
+
+    #drawer { margin: 0 1.2rem 1rem; }
+    #drawer summary { cursor: pointer; color: var(--muted); font-size: 0.8rem; }
+    #drawer .cards { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem; }
+
+    #panel { position: fixed; top: 0; right: 0; width: min(30rem, 92vw); height: 100%;
+             background: var(--panel); border-left: 1px solid var(--line);
+             padding: 1rem 1.1rem; overflow-y: auto; transform: translateX(101%);
+             transition: transform 0.15s ease-out; }
+    #panel.open { transform: none; }
+    #panel h2 { font-size: 0.95rem; margin: 0 0 0.2rem; }
+    #panel .close { float: right; cursor: pointer; color: var(--muted);
+                    background: none; border: none; font-size: 1.1rem; }
+    .kv { display: grid; grid-template-columns: 9rem 1fr; gap: 0.1rem 0.6rem;
+          font-size: 0.82rem; margin: 0.6rem 0; }
+    .kv .k { color: var(--muted); }
+    .kv .v { font-variant-numeric: tabular-nums; }
+    .section { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: 0.7rem; }
+    .section h3 { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em;
+                  color: var(--muted); margin: 0 0 0.4rem; }
+    .trail { font-size: 0.78rem; }
+    .trail tr td { padding: 0.2rem 0.4rem 0.2rem 0; border-top: 1px solid var(--line);
+                   vertical-align: top; }
+    .trail .at { color: var(--muted); white-space: nowrap; padding-right: 0.6rem;
+                 font-variant-numeric: tabular-nums; }
+    .moves button { background: var(--panel-2); color: var(--muted); border: 1px solid var(--line);
+                    border-radius: 6px; padding: 0.3rem 0.6rem; margin-right: 0.4rem; }
+    .moves button[disabled] { cursor: not-allowed; }
+    .moves .why { color: var(--muted); font-size: 0.75rem; margin-top: 0.4rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Triage Guard — board</h1>
+      <div class="sub">
+        Live queue. A patient's place is set when they are triaged — the board only
+        shows it, and never changes a level or a place.
+      </div>
+    </div>
+    <div id="counters"></div>
+  </header>
+
+  <div id="notifications"></div>
+
+  <main id="columns"></main>
+
+  <details id="drawer">
+    <summary>Left the board today</summary>
+    <div class="cards" id="released"></div>
+  </details>
+
+  <aside id="panel" hidden>
+    <button class="close" id="panel-close" aria-label="Close">✕</button>
+    <div id="panel-body"></div>
+  </aside>
+
+  <script src="/static/board.js"></script>
+</body>
+</html>
