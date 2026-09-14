@@ -131,8 +131,7 @@ cannot blank it.
 ```bash
 cd board
 uv sync
-uv run seed-board   # ~15 mock cases through the real graph, for a populated board
-uv run board        # serves on :8002, needs nothing else running
+uv run board   # serves on :8002 — populates only from real intake-channel submissions
 ```
 
 See [board/README.md](board/README.md) for the full details, and

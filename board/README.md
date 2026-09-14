@@ -15,10 +15,13 @@ triage-app              the control plane all three call into
 
 ```bash
 uv sync
-uv run seed-board       # ~15 mock cases through the real graph, for a populated board
 uv run board            # http://127.0.0.1:8002
 uv run tests            # offline, no key, no crm-stub
 ```
+
+The board has no data of its own and no way to create any: it only ever shows
+cases that arrived through `intake-channel` and landed in the shared checkpoint
+store. Nothing in this repo can put a case on the board except a real submission.
 
 `BOARD_HOST` / `BOARD_PORT` override the bind address. The board reads the same
 checkpoint store as `triage-app` (`TRIAGE_CHECKPOINT_DB`), read-only.
@@ -61,7 +64,6 @@ board/
 │   ├── repo.py        BoardRepo protocol + CheckpointRepo — the case enumeration
 │   ├── ordering.py    sort by order_key, derive position. No other sort logic exists.
 │   ├── api.py         FastAPI: /api/board, /api/case/{id}, /api/health
-│   ├── seed_demo.py   `uv run seed-board`
 │   └── static/        one HTML file, one JS file, no build step
 └── tests/             offline; each test names the spec rule it enforces
 ```

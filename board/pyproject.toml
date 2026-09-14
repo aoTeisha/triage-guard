@@ -27,7 +27,6 @@ dev = [
 
 [project.scripts]
 board = "board.api:run"
-seed-board = "board.seed_demo:main"
 tests = "pytest:console_main"
 
 [build-system]
