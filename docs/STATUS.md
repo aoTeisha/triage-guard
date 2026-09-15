@@ -1,6 +1,6 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-13 (urgency scorer switched off — see *Recent changes*)
+**Last updated:** 2026-09-15 (intake-channel UI/a11y polish — see *Recent changes*)
 
 ---
 
@@ -51,6 +51,16 @@ Those five:
 ---
 
 ## Recent changes
+
+**2026-09-14 — intake-channel UI got an accessibility and styling pass.** Focus-visible
+outlines, viewport meta tag, design-token colors, dark-mode-ready structure. No behavior
+change — same endpoints, same form fields. `board/board/seed_demo.py` (unused demo-data
+script) was also deleted; README updated to match.
+
+**2026-09-14 — board merged to dev.** `feat-board` branch merged in
+(`70aa380`): read-only board (`board/`, :8002) covering M0 + M1 of
+`2026-09-11-board-service-design.md` — see *Where things stand* above for what
+it does and doesn't do yet.
 
 **2026-09-13 — the urgency scorer is switched off.** Intake isn't going to carry a
 free-text field, so there was nothing for the scorer to read. It was also the only
