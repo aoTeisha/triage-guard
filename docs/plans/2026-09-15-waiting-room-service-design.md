@@ -38,11 +38,17 @@ Safety Validation, Human Escalation, **Waiting Room Monitor**, Audit) — living
 `triage-app`, beside the other five:
 
 ```
-triage-app/app/timers.py                    timer store + fire-state machine (§4, §6)
-triage-app/app/actors/waiting_room.py       the sixth agent
-triage-app/app/graph/nodes/reassessment.py  the graph node (arrows 14, 15)
-triage-app/app/sweeper.py                   the worker loop (~40 lines)
+triage-app/app/monitor/timers.py            timer store: schema, schedule, claim/lease (§4, §6)
+triage-app/app/monitor/fire.py              the fire state machine: dispatch, ack, reconcile, notify (§4, §5)
+triage-app/app/monitor/sweeper.py           the worker loop (`uv run sweeper`)
+triage-app/app/graph/nodes/terminal.py      monitoring / awaiting_reassessment (arrows 13, 14)
+triage-app/app/graph/nodes/reassessment.py  reassessment_required (arrow 15)
 ```
+
+One package, `app/monitor/`, not scattered top-level modules — the graph nodes
+that pause and resume import `timers` from it directly and never import `fire`
+or `sweeper`, keeping the "proposes a moment, does not decide" split (§7)
+visible in the import graph, not just in prose.
 
 run as its own **process**, not its own **service** — `uv run sweeper` alongside
 `uv run triage-guard` — sharing the one triage store `2026-09-11-board-service-design.md`
@@ -126,7 +132,7 @@ Concretely, this changes two things and nothing else:
    though the control plane never heard about it. The service's worst failure degrades
    into exactly its purpose. Nothing about the treatment move has this property, which is
    why it is worth stating.
-2. **The forbidden transition is narrower.** `UNKNOWN → FIRING` is still forbidden. But
+2. **The forbidden transition is narrower.** `UNKNOWN → DISPATCHING` is still forbidden. But
    `UNKNOWN → ESCALATED_TO_HUMAN` is *permitted directly*, without passing through
    reconciliation, once the reconciliation budget is spent. Under the treatment machine
    that shortcut would be dangerous; here refusing it is what leaves a patient unwatched.
@@ -166,7 +172,7 @@ reschedules produces one machine per cycle.
 | -------------------- | ----------------------------------------------------------------------------- | ------- |
 | `SCHEDULED`          | Timer row exists with a `due_at` in the future. Nothing to do.                | no      |
 | `DUE`                | `due_at` has passed; claimed by the sweeper under a lease.                    | no      |
-| `FIRING`             | Fire dispatched to the control plane, awaiting acknowledgement.               | no      |
+| `DISPATCHING`             | Fire dispatched to the control plane, awaiting acknowledgement.               | no      |
 | `DELIVERED`          | Acknowledged — the case shows the effect. Next cycle is scheduled.            | **yes** |
 | `FAILED`             | Explicit rejection (`ACTION_DENIED`, case closed, thread gone). Evidence the fire did **not** take effect; safe to re-dispatch or to cancel. | no |
 | `UNKNOWN`            | Dispatch timed out, no acknowledgement. We do **not** know whether it landed. | no      |
@@ -184,13 +190,13 @@ afterwards, and "nobody is watching this patient" must never be reachable by acc
 | ---------------------- | -------------------------------- | ------------------- | ---------------------------------- |
 | `schedule`             | — → SCHEDULED                    | Monitor (on arrow 13 / gate entry) | graph audit record       |
 | `due`                  | SCHEDULED → DUE                  | Monitor sweeper     | its own clock + the timer row      |
-| `dispatch`             | DUE → FIRING                     | Monitor sweeper     | —                                  |
-| `ack_applied`          | FIRING → DELIVERED               | Flow (graph)        | the case's own state write         |
-| `ack_refused`          | FIRING → FAILED                  | Flow (graph)        | `ACTION_DENIED` / closed case      |
-| `dispatch_timeout`     | FIRING → UNKNOWN                 | Monitor sweeper     | its own timer                      |
+| `dispatch`             | DUE → DISPATCHING                     | Monitor sweeper     | —                                  |
+| `ack_applied`          | DISPATCHING → DELIVERED               | Flow (graph)        | the case's own state write         |
+| `ack_refused`          | DISPATCHING → FAILED                  | Flow (graph)        | `ACTION_DENIED` / closed case      |
+| `dispatch_timeout`     | DISPATCHING → UNKNOWN                 | Monitor sweeper     | its own timer                      |
 | `reconcile_result`     | RECONCILING → DELIVERED / FAILED | Monitor sweeper     | checkpoint + audit log (`fire_id`) |
 | `reconcile_unresolved` | RECONCILING → UNKNOWN            | Monitor sweeper     | — (store unreachable)              |
-| `redispatch`           | FAILED → FIRING                  | Monitor sweeper     | its own attempt counter            |
+| `redispatch`           | FAILED → DISPATCHING                  | Monitor sweeper     | its own attempt counter            |
 | `budget_spent`         | FAILED / UNKNOWN → ESCALATED_TO_HUMAN | Monitor sweeper | its own attempt counter          |
 | `cancel`               | any non-final → CANCELLED        | Monitor (on case event) | graph state (closed / re-filed) |
 
@@ -198,6 +204,11 @@ Same split as §4 of the modelling doc: everything derived from state the sweepe
 (clock, attempt counter, reconciliation outcome) is the sweeper's to produce; only
 `ack_applied` / `ack_refused` originate outside it, and they come from the Flow, which is
 the component that actually applied the event.
+
+A third ack outcome, `ack_deferred` (DISPATCHING → DISPATCHING, same `fire_id`), covers a thread
+suspended at an `interrupt()` (§17.1): the graph reports "not resumable yet," which is
+positive evidence, not a timeout, so it does not enter `UNKNOWN` and does not consume an
+attempt.
 
 ### State owner
 
@@ -209,7 +220,7 @@ duplicate-notification hazard arriving through the back door.
 
 ### Forbidden transition
 
-**`UNKNOWN → FIRING` directly.** From `UNKNOWN` the machine passes through `RECONCILING`;
+**`UNKNOWN → DISPATCHING` directly.** From `UNKNOWN` the machine passes through `RECONCILING`;
 only a reconciled `FAILED` permits re-dispatch, and only `budget_spent` permits the jump
 straight to `ESCALATED_TO_HUMAN`.
 
@@ -305,7 +316,7 @@ transaction, or there is a window where the clock and the case disagree.
 CREATE TABLE timers (
   timer_id     TEXT PRIMARY KEY,   -- case_id + kind + cycle
   case_id      TEXT NOT NULL,
-  kind         TEXT NOT NULL,      -- reassessment | gate_reminder | safety_park
+  kind         TEXT NOT NULL,      -- reassessment | gate_reminder | safety_park | reassessment_reminder
   cycle        INTEGER NOT NULL,   -- 0,1,2... per case+kind; the ladder rung
   due_at       TEXT NOT NULL,      -- ISO8601 UTC
   fire_state   TEXT NOT NULL,      -- §4
@@ -338,7 +349,7 @@ UPDATE timers SET fire_state='DUE', lease_until=:now_plus_lease,
  RETURNING timer_id, case_id, kind, cycle;
 ```
 
-A lease that expires with the row still in `FIRING` is exactly the `UNKNOWN` case and is
+A lease that expires with the row still in `DISPATCHING` is exactly the `UNKNOWN` case and is
 routed into `RECONCILING`, not re-dispatched — the crash-mid-dispatch path and the
 lost-ack path are the same path, which is the point of modelling it as absence of
 evidence rather than as a kind of error. Note that reconciliation does not have to be
@@ -362,7 +373,7 @@ exactly one succeeds — the others simply match zero rows and move on to the ne
 candidate. No coordinator, no explicit locking protocol between processes: the database
 is the only arbiter. Crash recovery is identical whether the same process or a
 different one performs the next sweep, because ownership is decided by *lease expiry*,
-not by which process started the attempt — a stuck `FIRING` row is picked up by
+not by which process started the attempt — a stuck `DISPATCHING` row is picked up by
 whoever claims it next and routed into `RECONCILING`, exactly as in the single-process
 case.
 
@@ -547,7 +558,7 @@ fourth project's own — `tests/test_timers.py`, `tests/test_sweeper.py`.
 
 - **timeout is not failure:** a dispatch that times out lands in `UNKNOWN`, never `FAILED`
 - **no blind re-fire:** from `UNKNOWN`, the only reachable next states are `RECONCILING`
-  and (budget spent) `ESCALATED_TO_HUMAN`; assert `FIRING` is unreachable
+  and (budget spent) `ESCALATED_TO_HUMAN`; assert `DISPATCHING` is unreachable
 - **reconcile → delivered:** a fire whose ack was lost but whose audit record exists
   resolves to `DELIVERED` and does **not** notify twice
 - **reconcile → failed → re-dispatch** carries the *same* `fire_id`
@@ -555,7 +566,7 @@ fourth project's own — `tests/test_timers.py`, `tests/test_sweeper.py`.
 - **budget spent escalates out-of-band:** with the graph unreachable throughout, the
   escalation is still raised — the wait-liveness property holds through total control-plane
   failure
-- **crash recovery:** kill the sweeper mid-`FIRING`; on restart the lease expires into
+- **crash recovery:** kill the sweeper mid-`DISPATCHING`; on restart the lease expires into
   `RECONCILING`, not a re-dispatch
 - **catch-up sweep:** N overdue timers after a simulated outage fire at the bounded rate,
   cases that moved on are `CANCELLED` not fired, and affected cases carry `timer_gap`
@@ -571,7 +582,7 @@ fourth project's own — `tests/test_timers.py`, `tests/test_sweeper.py`.
 
 | # | Deliverable | Depends on | Rough size |
 | - | ----------- | ---------- | ---------- |
-| **M0** | `timers` + `sweeper_heartbeats` tables in the shared store, `app/timers.py` (claim, lease), `app/sweeper.py` loop and heartbeat write. Fires nothing yet. | nothing | ~half day |
+| **M0** | `timers` + `sweeper_heartbeats` tables in the shared store, `app/monitor/timers.py` (claim, lease), `app/monitor/sweeper.py` loop and heartbeat write. Fires nothing yet. | nothing | ~half day |
 | **M1** | The fire state machine end to end: dispatch, ack, `UNKNOWN`, `RECONCILING`, `fire_id` de-dupe, budgets. Reassessment timer only. | M0 | ~2 days |
 | **M2** | Graph side: `reassessment_required` node, arrows 14 / 15, `State.REASSESSMENT_REQUIRED` out of `UNIMPLEMENTED_STATES`. Board column M3 lights up. | M1 | ~1 day |
 | **M3** | Gate ladder 20a / 20b + safety-fail parking SLA; notification rate limiting. | M1 | ~1 day |
@@ -587,28 +598,47 @@ the heartbeat, the monitor's silent failure mode is undetectable, which is worse
 not shipping it, because a monitor people believe in is a monitor they stop
 double-checking.
 
-## 17. Open questions
+## 17. Open questions — resolved
 
 1. **Does the reassessment timer keep running while a case sits in `human_review`?**
-   `order_key` explicitly persists across state changes, and the patient is still waiting,
-   so the argument for "yes, it keeps running" is strong — but that means a gated case can
-   fire a reassessment into a thread that is suspended at an `interrupt()`. Decide the
-   interaction before M1, because it decides whether the fire is deferred or refused.
-2. **Reassessment intervals per band** — clinical sign-off, per §8. Who signs?
-3. **Does a gate ladder rung count against `MAX_CORRECTION_ROUNDS`?** It should not (a
-   reminder is not a correction attempt) but nothing says so today.
+   **Decision: yes, it keeps running, and the fire is deferred, not refused.** `order_key`
+   already persists across state changes on the same reasoning — the patient is still
+   physically waiting regardless of which queue they sit in. If the sweeper dispatches
+   into a thread suspended at an `interrupt()`, the graph reports "not resumable right
+   now" (a third ack outcome alongside `ack_applied` / `ack_refused`); the fire stays in
+   `DISPATCHING` and is retried on the *same* `fire_id` once the thread resumes, rather than
+   entering `UNKNOWN` or `FAILED` for a case the system knows perfectly well is fine. This
+   is neither of the two evidence outcomes §4 already has — it is immediate, positive
+   evidence that nothing can be decided yet — so it gets its own edge rather than being
+   forced into `ack_refused`.
+2. **Reassessment intervals per band** — clinical sign-off, per §8. **Decision: the
+   Medical Director signs.** Tracked in `STATUS.md` § Four loose ends as pending; the
+   placeholder values in `app/budgets.py` ship and run under a `# REQUIRES_SIGNOFF`
+   marker so M0/M1 are not blocked on a governance meeting.
+3. **Does a gate ladder rung count against `MAX_CORRECTION_ROUNDS`?** **Decision: no.** A
+   reminder re-notifies; it does not re-attempt a correction. `SPECIFICATION.md`'s budget
+   definition gets a one-line note that reminder dispatches are excluded from the count.
 4. **What watches a case parked in `reassessment_required` that is never re-filed?**
-   Arrow 15 needs a nurse; nothing bounds the wait for one. This is the same hole the gate
-   ladder fills for `awaiting_human_approval`, and it probably needs the same ladder.
-5. **Terminal `ESCALATED_TO_HUMAN` — who exactly?** Charge nurse for the clinical case,
-   technician for the infrastructure case; the split is clear in the modelling doc's
-   metric 1 and should be explicit in the notification payload.
-6. **Grace window for `timer_gap`.** How overdue is "the system was not watching"? A
-   thirty-second sweep delay is not a gap; a four-minute one for an ESI-2 patient is.
-7. **Write order on arrow 13.** Does `monitoring` write the timer row before or after
-   the node returns (i.e. before or after LangGraph commits the checkpoint)? Writing it
-   first risks a timer for a case that never actually finished entering `monitoring` if
-   the checkpoint commit then fails; writing it after reopens the residual in-process
-   gap in §3. Pick this when M1 is coded — the recovery sweep (§5b.3) has to cover
-   whichever order is chosen either way, so it is not safety-blocking, just worth being
-   deliberate about.
+   **Decision: the same ladder mechanism, as a third timer kind.** `kind='reassessment_reminder'`
+   reuses the existing `timers` schema and fire state machine unchanged — no new
+   mechanism, just a third row alongside `gate_reminder` and `safety_park` in §6's `kind`
+   column, widening from the assigned nurse to any charge nurse on the same two-rung
+   pattern as 20a → 20b.
+5. **Terminal `ESCALATED_TO_HUMAN` — who exactly?** **Decision: split by cause, not by
+   timer kind.** `escalation_record.recipient_class` (§13) is set from *why* the budget
+   was spent: a clinical cause (deterioration, safety-park SLA, reassessment overdue)
+   routes to the charge nurse; an infrastructure cause (store/graph unreachable through
+   the whole reconcile budget) routes to the on-call technician. Both draw from the same
+   `ESCALATED_TO_HUMAN` state — the split is in the payload, not a new state.
+6. **Grace window for `timer_gap`.** **Decision: acuity-scaled, not one constant.** Same
+   sourcing as the reassessment interval it shadows (§8: clinical policy, signed off with
+   it, not measured) — an ESI-2 grace window is short, an ESI-5 one is longer, so the
+   trail doesn't flag a gap for a patient it never mattered for and doesn't stay quiet for
+   one it did.
+7. **Write order on arrow 13.** **Decision: write the timer row *before* the node
+   returns.** The alternative — writing after the checkpoint commits — reopens exactly the
+   residual gap §3 describes as *rare*; writing first turns the failure mode into "timer
+   row exists, case never reached `monitoring`," which is a new case the recovery sweep
+   (§5b.3) must additionally treat as `CANCELLED` on catch-up, cheaper than a patient with
+   no timer at all. §3's residual-gap paragraph and §5b.3's sweep both stand as written;
+   this just settles which side of the gap is the covered one.

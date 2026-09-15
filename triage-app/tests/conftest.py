@@ -10,15 +10,38 @@ import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from app.graph import build_graph
+from app.monitor import timers
 from app.runner import hydrate
 
 
 @pytest.fixture(autouse=True)
-def offline(monkeypatch):
-    """Force mock mode and silence tracing for the whole suite."""
+def offline(monkeypatch, tmp_path):
+    """Force mock mode, silence tracing, and isolate the shared timer store.
+
+    `timers.connection()` caches one SQLite connection per process, reused
+    by both the graph's `monitoring` node and the sweeper. Without clearing
+    that cache between tests, the first test to reach `monitoring` would
+    lock in a connection for the rest of the suite — potentially even the
+    real `.triage_state.db` file, if no earlier test had overridden its path.
+    """
     monkeypatch.setenv("TRIAGE_LLM", "mock")
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    monkeypatch.setenv("TRIAGE_CHECKPOINT_DB", str(tmp_path / "timers.db"))
+    timers.connection.cache_clear()
+    yield
+    timers.connection.cache_clear()
+
+
+@pytest.fixture
+def conn(tmp_path):
+    """A throwaway timer store, isolated per test (used by test_timers.py,
+    test_fire.py, test_sweeper.py — none of these read/write the checkpointer).
+    """
+    c = sqlite3.connect(str(tmp_path / "timers.db"))
+    timers.init_schema(c)
+    yield c
+    c.close()
 
 
 @pytest.fixture

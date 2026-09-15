@@ -49,13 +49,15 @@ def config_for(case_id: str) -> dict[str, Any]:
 
 
 def hydrate(result: Any) -> dict[str, Any]:
-    """Fill in fields no node happened to write.
+    """Fill in fields no node happened to write, using their declared
+    defaults from `TriageState`.
 
-    LangGraph returns only the channels a run actually touched, so a case that
-    stopped at `missing_fields_requested` comes back with no `safety_passed` key
-    at all — and a caller reading `.get("safety_passed")` would see None where the
-    declared default is False. Round-tripping through the model restores every
-    default and validates what was written.
+    LangGraph only returns the fields a run actually touched, so a case that
+    stopped early at `missing_fields_requested` comes back with no
+    `safety_passed` key at all — a caller reading `.get("safety_passed")`
+    would see `None`, even though the field's declared default is `False`.
+    Round-tripping the result through the `TriageState` model restores every
+    missing default, and validates what was actually written.
     """
     values = {k: v for k, v in result.items() if not k.startswith("__")}
     return TriageState.model_validate(values).model_dump()
@@ -105,8 +107,9 @@ def snapshot(case_id: str) -> dict[str, Any]:
 
 
 def history(case_id: str) -> list[dict[str, Any]]:
-    """Every checkpoint for a case, oldest first — the full state-transition trail,
-    free from the checkpointer already in use.
+    """Every checkpoint for a case, oldest first — the full history of state
+    snapshots, read straight from the checkpointer LangGraph already uses to
+    persist the run.
     """
     snapshots = list(graph().get_state_history(config_for(case_id)))
     return [s.values for s in reversed(snapshots)]
@@ -126,7 +129,11 @@ def run_to_completion(
     state, pending = start_case(case, thread_id=thread)
     gates: list[dict[str, Any]] = []
 
-    while pending and len(gates) < max_gates:
+    # The waiting-room pause (`awaiting_reassessment`) is not a gate — nobody
+    # answers it directly, a reassessment timer firing does. So an unattended
+    # run just stops here, the same way it used to simply reach the graph's
+    # END before this pause node existed.
+    while pending and "gate" in pending and len(gates) < max_gates:
         gates.append(pending)
         reply = human_bridge.mock_resume_for(pending["gate"])
         state, pending = resume_case(thread, reply)

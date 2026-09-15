@@ -1,8 +1,9 @@
 """The HTTP layer, against real cases run through the real graph.
 
-No crm-stub is started anywhere in this suite. Every case therefore takes the
-`db_error` degrade path, and the board still renders — which is rule 8
-("a CRM outage must not blank the board") asserted rather than asserted-about.
+No crm-stub is started anywhere in this suite, so every case takes the
+"CRM unreachable" degrade path. The board must still render correctly when
+that happens — this suite proves that by actually exercising it, rather than
+just asserting about it in isolation.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.mock_cases import DEMO_CASES
+from app.monitor import timers
 from app.runner import run_to_completion
 
 import board.api as api_module
@@ -78,9 +80,10 @@ def test_case_detail_returns_the_shared_view_and_the_trail(seeded):
 
 
 def test_a_case_suspended_at_the_gate_is_on_the_board(checkpoint_db):
-    """The gate node writes `human_review` when it returns — and a suspended run
-    has not returned. Without reading the pending task, the one case a charge
-    nurse is actually needed for would be missing from the board.
+    """The gate node writes `human_review` status when it *returns* — but a
+    suspended run is paused mid-node and never returns. Without separately
+    checking for that pending pause, the one case that actually needs a
+    charge nurse right now would be missing from the board.
     """
     from app.runner import start_case
 
@@ -111,9 +114,10 @@ def test_notifications_come_from_the_audit_arrows(seeded):
 
 
 def test_a_notification_names_the_complaint_even_with_no_redacted_payload():
-    """The cases that generate notifications — missing fields, unusable scan,
-    refused input — fail before a redacted payload exists. Falling back to the
-    raw one keeps the strip readable; only the complaint is read from it.
+    """The cases that generate notifications (missing fields, unusable scan,
+    refused input) all fail *before* a redacted payload gets built. Falling
+    back to the raw payload keeps the notification readable; only the
+    complaint text is ever read from it, never a patient identifier.
     """
     state = {
         "case_id": "c-1",
@@ -126,8 +130,88 @@ def test_a_notification_names_the_complaint_even_with_no_redacted_payload():
     assert "P-1" not in str(note)
 
 
-def test_the_board_issues_no_writes(seeded):
-    """M2 is not built: there is no move/release endpoint to call by accident."""
+def test_heartbeat_endpoint_reports_degraded_with_no_worker(checkpoint_db):
+    data = client.get("/api/heartbeat").json()
+    assert data["degraded"] is True
+    assert data["workers"] == []
+
+
+def test_heartbeat_endpoint_reports_healthy_after_a_beat(checkpoint_db):
+    timers.heartbeat(timers.connection(), worker_id="w1")
+
+    data = client.get("/api/heartbeat").json()
+
+    assert data["degraded"] is False
+    assert data["workers"][0]["worker_id"] == "w1"
+
+
+def test_board_counters_show_monitor_degraded(checkpoint_db):
+    assert client.get("/api/board").json()["counters"]["monitor_degraded"] is True
+
+    timers.heartbeat(timers.connection(), worker_id="w1")
+
+    assert client.get("/api/board").json()["counters"]["monitor_degraded"] is False
+
+
+def test_the_board_issues_no_writes_except_the_named_exception(seeded):
+    """Move/release endpoints don't exist yet, so there's no way to trigger
+    them by accident. The one deliberate exception is `/deteriorated` — a
+    nurse-observed condition change re-entering the case's graph run, the
+    same way intake-channel's own `/resume` endpoint does.
+    """
     assert client.post(f"/api/case/{seeded[0]}/move", json={}).status_code == 404
     assert client.post(f"/api/case/{seeded[0]}/release", json={}).status_code == 404
-    assert not [r for r in api_module.app.routes if getattr(r, "methods", set()) & {"POST"}]
+    post_paths = {
+        r.path for r in api_module.app.routes if getattr(r, "methods", set()) & {"POST"}
+    }
+    assert post_paths == {"/api/case/{case_id}/deteriorated"}
+
+
+def test_deteriorated_endpoint_re_enters_the_graph_while_waiting(checkpoint_db):
+    from app.runner import start_case
+
+    case = dict(DEMO_CASES["clean"])
+    case["case_id"] = f"deteriorating-{uuid4().hex[:6]}"
+    values, pending = start_case(case, thread_id=case["case_id"])
+    assert pending == {"case_id": case["case_id"], "waiting_room": True}
+
+    resp = client.post(
+        f"/api/case/{case['case_id']}/deteriorated",
+        json={"signal": "spo2 dropped to 88", "actor_role": "nurse"},
+    )
+
+    assert resp.status_code == 200
+    detail = client.get(f"/api/case/{case['case_id']}").json()
+    # A clean case clears safety and verdict checks again and pauses once more
+    # for its next reassessment cycle — the same resume loop
+    # `app.monitor.fire.dispatch`'s own tests exercise directly.
+    assert detail["view"]["control_state"] == "monitoring"
+    assert any(
+        rec.get("explanation", "").startswith("reassessment timer fired: DETERIORATION_DETECTED")
+        for rec in detail["view"]["audit_log"]
+    )
+
+
+def test_deteriorated_endpoint_refuses_a_case_sitting_at_the_human_gate(checkpoint_db):
+    from app.runner import start_case
+
+    case = dict(DEMO_CASES["clean"])
+    case["case_id"] = f"gated-{uuid4().hex[:6]}"
+    case["nurse_proposed_acuity"] = 5   # forces the discrepancy gate, not the queue
+    _, pending = start_case(case, thread_id=case["case_id"])
+    assert pending and pending.get("gate")   # paused at the human gate, not monitoring
+
+    resp = client.post(
+        f"/api/case/{case['case_id']}/deteriorated",
+        json={"signal": "x", "actor_role": "nurse"},
+    )
+
+    assert resp.status_code == 409
+
+
+def test_deteriorated_endpoint_404s_for_an_unknown_case(checkpoint_db):
+    resp = client.post(
+        "/api/case/does-not-exist/deteriorated",
+        json={"signal": "x", "actor_role": "nurse"},
+    )
+    assert resp.status_code == 404

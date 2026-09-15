@@ -1,23 +1,40 @@
-"""awaiting_human_approval — the human gate (9c, 10·fail, 1b.z·*)."""
+"""awaiting_human_approval — the node where a case pauses for a charge
+nurse's decision, whether that's resolving a nurse/system acuity
+disagreement, confirming a low-confidence acuity, or reviewing a failed
+safety validation.
+"""
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.actors import human_bridge
+from app.budgets import GATE_REMINDER_DELAY_MINUTES
 from app.deterministic import actor_is_charge, assign_order_key, audit, bucket_for, now_iso
 from app.graph.state import TriageState
 from app.labels import Arrow
+from app.monitor import timers
 from app.states import AcuitySource, ClinicalStatus, State
 
 
 def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
-    """The human gate. A real pause: the run suspends here until someone resumes it.
+    """The human gate. A real pause: the run suspends here until someone
+    calls `resume_case` with a decision.
 
-    Everything before `request_decision` must stay side-effect-free — LangGraph
-    replays this node from the top when the run resumes, so any write above the
-    interrupt would happen twice.
+    Everything before `request_decision` must stay side-effect-free —
+    LangGraph replays this node from the top every time the run resumes, so
+    any write placed before the pause would run twice. `timers.schedule` is
+    an exception: it's safe to call twice because it's idempotent on
+    `timer_id` (a repeat call with the same id is a no-op), so a replay just
+    re-schedules the same two reminder timers instead of duplicating them.
     """
+    now = datetime.now(timezone.utc)
+    for cycle, delay in GATE_REMINDER_DELAY_MINUTES.items():
+        due_at = (now + timedelta(minutes=delay)).isoformat()
+        timers.schedule(timers.connection(), case_id=state.case_id, kind="gate_reminder",
+                         cycle=cycle, due_at=due_at)
+
     reason = state.escalation_reason or human_bridge.SAFETY_FAIL
 
     response = human_bridge.request_decision(
@@ -35,9 +52,9 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
     decision = (response or {}).get("decision")
     authorized, why = actor_is_charge(resolver)
 
-    # Arrow 12: the Human Escalation agent has returned. Recorded before the
-    # response is authorized or applied, so a refused response still leaves
-    # evidence that a response arrived.
+    # Record that a decision came back, before checking whether it's
+    # authorized or applying it — so even a refused response leaves evidence
+    # that someone actually answered.
     recorded = audit(state.case_id, State.AWAITING_HUMAN_APPROVAL, "emit_event_log",
                      f"escalation recorded: {decision} by {resolver}",
                      Arrow.ESCALATION_RECORDED)
@@ -50,7 +67,8 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
     }
 
     if not authorized:
-        # BLK: the attempt is refused and the case does not move.
+        # Whoever responded isn't authorized as a charge nurse: refuse the
+        # attempt and leave the case exactly where it was.
         return base | {
             "audit_log": [recorded,
                           audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,

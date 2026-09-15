@@ -10,7 +10,10 @@ from tests.conftest import arrows
 def test_clean_case_reaches_the_queue(run):
     state, pending, _ = run(DEMO_CASES["clean"])
 
-    assert pending is None
+    # Reaching the queue is a real pause: nobody answers it directly, a
+    # reassessment timer firing does, so it's a "waiting_room" interrupt
+    # rather than a gate awaiting a human decision.
+    assert pending == {"case_id": DEMO_CASES["clean"]["case_id"], "waiting_room": True}
     assert state["control_state"] == State.MONITORING.value
     assert state["safety_passed"] is True
     assert state["approved"] is True
@@ -18,15 +21,18 @@ def test_clean_case_reaches_the_queue(run):
 
 
 def test_clean_case_walks_the_documented_arrows_in_order(run):
-    """The audit trail is meant to diff against the Transitions table."""
+    """The audit trail should record every major step of a clean case's
+    journey through the graph, in order, so it can be checked against
+    expected behavior.
+    """
     state, _, _ = run(DEMO_CASES["clean"])
     trail = arrows(state)
 
-    # The five agents in the spec's Actors table are traced as invoke/propose
-    # pairs: 3/4 Intake Parser, 7/8 Acuity Classifier, 9x/10 Safety Validation,
-    # 11/12 Human Escalation, 13/14 Waiting Room Monitor. The CRM (4b) and the
-    # normalizer (5/6) are not agents — those arrows are on-entry actions the
-    # Actions column names, recorded for the same traceability.
+    # Every agent-driven step (parsing intake, classifying acuity, validating
+    # safety, escalating to a human, monitoring the wait) is traced as an
+    # "invoke" / "result" pair of audit entries. The CRM lookup and the
+    # payload-redaction step aren't agents — they're plain on-entry actions —
+    # but they're recorded the same way for the same traceability.
     assert trail[:4] == ["1a", "2", "3", "4"]
     assert trail.index("4b") < trail.index("4b·found" if "4b·found" in trail else "AF·db")
     assert trail.index("5") < trail.index("6")     # build payload -> payload clean

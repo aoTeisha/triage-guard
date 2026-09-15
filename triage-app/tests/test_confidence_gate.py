@@ -1,10 +1,10 @@
-"""Arrow 11 — the low-confidence confirmation gate.
+"""Tests for the low-confidence confirmation gate: when a case's safety
+verdict passed but the classifier's confidence in its proposed acuity was
+too low, the case still gets escalated to a charge nurse for confirmation.
 
-`escalation_needed` = "verdict fail ∨ low confidence ∨ policy hit" is the
-condition for invoking the Human Escalation agent anywhere in the graph, not a
-guard local to one state. Its three disjuncts fire in three different places:
-"verdict fail" on the 10·fail edge, "low confidence" here, "policy hit" nowhere
-yet (undefined in the spec). These tests cover the middle one.
+Escalating to a human happens for three separate reasons across the graph: a
+failed safety verdict, low classifier confidence (covered here), or a policy
+hit (not yet implemented). This file covers only the confidence-based one.
 """
 
 from __future__ import annotations
@@ -21,8 +21,10 @@ from app.schemas import AcuityProposal
 from app.states import State
 from tests.conftest import arrows
 
-# Nurse 2, classifier 2 -> gap 0, so the case sails past the discrepancy gate and
-# reaches verdict_proposed. Confidence is what decides whether it stops there.
+# Nurse proposes acuity 2, the mock classifier also proposes 2 — a gap of 0,
+# so the case sails past the nurse/system discrepancy check and reaches
+# verdict_proposed. From there, classifier confidence alone decides whether
+# it stops for confirmation.
 SURE_CASE = {
     "case_id": "case-conf",
     "channel": "website",
@@ -38,7 +40,9 @@ SURE_CASE = {
 
 
 def test_confidence_at_the_threshold_is_good_enough():
-    """`confidence >= threshold`, per the Guards table. Not strictly greater."""
+    """Confidence exactly equal to the threshold is good enough — the check
+    is `>=`, not strictly `>`.
+    """
     assert confidence_ok(CONFIDENCE_THRESHOLD) is True
 
 
@@ -47,16 +51,18 @@ def test_confidence_below_the_threshold_is_not():
 
 
 def test_a_missing_confidence_is_not_treated_as_low():
-    """No confidence means no model proposal, not an unsure one. The Guards table
-    marks this guard 'not applicable during a classifier outage'.
+    """A missing confidence value means no model proposal was made at all
+    (classifier outage) — not an unsure one — so this guard doesn't apply
+    and defaults to passing.
     """
     assert confidence_ok(None) is True
 
 
 def test_the_guard_is_skipped_while_the_gate_is_disabled():
-    """AF·classifier disables the discrepancy gate for the outage; a confidence
-    check on a proposal that does not exist would send every degraded case to a
-    charge nurse.
+    """During a classifier outage, the discrepancy check is disabled and
+    there's no classifier proposal to check confidence on — running the
+    confidence check anyway would incorrectly escalate every degraded case
+    to a charge nurse.
     """
     assert confidence_ok(0.01, gate_disabled=True) is True
 
@@ -81,13 +87,18 @@ def test_a_confident_classifier_never_reaches_the_gate(run):
     """The mock proposes 0.81, comfortably above the default threshold."""
     state, pending, _ = run(SURE_CASE)
 
-    assert pending is None
+    # Reaching the queue is a real pause (a waiting-room interrupt, not a
+    # gate awaiting a human decision), so `pending` is a waiting-room payload
+    # here, not `None`.
+    assert pending == {"case_id": SURE_CASE["case_id"], "waiting_room": True}
     assert state["control_state"] == State.MONITORING.value
     assert "11" not in arrows(state)
 
 
 def test_an_unsure_classifier_pauses_for_confirmation(run, monkeypatch):
-    """Arrow 11: safety passed, but the model was not sure enough."""
+    """Safety validation passed, but the classifier wasn't confident enough
+    in its proposed acuity, so the case pauses for a charge nurse to confirm.
+    """
     from app.actors import acuity_classifier
 
     monkeypatch.setattr(
@@ -103,7 +114,8 @@ def test_an_unsure_classifier_pauses_for_confirmation(run, monkeypatch):
     assert pending is not None
     assert pending["gate"] == "low_confidence"
     assert "11" in arrows(state)
-    # It got here on a *passing* verdict, which is what distinguishes 11 from 10·fail.
+    # Got here by passing safety validation but failing the confidence check
+    # — distinct from arriving here via a failed safety verdict instead.
     assert state["safety_passed"] is True
 
 
@@ -136,8 +148,9 @@ def test_the_unsure_case_is_resolved_like_any_acuity_question(graph, run, monkey
 
 
 def test_a_degraded_classifier_does_not_trip_the_confidence_gate(run, monkeypatch):
-    """AF·classifier already routes to nurse acuity with the gate off. Adding a
-    confidence check must not re-escalate every case during an outage.
+    """During a classifier outage, the case already falls back to the
+    nurse's own acuity with the discrepancy gate disabled. Adding a
+    confidence check must not undo that by re-escalating every case anyway.
     """
     from app.actors import acuity_classifier
 
@@ -154,11 +167,13 @@ def test_a_degraded_classifier_does_not_trip_the_confidence_gate(run, monkeypatc
     assert state["control_state"] == State.MONITORING.value
 
 
-# ---- arrow 12: the escalation agent's response is recorded ---------------------
+# ---- a charge nurse's gate response gets recorded ---------------------------
 
 
 def test_a_gate_response_is_recorded_before_it_is_applied(graph, run, monkeypatch):
-    """Arrow 12 — the Human Escalation agent returning its proposal."""
+    """A charge nurse's decision at the gate gets logged as its own audit
+    entry, separate from whatever it causes to happen next.
+    """
     from langgraph.types import Command
 
     from app.actors import acuity_classifier

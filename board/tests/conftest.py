@@ -1,6 +1,7 @@
 """Offline fixtures. No LLM, no key, and deliberately no crm-stub running:
-rule 8 says the board renders through a CRM outage, and the way to assert that
-is to never start one.
+the board is required to keep rendering even when the CRM (the external
+patient-lookup service) is down, and the only reliable way to prove that is
+to never start one.
 """
 
 from __future__ import annotations
@@ -10,25 +11,45 @@ import sqlite3
 import pytest
 
 from app.deterministic import assign_order_key, bucket_for, now_iso
+from app.monitor import timers
 from app.states import AcuitySource, ClinicalStatus, State
 
 
 @pytest.fixture(autouse=True)
 def no_crm(monkeypatch):
-    """The board must render through a CRM outage, so the suite runs with the CRM
-    unreachable — pinned here rather than left to depend on whether a crm-stub
-    happens to be running on :8000, which made the suite pass or fail by accident.
+    """Forces every test to run as if the CRM (patient-lookup service) is
+    unreachable. Pinned here explicitly rather than left to depend on whether
+    a crm-stub process happens to be running on :8000 — that made the suite
+    pass or fail by accident depending on what else was running locally.
     """
     from app import crm_client
 
     monkeypatch.setattr(crm_client, "CRM_BASE_URL", "http://127.0.0.1:9")
 
 
+@pytest.fixture(autouse=True)
+def isolated_timers(monkeypatch, tmp_path):
+    """`timers.connection()` caches one SQLite connection per process, shared
+    by the graph's `monitoring` node and the background sweeper. Give every
+    test its own temp database file so they can't leak state through that
+    shared connection — not just tests that ask for `checkpoint_db` directly:
+    `/api/board` and `/api/heartbeat` now open this same connection on every
+    call (to report whether the sweeper looks alive), so any test hitting
+    either endpoint needs its own isolated file, whether or not it creates a
+    case.
+    """
+    monkeypatch.setenv("TRIAGE_CHECKPOINT_DB", str(tmp_path / "timers.db"))
+    timers.connection.cache_clear()
+    yield
+    timers.connection.cache_clear()
+
+
 @pytest.fixture
 def checkpoint_db(monkeypatch, tmp_path):
-    """A throwaway checkpoint file, wired into both `runner.graph` (writes) and
-    `runner.DB_PATH` (the board's enumeration reads). They must be the same file
-    or the board would list one store and read another.
+    """A throwaway checkpoint file, wired into both `runner.graph` (where
+    cases are written) and `runner.DB_PATH` (which the board reads to list
+    cases). They must be the same file, or the board would be reading a
+    different store than the one the test just wrote to.
     """
     monkeypatch.setenv("TRIAGE_LLM", "mock")
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
@@ -55,8 +76,9 @@ def make_state(
     status: ClinicalStatus = ClinicalStatus.WAITING,
     **extra,
 ) -> dict:
-    """A persisted-case shape, built the way the graph builds it: order_key comes
-    from `assign_order_key`, never from the test.
+    """Builds a case dict shaped the way the graph actually persists one:
+    `order_key` comes from `assign_order_key` — the same function the graph
+    itself calls — rather than being hand-computed by the test.
     """
     return {
         "case_id": case_id,

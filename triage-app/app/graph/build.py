@@ -1,18 +1,21 @@
-"""The graph — a direct transcription of docs/SPECIFICATION.md § Transitions.
+"""The graph: wires every state (a step in a case's workflow, like "classifying
+acuity" or "awaiting human approval") to the states it's allowed to move to
+next.
 
-This module is the transition table. Every `add_conditional_edges` call below is a
-block of rows from that table, and the path map is the set of legal moves: a
-destination that is not in the map cannot be reached, and LangGraph validates the
-map against the declared nodes at compile time.
+Every `add_conditional_edges` call below declares one state's legal next
+moves as an explicit map from outcome to destination state. A destination
+not in that map cannot be reached — LangGraph checks the map against the
+declared nodes when the graph is compiled, so a typo or a missing edge fails
+immediately instead of silently routing nowhere at runtime.
 
-That is the property the old CrewAI Flow could not provide. A `@router` there
-returned an arbitrary string and whichever listener matched, ran; the set of
-allowed edges existed only as a convention spread across decorators. Here it is a
-declared object the framework holds, checks, and can draw.
+That's an improvement over an earlier version of this system (built on
+CrewAI Flow), where a routing function could return any string and whichever
+listener happened to match would run — the set of allowed transitions only
+existed as a convention spread across code, unchecked by anything.
 
-`tests/test_edges.py` asserts this wiring against the spec table, and
-`UNIMPLEMENTED_STATES` keeps the gap between spec and skeleton explicit rather than
-invisible.
+`tests/test_edges.py` asserts this wiring is complete, and
+`UNIMPLEMENTED_STATES` lists the states this version intentionally doesn't
+wire up yet, so that gap stays visible instead of silently missing.
 """
 
 from __future__ import annotations
@@ -28,17 +31,21 @@ from app.graph.state import TriageState
 from app.labels import Arrow, Route
 from app.states import State
 
-# Control states the spec names that this slice does not wire. Listed, not
-# forgotten: the World-plane slice (monitoring timers, treatment move, release) is
-# out of scope for the skeleton, and `tests/test_edges.py` fails if a state is
-# neither a node here nor in this set.
-UNIMPLEMENTED_STATES: frozenset[State] = frozenset(
-    {State.REASSESSMENT_REQUIRED, State.CASE_CLOSED}
-)
+# States this version deliberately does not implement yet — listed here so
+# the gap is explicit rather than accidental. `treatment move` and `release`
+# (what happens after a case leaves the waiting queue) are out of scope for
+# now. `tests/test_edges.py` fails if any state is neither wired as a node
+# below nor listed in this set, so nothing can silently fall through the
+# cracks.
+UNIMPLEMENTED_STATES: frozenset[State] = frozenset({State.CASE_CLOSED})
 
-# Nodes whose actor performs I/O and can therefore raise. RetryPolicy covers the
-# transport crash; the V-retry self-loops in the edge maps below cover malformed
-# output. See the migration notes on why these two counters are separate.
+# States whose node calls out to something that can fail at the transport
+# level (a crashed process, a dropped connection) rather than just returning
+# a bad answer. `RetryPolicy` below handles that transport-level crash by
+# re-running the whole node; a *malformed but successfully-returned* answer
+# is a separate failure mode, handled by each state's own retry edge in the
+# conditional-edge maps further down. The two need separate counters because
+# they're triggered by different things — a crash vs. a bad result.
 _CRASH_RETRY: dict[State, str] = {
     State.RESOLVING_IDENTITY: "crm",
     State.CLASSIFYING: "acuity_classifier",
@@ -54,20 +61,24 @@ def _retry_policy(state: State) -> RetryPolicy | None:
     return RetryPolicy(max_attempts=attempts) if attempts > 1 else None
 
 
-# Error handlers run after the retry policy is spent. Without them a raising
-# actor propagates out of `invoke` and kills the run — the AF-* rows would only
-# cover an actor that returned something unusable, never one that crashed, which
-# is the case the failure model is actually written about.
+# These error handlers run once a node's retry policy is exhausted and it
+# still raised. Without a handler, that exception would propagate out of
+# `graph.invoke` and kill the whole run — logging a failure only covers a
+# node that returned a bad result, never one that crashed outright, which is
+# the more serious case this needs to handle.
 #
-# The `error: NodeError` parameter is injected BY TYPE ANNOTATION, not by
-# position. Drop the annotation and LangGraph calls the handler with the state
-# alone and it fails with a missing-argument TypeError.
+# The `error: NodeError` parameter below is matched by its type annotation,
+# not by its position in the function signature. Remove the annotation and
+# LangGraph will call the handler with just the state and it will fail with
+# a missing-argument TypeError.
 
 
-# `goto` may only name a destination already declared for the failing node. The
-# degrade nodes are those destinations, so a handler records why the actor crashed
-# and hands over to the same fallback the verification path uses — one degrade
-# implementation per agent, reached from both directions.
+# `goto` may only name a destination already declared as reachable from the
+# failing node. The degrade nodes below are those declared destinations, so
+# each handler logs why its agent crashed and then hands off to the same
+# fallback node that the normal validation-failure path also uses — one
+# degrade implementation per agent, reached whether it crashed or just
+# returned something unusable.
 
 
 def _crash(state: TriageState, node: State, agent: str, error: NodeError) -> dict:
@@ -81,7 +92,9 @@ def _crash(state: TriageState, node: State, agent: str, error: NodeError) -> dic
 
 
 def _on_classifier_error(state: TriageState, error: NodeError) -> Command:
-    """AF·classifier — non-critical, fail-open. Degrade to the nurse's acuity."""
+    """The acuity classifier crashed. Non-critical — fail open by degrading
+    to the nurse's own proposed acuity instead of the model's.
+    """
     return Command(
         update=_crash(state, State.CLASSIFYING, "acuity_classifier", error),
         goto="classifier_fallback",
@@ -89,8 +102,9 @@ def _on_classifier_error(state: TriageState, error: NodeError) -> Command:
 
 
 def _on_safety_error(state: TriageState, error: NodeError) -> Command:
-    """AF·safety — critical, degrade-to-human. Route every case to a charge nurse
-    so no-approval-bypass still holds while the validator is out.
+    """The safety validator crashed. Critical — degrade to a human instead of
+    the model: route every case to a charge nurse so the rule "nothing skips
+    approval" still holds even while the validator is down.
     """
     return Command(
         update=_crash(state, State.SAFETY_VALIDATING, "safety_validation", error),
@@ -99,7 +113,9 @@ def _on_safety_error(state: TriageState, error: NodeError) -> Command:
 
 
 def _on_crm_error(state: TriageState, error: NodeError) -> Command:
-    """AF·db — non-critical, fail-open. Continue on intake-only data."""
+    """The CRM (patient-lookup service) crashed. Non-critical — fail open by
+    continuing with only the data the patient submitted at intake.
+    """
     return Command(
         update=nodes.crm_fallback(state, str(error.error)),
         goto=State.REDACTING_ROUTING.value,
@@ -114,14 +130,17 @@ _ERROR_HANDLERS = {
 
 
 def build_graph(checkpointer=None):
-    """Compile the control plane.
+    """Assemble and compile the graph: every state as a node, wired together
+    by the edges declared below.
 
-    `checkpointer` is required for the human gates — `interrupt()` needs somewhere
-    to suspend to. Tests that only exercise routing may compile without one.
+    `checkpointer` is required to actually run the human approval gate —
+    `interrupt()` needs somewhere to save the paused state to so it can be
+    resumed later. Tests that only check routing logic can compile without
+    one.
     """
     b = StateGraph(TriageState)
 
-    # ---- nodes ---------------------------------------------------------------
+    # ---- nodes: one per step in a case's workflow -----------------------------
     b.add_node(State.INTAKE_RECEIVED, nodes.intake_received)
     b.add_node(State.PARSING, nodes.parsing)
     b.add_node(State.MISSING_FIELDS_REQUESTED, nodes.missing_fields_requested)
@@ -142,18 +161,21 @@ def build_graph(checkpointer=None):
     b.add_node(State.VERDICT_PROPOSED, nodes.verdict_proposed)
     b.add_node(State.AWAITING_HUMAN_APPROVAL, nodes.awaiting_human_approval)
     b.add_node(State.MONITORING, nodes.monitoring)
+    b.add_node("awaiting_reassessment", nodes.awaiting_reassessment)
+    b.add_node(State.REASSESSMENT_REQUIRED, nodes.reassessment_required)
     b.add_node(State.AGENT_FAILED, nodes.agent_failed)
     b.add_node(State.ACTION_DENIED, nodes.action_denied)
-    # Degrade handlers. Separate nodes rather than branches inside their step, so
-    # the AF-* rows are visible in the rendered graph instead of buried in an if.
+    # Degrade handlers, as separate nodes rather than branches folded inside
+    # their step, so a crash-triggered fallback shows up as its own box in
+    # the rendered graph instead of being buried inside an if-statement.
     b.add_node("classifier_fallback", nodes.classifier_fallback)
     b.add_node("safety_fallback", nodes.safety_fallback)
 
-    # ---- arrow 1a / 2: entry -> parsing ---------------------------------------
+    # ---- entry point: a new case starts parsing --------------------------------
     b.add_edge(START, State.INTAKE_RECEIVED)
     b.add_edge(State.INTAKE_RECEIVED, State.PARSING)
 
-    # ---- arrows 4 / 16 / 17 / 18: the four intake outcomes --------------------
+    # ---- parsing a submission has four possible outcomes -----------------------
     b.add_conditional_edges(
         State.PARSING,
         routers.route_intake,
@@ -165,17 +187,18 @@ def build_graph(checkpointer=None):
         },
     )
 
-    # The three non-happy branches end the run. Their spec continuations
-    # (1b.x FIELDS_SUBMITTED, 1a·resubmit, 1a·rejected) are new submissions, i.e.
-    # a fresh invocation of the graph, not an edge inside this one.
+    # The three non-happy outcomes (missing fields, unusable submission,
+    # invalid input) all end this run here. Whatever happens next — the
+    # patient resubmitting, fixing missing fields, etc. — is a brand new
+    # call into this graph, not an edge inside the current run.
     b.add_edge(State.MISSING_FIELDS_REQUESTED, END)
     b.add_edge(State.SUBMISSION_FAILED, END)
     b.add_edge(State.INPUT_REJECTED, END)
 
-    # ---- arrow 4b: data_parsed -> identity lookup -----------------------------
+    # ---- once data is parsed, look up the patient's identity in the CRM --------
     b.add_edge(State.DATA_PARSED, State.RESOLVING_IDENTITY)
 
-    # ---- arrows 4b·found / 4b·new / AF·db -------------------------------------
+    # ---- identity lookup either succeeds (patient found or new) or fails -------
     b.add_conditional_edges(
         State.RESOLVING_IDENTITY,
         routers.route_after_identity,
@@ -185,7 +208,7 @@ def build_graph(checkpointer=None):
         },
     )
 
-    # ---- arrows 5 / 6 / V·halt·PII / AF·PII -----------------------------------
+    # ---- redact identifying fields before anything reaches the model -----------
     b.add_conditional_edges(
         State.REDACTING_ROUTING,
         routers.route_after_redaction,
@@ -196,7 +219,7 @@ def build_graph(checkpointer=None):
         },
     )
 
-    # ---- arrows 7 / 8 / V·retry·classifier / V·exhausted·classifier -----------
+    # ---- classify acuity: success, retry, or give up once retries are spent ----
     b.add_conditional_edges(
         State.CLASSIFYING,
         routers.route_after_classify,
@@ -206,11 +229,13 @@ def build_graph(checkpointer=None):
             Route.EXHAUSTED: "classifier_fallback",
         },
     )
-    # AF·classifier skips the gap resolution entirely: with no system acuity there
-    # is no discrepancy to resolve, which is why the gate is disabled.
+    # If the classifier is down and we fall back to the nurse's own acuity,
+    # there's no separate system-proposed acuity left to compare it against —
+    # so the discrepancy check below is skipped entirely and the case goes
+    # straight to safety validation.
     b.add_edge("classifier_fallback", State.SAFETY_VALIDATING)
 
-    # ---- arrows 9a / 9b / 9c ---------------------------------------------------
+    # ---- after classification: proceed, or escalate on a nurse/system disagreement --
     b.add_conditional_edges(
         State.ACUITY_PROPOSED,
         routers.route_acuity_gap,
@@ -220,7 +245,7 @@ def build_graph(checkpointer=None):
         },
     )
 
-    # ---- arrows 10 / 10·fail / V·retry·safety / AF·safety ---------------------
+    # ---- safety validation: cleared, failed, retry, or exhausted ---------------
     b.add_conditional_edges(
         State.SAFETY_VALIDATING,
         routers.route_after_safety,
@@ -233,7 +258,7 @@ def build_graph(checkpointer=None):
     )
     b.add_edge("safety_fallback", State.AWAITING_HUMAN_APPROVAL)
 
-    # ---- arrows 11 / 11·pass ---------------------------------------------------
+    # ---- after a passing safety verdict: queue, or escalate on low confidence --
     b.add_conditional_edges(
         State.VERDICT_PROPOSED,
         routers.route_verdict,
@@ -243,7 +268,7 @@ def build_graph(checkpointer=None):
         },
     )
 
-    # ---- arrows 1b.z·acuity / 1b.z·safety / BLK -------------------------------
+    # ---- after the human approval gate: resume, deny, or exhaust corrections --
     b.add_conditional_edges(
         State.AWAITING_HUMAN_APPROVAL,
         routers.route_gate,
@@ -254,8 +279,12 @@ def build_graph(checkpointer=None):
         },
     )
 
+    # ---- when a reassessment timer fires, the case re-enters intake from scratch --
+    b.add_edge(State.MONITORING, "awaiting_reassessment")
+    b.add_edge("awaiting_reassessment", State.REASSESSMENT_REQUIRED)
+    b.add_edge(State.REASSESSMENT_REQUIRED, State.PARSING)
+
     # ---- terminals --------------------------------------------------------------
-    b.add_edge(State.MONITORING, END)
     b.add_edge(State.AGENT_FAILED, END)
     b.add_edge(State.ACTION_DENIED, END)
 
