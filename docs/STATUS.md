@@ -1,6 +1,6 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-15 (intake-channel UI/a11y polish — see *Recent changes*)
+**Last updated:** 2026-09-15 (waiting-room service has a design — see *Recent changes*)
 
 ---
 
@@ -42,6 +42,7 @@ Those five:
       blindly could start treatment on the same patient twice. There is currently no
       code for any of it.
 - [ ] **The waiting-room timers** that flag a patient who's been waiting too long.
+      *Designed, not built:* `docs/plans/2026-09-15-waiting-room-service-design.md`.
 - [x] **The board** that shows staff the current queue. *Built read-only (`board/`, :8002,
       milestones M0 + M1 of `2026-09-11-board-service-design.md`): it lists every case,
       sorts by the persisted `order_key`, shows queue position and the arrow trail. Two of
@@ -51,6 +52,19 @@ Those five:
 ---
 
 ## Recent changes
+
+**2026-09-15 — the waiting-room service has a design.** Agreed, not yet built:
+`docs/plans/2026-09-15-waiting-room-service-design.md`. A fourth standalone service on
+:8003 holding durable per-case timers — the reassessment timer (13, 14, 15), the
+approval-gate reminder ladder (20a, 20b), and the safety-fail parking SLA. Its core is
+the failure model: a fire whose acknowledgement is lost goes to `UNKNOWN`, never
+`FAILED`, and is reconciled against the checkpoint and audit log before any re-fire —
+the same discipline `SYSTEM_MODELING.md` builds for the treatment move, applied to a
+second machine. It differs in one deliberate way: under uncertainty the treatment move
+resolves toward inaction, the waiting room toward escalation, because the hazards point
+in opposite directions. The plan also names the service's worst failure — the monitor
+dying silently, since nobody calls it — and makes it detectable (durable timers,
+dead-man's-switch heartbeat, bounded catch-up sweep, `timer_gap` flags).
 
 **2026-09-14 — intake-channel UI got an accessibility and styling pass.** Focus-visible
 outlines, viewport meta tag, design-token colors, dark-mode-ready structure. No behavior
@@ -116,7 +130,8 @@ gets treated as a leftover and discovered late.
 - [ ] **3. Make the privacy and output checks real.** Related to step 1, same kind of
       work.
 - [ ] **4. Design and build the treatment-move machine.** Its own project. Design first.
-- [ ] **5a.** The waiting-room timers.
+- [ ] **5a.** The waiting-room timers. Design agreed
+      (`docs/plans/2026-09-15-waiting-room-service-design.md`); M0/M1 unblocked today.
 - [ ] **5b.** The release / discharge step.
 - [x] **5c.** The board. Read-only board built (`board/`, :8002). Its write half —
       `POST /move` and `/release` — stays blocked on item 4, so that the treatment-move
@@ -124,17 +139,20 @@ gets treated as a leftover and discovered late.
 
 ---
 
-## Three loose ends
+## Four loose ends
 
-Three numbers are currently educated guesses, clearly marked as such in the code
-(`app/budgets.py`):
+Four numbers are currently undecided. Three are educated guesses, clearly marked as such
+in the code (`app/budgets.py`):
 
 - [ ] how many times to retry a failing component
 - [ ] how many times a nurse can correct a case before it escalates
 - [ ] how unsure the AI has to be before a human double-checks it (currently 0.70)
+- [ ] the reassessment interval per acuity band — unlike the three above this one is a
+      *clinical policy* decision, not a measurement, so it needs sign-off rather than data
+      (`docs/plans/2026-09-15-waiting-room-service-design.md` §8)
 
-None of these block anything. All three need real data before going live, and that data
-can't be gathered until step 2.
+None of these block anything. The first three need real data before going live, and that
+data can't be gathered until step 2. The fourth needs a clinician, not a measurement.
 
 There's also one genuine hole in the spec itself:
 
