@@ -78,7 +78,6 @@ class CaseCard(BaseModel):
     flags: list[str] = []
     degraded: list[str] = []
     gate_pending: bool = False
-    red_flag_fired: bool = False
 
 
 def waited_minutes(arrival_time: str | None, now: datetime | None = None) -> int:
@@ -142,7 +141,6 @@ def card_from_state(
         flags=list(state.get("flags") or []),
         degraded=list(state.get("degraded") or []),
         gate_pending=at_gate or control_state == State.AWAITING_HUMAN_APPROVAL.value,
-        red_flag_fired=bool(state.get("red_flag_fired")),
     )
 
 

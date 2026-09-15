@@ -25,8 +25,11 @@ def offline(monkeypatch, tmp_path):
     real `.triage_state.db` file, if no earlier test had overridden its path.
     """
     monkeypatch.setenv("TRIAGE_LLM", "mock")
-    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
-    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    # Empty, not deleted: `observability.tracing_enabled()` calls load_dotenv(), which
+    # fills in anything ABSENT from the environment. Deleting these let a developer's
+    # .env switch tracing back on mid-suite and the run would block on localhost:3000.
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
     monkeypatch.setenv("TRIAGE_CHECKPOINT_DB", str(tmp_path / "timers.db"))
     timers.connection.cache_clear()
     yield

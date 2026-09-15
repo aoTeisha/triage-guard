@@ -19,7 +19,7 @@ from app.runner import hydrate
 from app.states import State
 from tests.conftest import arrows
 
-# nurse says 5, the red-flag pre-check forces 2 -> gap 3 -> arrow 9c.
+# nurse says 5, the classifier proposes 2 (mock fixture) -> gap 3 -> arrow 9c.
 GAP_CASE = {
     "case_id": "case-gap",
     "channel": "website",

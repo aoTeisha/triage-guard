@@ -15,6 +15,7 @@ worry about `.env` load order.
 
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import contextmanager
 from functools import lru_cache
@@ -52,8 +53,11 @@ def langfuse_callbacks() -> list[Any]:
         return []
     try:
         return [_handler()]
-    except Exception:
-        # Observability must never take the pipeline down with it.
+    except Exception as exc:
+        # Observability must never take the pipeline down with it — but a silent
+        # [] here looks identical to tracing being off, and hid a missing
+        # `langchain` install for a whole afternoon. Warn once, then degrade.
+        logging.getLogger(__name__).warning("Langfuse tracing disabled: %s", exc)
         return []
 
 

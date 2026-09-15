@@ -16,9 +16,9 @@ from app.verification import verify_schema
 
 
 def classifying(state: TriageState) -> dict[str, Any]:
-    """The single LLM step. A red-flag match settles the level without the model."""
+    """The single LLM step. The model proposes; the gate settles the level."""
     invoked = audit(state.case_id, State.CLASSIFYING, "invoke_acuity_classifier",
-                    "run classifier (red-flag pre-check, then model)",
+                    "run classifier",
                     Arrow.RUN_CLASSIFIER)
     proposal = acuity_classifier.classify(state.redacted_payload)
     check = verify_schema("acuity_classifier", proposal, type(proposal))

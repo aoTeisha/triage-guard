@@ -26,6 +26,8 @@ import os
 from functools import lru_cache
 from typing import Any
 
+from dotenv import load_dotenv
+
 from app.actors import load_mock, load_persona
 from app.schemas import AcuityProposal
 
@@ -33,7 +35,11 @@ from app.schemas import AcuityProposal
 def live_mode() -> bool:
     """`TRIAGE_LLM=live` calls a real model. Default is mock, so the skeleton and
     the whole fast test suite run offline with no key.
+
+    load_dotenv() here, not only in main.kickoff: the board and the tests import
+    classify() without going through the CLI entrypoint.
     """
+    load_dotenv()
     return os.environ.get("TRIAGE_LLM", "mock").strip().lower() == "live"
 
 

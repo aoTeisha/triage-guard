@@ -63,9 +63,6 @@ package permitted to import an LLM client.
 | Audit | `deterministic.py:audit` | deterministic |
 | Human Escalation / nurses / tech | `actors/human_bridge.py` | human |
 
-The red-flag pre-check runs **before** the model in mock and live mode alike — a
-safety rule that only fires when the model is switched on is not a safety rule.
-
 ## Layout
 
 ```

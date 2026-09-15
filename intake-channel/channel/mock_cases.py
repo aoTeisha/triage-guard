@@ -78,8 +78,8 @@ def build_case(
         }
 
     if submission_type == "gap":
-        # Nurse says 5 (non-urgent); the red-flag pre-check forces emergent (2).
-        # Gap of 3 -> arrow 9c -> the case pauses for a charge nurse. This is the
+        # Nurse says 5 (non-urgent); the classifier reads crushing chest pain and
+        # proposes 2. Gap of 3 -> arrow 9c -> the case pauses for a charge nurse. The
         # only submission type that exercises the human gate from the UI.
         return {
             "case_id": case_id,

@@ -33,7 +33,6 @@ const DRAWER_COLUMN = "patient_released";
 // nurse learn it.
 const SOURCE_LABELS = {
   system: "set by system",
-  rule_forced: "forced by red-flag rule",
   auto_resolved: "auto-resolved (1-level gap)",
   human_confirmed: "confirmed by nurse",
 };
@@ -185,7 +184,6 @@ function renderCard(card, thresholds) {
     chips.append(el("span", "chip", "not yet triaged"));
   }
   if (card.gate_pending) chips.append(el("span", "chip gate", "awaiting charge nurse"));
-  if (card.red_flag_fired) chips.append(el("span", "chip redflag", "red flag"));
   card.degraded.forEach((d) => chips.append(el("span", "chip degraded", plain(DEGRADED_LABELS, d))));
   card.flags.forEach((f) => chips.append(el("span", "chip", plain(FLAG_LABELS, f))));
   node.append(chips);
