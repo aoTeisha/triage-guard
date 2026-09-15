@@ -1,4 +1,4 @@
-# Waiting-room service — design and build plan
+# Waiting-room monitor — design and build plan
 
 **Date:** 2026-09-15
 **Status:** proposal, not yet built
@@ -19,22 +19,48 @@ Wait liveness) — and has no code at all. Arrows `13`, `14`, `20a`, `20b` exist
 `Arrow` members and as one audit line written by `terminal.py::monitoring` that says
 `start_reassessment_timer` and starts nothing.
 
-This plan builds it as the **fourth standalone service**, same shape as the other three:
-its own `uv` project, FastAPI, a path dependency on `triage-app`, `uv run waiting-room`
-on **:8003**.
+### Not a fifth service — the spec's sixth agent, in-process
+
+The board and `intake-channel` are separate FastAPI services because they are **views
+and front doors**: they never write case state, so a network hop between them and the
+graph costs nothing but latency. The monitor is different in kind. Writing a timer row
+and moving a case into `monitoring` (arrow 13) has to land as one unit — a network call
+between "the case entered `monitoring`" and "a timer now watches it" is exactly the gap
+where a case could leave the first without ever getting the second, which is the hazard
+this whole plan exists to close (§3 makes this precise). A component that must share a
+transaction with the graph's own state write does not belong behind a service boundary;
+the boundary itself becomes a new failure mode, on top of the ones this plan already
+has to handle.
+
+So this plan builds the monitor as the spec's own vocabulary already names it — the
+**sixth agent in the Agent Core** (Actors table: Intake Parser, Acuity Classifier,
+Safety Validation, Human Escalation, **Waiting Room Monitor**, Audit) — living inside
+`triage-app`, beside the other five:
+
+```
+triage-app/app/timers.py                    timer store + fire-state machine (§4, §6)
+triage-app/app/actors/waiting_room.py       the sixth agent
+triage-app/app/graph/nodes/reassessment.py  the graph node (arrows 14, 15)
+triage-app/app/sweeper.py                   the worker loop (~40 lines)
+```
+
+run as its own **process**, not its own **service** — `uv run sweeper` alongside
+`uv run triage-guard` — sharing the one triage store `2026-09-11-board-service-design.md`
+§2b already settled on for checkpoints, the board projection, and (later) the
+treatment-move outbox. No new `pyproject.toml`, no new port, no HTTP API of its own:
 
 ```
 crm-stub        :8000   patient history
 intake-channel  :8001   the front door — one case in
-board           :8002   the room — all cases out
-waiting-room    :8003   the clock — nobody is forgotten in the room   ← this plan
-triage-app              the control plane all three call into
+board           :8002   the room — all cases out, and now the monitor's status too (§10)
+triage-app              the control plane, the sixth agent, and its worker process
 ```
 
-The service is a **clock and a signaller**. It holds durable per-case timers, notices
-when one comes due, and delivers an event into the graph. It never decides anything
-clinical and never writes case state — the same authority split the board obeys, for the
-same reason.
+The monitor is still a **clock and a signaller**, exactly as first framed: it holds
+durable per-case timers, notices when one comes due, and delivers an event into the
+graph. It never decides anything clinical and never writes case state directly — the
+same authority split the board obeys, for the same reason, here enforced by being the
+same codebase rather than by a contract between two of them.
 
 ## 2. Scope
 
@@ -50,9 +76,11 @@ acuity-write-authority invariant says in as many words that the timer never chan
 acuity. Every effect the monitor has on a case goes through the graph as an event.
 
 **Non-goals for v1:** a real vitals feed for `DETERIORATION_DETECTED` (§9 — there is no
-source for it today and this plan does not invent one), multi-replica sweepers, push
-notification transports beyond the board's existing notification strip, per-nurse
-routing rules.
+source for it today and this plan does not invent one), an HTTP API of its own (§1, §10),
+push notification transports beyond the board's existing notification strip, per-nurse
+routing rules. Running more than one sweeper process is also not required for v1 — the
+claim statement in §6 is already race-safe for N processes without change, so scaling out
+later (§6b) is additive, not a rewrite.
 
 ## 3. Why this service needs the UNKNOWN treatment at all
 
@@ -113,6 +141,19 @@ written by the single Flow step that owns case state. Reconciliation here is a r
 against our own records, not a re-query of a foreign system. That does not make it
 infallible, but it removes the specific assumption that would force a redesign of the
 treatment machine.
+
+### The residual gap, even in-process
+
+Running the monitor as the sixth agent inside `triage-app` (§1) removes the *routine*
+version of the decision/execution gap — a network call that can time out. It does not
+remove it entirely. LangGraph commits a node's checkpoint only after the node returns,
+so "write the timer row" and "the case's own checkpoint write" are still two separate
+commits even when both happen in the same call stack; a crash between them, while rare,
+is not impossible. Nothing new has to be built for this: the recovery sweep (§5b.3)
+already has to catch a case sitting in `monitoring` with no live timer row, because it
+has to cover the lost-ack case regardless. Moving in-process removes the failure mode
+that would have been *common* (a timed-out request); what is left is the *rare* one the
+catch-up sweep already has to handle.
 
 ## 4. The fire state machine
 
@@ -271,18 +312,27 @@ CREATE TABLE timers (
   fire_id      TEXT,               -- idempotency key of the current attempt
   attempts     INTEGER NOT NULL DEFAULT 0,
   lease_until  TEXT,               -- claim lease; NULL when unclaimed
+  worker_id    TEXT,               -- which sweeper process holds the lease (§6b)
   last_error   TEXT,
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL
 );
 CREATE INDEX timers_due ON timers (fire_state, due_at);
+
+-- One row per sweeper process. v1 runs exactly one row here; §6b explains why the
+-- schema already supports more without a migration.
+CREATE TABLE sweeper_heartbeats (
+  worker_id    TEXT PRIMARY KEY,
+  beat_at      TEXT NOT NULL
+);
 ```
 
 **Claiming.** One statement, so the single-owner property survives a second process
 started by accident:
 
 ```sql
-UPDATE timers SET fire_state='DUE', lease_until=:now_plus_lease, updated_at=:now
+UPDATE timers SET fire_state='DUE', lease_until=:now_plus_lease,
+       worker_id=:me, updated_at=:now
  WHERE fire_state='SCHEDULED' AND due_at <= :now
    AND (lease_until IS NULL OR lease_until < :now)
  RETURNING timer_id, case_id, kind, cycle;
@@ -291,11 +341,56 @@ UPDATE timers SET fire_state='DUE', lease_until=:now_plus_lease, updated_at=:now
 A lease that expires with the row still in `FIRING` is exactly the `UNKNOWN` case and is
 routed into `RECONCILING`, not re-dispatched — the crash-mid-dispatch path and the
 lost-ack path are the same path, which is the point of modelling it as absence of
-evidence rather than as a kind of error.
+evidence rather than as a kind of error. Note that reconciliation does not have to be
+done by the process that dispatched: a lease expiring is what hands the row to
+*whichever* sweeper claims it next, itself included — see §6b.
 
 **Clock.** UTC, from the store's own `now`, not the process clock, so a container with
 skewed time cannot mass-fire or mass-delay. Monotonic sleep between sweeps; `due_at`
 comparisons are wall-clock because the durations are clinical, not computational.
+
+### 6b. More than one sweeper — supported by the schema, not needed for v1
+
+**v1 ships exactly one sweeper process.** This subsection exists so that adding more
+later is a config change, not a redesign — the same "swap, not rewrite" property the
+board's `BoardRepo` Protocol already relies on for its own storage upgrade (Option A →
+B in `2026-09-11-board-service-design.md` §3).
+
+**What already works with no change.** The claim statement above is a single atomic
+`UPDATE ... WHERE ... RETURNING`. With N sweeper processes racing it on the same row,
+exactly one succeeds — the others simply match zero rows and move on to the next
+candidate. No coordinator, no explicit locking protocol between processes: the database
+is the only arbiter. Crash recovery is identical whether the same process or a
+different one performs the next sweep, because ownership is decided by *lease expiry*,
+not by which process started the attempt — a stuck `FIRING` row is picked up by
+whoever claims it next and routed into `RECONCILING`, exactly as in the single-process
+case.
+
+**What does not come for free: SQLite is a single writer.** WAL mode allows concurrent
+readers plus one writer at a time. With 2–3 sweeper processes claiming against the same
+file, a losing `UPDATE` does not silently return zero rows the way it does under one
+writer's serialized queue — it can raise `SQLITE_BUSY`. That is not a correctness bug
+(the loser still did not corrupt anything), but it does mean the claim needs a short
+`busy_timeout` and a plain retry, or a crash on `SQLITE_BUSY` will look like a sweeper
+failure when it is really lock contention. This is the trigger, not a byproduct: the
+same "move to Postgres" step already flagged in `2026-09-11-board-service-design.md` §3
+Option B and this plan's own milestones (§16, M4/"later") is where the claim query
+becomes `SELECT ... FOR UPDATE SKIP LOCKED`, which partitions the due set across
+replicas with no lock contention at all — the standard pattern for this exact problem,
+and the reason SQLite is fine for one sweeper but Postgres is the right answer for
+several.
+
+**Heartbeat becomes per-replica.** `sweeper_heartbeats` is already keyed by `worker_id`
+rather than being a single row, so N processes write N rows. The metric in §12 changes
+accordingly: with one sweeper, "no heartbeat" means the monitor is dead; with N, the
+threshold is "fewer live heartbeats than the expected replica count" — losing one of
+three is degraded capacity, worth a lower-severity page, not the silent-outage alarm
+(§5b) that a single missing heartbeat is when there was only ever one.
+
+**Why to run more than one at all.** Two reasons, neither needed today: throughput, if
+dispatch or reconciliation itself becomes slow (e.g. a redispatch that re-enters the
+graph and calls the classifier again); and availability, so the overdue backlog keeps
+draining while one replica restarts instead of waiting on a supervisor.
 
 ## 7. What the monitor may and may not write
 
@@ -326,16 +421,18 @@ table) applies, with one distinction worth drawing:
 | Gate ladder rungs (20a delay, 20b delay) | measured approval latency | This is a data question: how long before a reminder helps rather than annoys. |
 | Dispatch timeout, reconcile budget, sweep interval | measured store/graph latency | Same class as the existing `RETRY_BUDGET` — set from real timings. |
 
-So `waiting_room/budgets.py` carries one table, each entry marked with which of the three
+These live in the repo's existing `app/budgets.py`, next to `RETRY_BUDGET` and
+`MAX_CORRECTION_ROUNDS`, not in a table of their own — one place a reader checks for
+"is this number real yet," not two. Each entry is marked with which of the three
 sources must set it, and the reassessment intervals additionally marked as requiring
-sign-off rather than a measurement. Starting values exist only so the service runs; the
+sign-off rather than a measurement. Starting values exist only so the sweeper runs; the
 band structure (a level-2 interval shorter than a level-4 one) is the part that is
 designed, the minutes are the part that is provisional.
 
 Note the shape this shares with the other two undefined budgets in the project (machine
 retry limit, human correction rounds): finite, escalates on exhaustion, decided from
-evidence rather than feel. That is now three of them, and `STATUS.md` § Three loose ends
-should gain the fourth line.
+evidence rather than feel. That is now four of them, already tracked in `STATUS.md`
+§ Four loose ends.
 
 ## 9. `DETERIORATION_DETECTED` has no source, and this plan does not pretend otherwise
 
@@ -345,28 +442,37 @@ design), there is no vitals stream, no bedside monitor integration, and no nurse
 control that emits it. Inventing a fake detector here would put a clinical trigger behind
 a stub, which is the one place in this system a stub is not acceptable.
 
-**v1:** a single nurse-initiated endpoint —
+**v1:** a single nurse-initiated endpoint on the **board** — the nurse-facing service;
+the monitor has no API of its own (§1, §10) —
 `POST /api/case/{case_id}/deteriorated {signal, actor_role}` — that emits
-`DETERIORATION_DETECTED` into the graph with the nurse as the evidence source. That is
-honest (a human observed something), it exercises the whole path (arrow 14 → 15), and it
-is what a real deployment would keep as a manual override even after a vitals feed exists.
-The automatic detector stays an explicit hole, listed in §16.
+`DETERIORATION_DETECTED` into the graph with the nurse as the evidence source, the same
+way the board's existing `/move` and `/release` (M2 of the board plan) already re-enter
+the graph rather than going around it. That is honest (a human observed something), it
+exercises the whole path (arrow 14 → 15), and it is what a real deployment would keep as
+a manual override even after a vitals feed exists. The automatic detector stays an
+explicit hole, listed in §16.
 
-## 10. API surface
+## 10. No API of its own — the board's surface grows instead
+
+Because the monitor is a worker process, not a service, it exposes nothing over HTTP.
+Everything an operator or a nurse needs to see about it is a read against the shared
+triage store the board already opens, so it surfaces as **additions to the board's
+existing API** (`board/board/api.py`) rather than a second API to keep in sync:
 
 ```
-GET  /                                the monitor's own small status page
-GET  /api/timers                      every live timer + fire_state (ops view)
-GET  /api/timers/{case_id}            one case's timers and history
-GET  /api/health                      liveness of the process
-GET  /api/heartbeat                   last sweep time + overdue backlog + gap count
-POST /api/case/{case_id}/deteriorated nurse-initiated deterioration (§9)
-POST /api/sweep                       force one sweep — dev/test only, never in prod path
+GET  /api/board                    counters gain "monitor degraded" + overdue count (§12)
+GET  /api/case/{case_id}           timer history joins the existing audit trail
+GET  /api/heartbeat                new — reads sweeper_heartbeats (§6) directly
+POST /api/case/{case_id}/deteriorated   nurse-initiated deterioration (§9)
 ```
 
-The board consumes `/api/heartbeat` for its degraded banner and overdue counters. It does
-not consume `/api/timers` per card: a card's timer state comes from the case state the
-board already loads, so a dead monitor blanks a banner, never the board.
+`/api/heartbeat` is one more query against infrastructure the board already owns — the
+same relationship it already has with the checkpointer for `/api/board` itself — not a
+new integration or a second store to reach into.
+
+Forcing a sweep for tests needs no endpoint either: `tests/` calls the sweeper's
+`run_once()` directly, the way tests elsewhere in the repo call graph nodes directly
+rather than going through a server.
 
 ## 11. Capacity — the monitor must not become a source of λ
 
@@ -403,6 +509,10 @@ fragile.
 
 Metrics 1 and 5 are the pair that exists only because of the silent-outage analysis; the
 other three are the waiting-room equivalents of metrics already in the modelling doc.
+The table describes the v1, single-sweeper case; with more than one sweeper process
+(§6b) metric 1's threshold changes from "the one heartbeat is missing" to "fewer live
+heartbeats than the expected replica count," since losing one of several is degraded
+capacity, not a dead monitor.
 
 ## 13. Evidence to retain
 
@@ -432,7 +542,8 @@ is a change to the graph's shape and not just an added node.
 
 ## 15. Tests
 
-Offline pytest, no network, no key, mirroring the other three services.
+Offline pytest, no network, no key, added to `triage-app`'s existing suite rather than a
+fourth project's own — `tests/test_timers.py`, `tests/test_sweeper.py`.
 
 - **timeout is not failure:** a dispatch that times out lands in `UNKNOWN`, never `FAILED`
 - **no blind re-fire:** from `UNKNOWN`, the only reachable next states are `RECONCILING`
@@ -452,22 +563,29 @@ Offline pytest, no network, no key, mirroring the other three services.
   already exists in the board's suite and should be asserted here too, against the writer)
 - **authority:** the monitor's own writes never touch `acuity`, `clinical_status`, or
   `order_key` — assert over the diff of case state across a fire
+- **concurrent claim is race-safe (§6b):** two sweeper instances racing the claim
+  statement on the same overdue row — exactly one succeeds, the other matches zero rows;
+  never two dispatches for the same cycle
 
 ## 16. Milestones
 
 | # | Deliverable | Depends on | Rough size |
 | - | ----------- | ---------- | ---------- |
-| **M0** | `waiting-room/` skeleton, `timers` table, sweeper loop with lease, heartbeat, `/api/health` + `/api/heartbeat`. Fires nothing yet. | nothing | ~1 day |
+| **M0** | `timers` + `sweeper_heartbeats` tables in the shared store, `app/timers.py` (claim, lease), `app/sweeper.py` loop and heartbeat write. Fires nothing yet. | nothing | ~half day |
 | **M1** | The fire state machine end to end: dispatch, ack, `UNKNOWN`, `RECONCILING`, `fire_id` de-dupe, budgets. Reassessment timer only. | M0 | ~2 days |
 | **M2** | Graph side: `reassessment_required` node, arrows 14 / 15, `State.REASSESSMENT_REQUIRED` out of `UNIMPLEMENTED_STATES`. Board column M3 lights up. | M1 | ~1 day |
 | **M3** | Gate ladder 20a / 20b + safety-fail parking SLA; notification rate limiting. | M1 | ~1 day |
-| **M4** | Recovery sweep, `timer_gap`, board degraded banner, the five metrics. | M1 | ~1 day |
-| **M5** | Nurse-initiated deterioration endpoint (§9). | M2 | ~half day |
+| **M4** | Recovery sweep, `timer_gap`, `/api/heartbeat` + degraded banner on the board, the five metrics. | M1 | ~1 day |
+| **M5** | Nurse-initiated deterioration endpoint on the board (§9). | M2 | ~half day |
+| **M6** | Multi-replica sweeper (§6b): `worker_id`-scoped heartbeats, `busy_timeout` + retry on claim contention. Only if one sweeper process becomes a throughput or availability problem in practice — not scheduled by default. | M1 | ~half day |
 
-M0 and M1 are unblocked today and depend on nothing in `STATUS.md` items 1–4. **M4 is not
-optional polish** — without the recovery sweep and the heartbeat, the service's silent
-failure mode is undetectable, which is worse than not shipping it, because a monitor
-people believe in is a monitor they stop double-checking.
+M0 and M1 are unblocked today and depend on nothing in `STATUS.md` items 1–4. M0 is
+smaller than the other three services' own skeleton milestones, because there is no
+FastAPI app, no static UI, and no new deployment unit to stand up — it is a table, a
+lease query, and a loop. **M4 is not optional polish** — without the recovery sweep and
+the heartbeat, the monitor's silent failure mode is undetectable, which is worse than
+not shipping it, because a monitor people believe in is a monitor they stop
+double-checking.
 
 ## 17. Open questions
 
@@ -487,3 +605,10 @@ people believe in is a monitor they stop double-checking.
    metric 1 and should be explicit in the notification payload.
 6. **Grace window for `timer_gap`.** How overdue is "the system was not watching"? A
    thirty-second sweep delay is not a gap; a four-minute one for an ESI-2 patient is.
+7. **Write order on arrow 13.** Does `monitoring` write the timer row before or after
+   the node returns (i.e. before or after LangGraph commits the checkpoint)? Writing it
+   first risks a timer for a case that never actually finished entering `monitoring` if
+   the checkpoint commit then fails; writing it after reopens the residual in-process
+   gap in §3. Pick this when M1 is coded — the recovery sweep (§5b.3) has to cover
+   whichever order is chosen either way, so it is not safety-blocking, just worth being
+   deliberate about.

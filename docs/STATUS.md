@@ -1,6 +1,6 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-15 (waiting-room service has a design — see *Recent changes*)
+**Last updated:** 2026-09-15 (waiting-room monitor has a design — see *Recent changes*)
 
 ---
 
@@ -43,6 +43,9 @@ Those five:
       code for any of it.
 - [ ] **The waiting-room timers** that flag a patient who's been waiting too long.
       *Designed, not built:* `docs/plans/2026-09-15-waiting-room-service-design.md`.
+      Runs inside `triage-app` as a sixth agent + worker process, not a separate
+      service — writing a timer and moving a case into `monitoring` has to be one
+      transaction, which a network hop would break.
 - [x] **The board** that shows staff the current queue. *Built read-only (`board/`, :8002,
       milestones M0 + M1 of `2026-09-11-board-service-design.md`): it lists every case,
       sorts by the persisted `order_key`, shows queue position and the arrow trail. Two of
@@ -53,18 +56,24 @@ Those five:
 
 ## Recent changes
 
-**2026-09-15 — the waiting-room service has a design.** Agreed, not yet built:
-`docs/plans/2026-09-15-waiting-room-service-design.md`. A fourth standalone service on
-:8003 holding durable per-case timers — the reassessment timer (13, 14, 15), the
-approval-gate reminder ladder (20a, 20b), and the safety-fail parking SLA. Its core is
-the failure model: a fire whose acknowledgement is lost goes to `UNKNOWN`, never
-`FAILED`, and is reconciled against the checkpoint and audit log before any re-fire —
-the same discipline `SYSTEM_MODELING.md` builds for the treatment move, applied to a
-second machine. It differs in one deliberate way: under uncertainty the treatment move
-resolves toward inaction, the waiting room toward escalation, because the hazards point
-in opposite directions. The plan also names the service's worst failure — the monitor
-dying silently, since nobody calls it — and makes it detectable (durable timers,
-dead-man's-switch heartbeat, bounded catch-up sweep, `timer_gap` flags).
+**2026-09-15 — the waiting-room monitor has a design.** Agreed, not yet built:
+`docs/plans/2026-09-15-waiting-room-service-design.md`. Runs inside `triage-app` —
+the sixth agent the spec's own Actors table already names, plus a small worker
+process (`app/sweeper.py`), not a fourth standalone service. A network boundary was
+considered and rejected: writing a timer row and moving a case into `monitoring` has
+to land as one transaction, and a service call in between reopens the "nobody is
+watching this patient" gap the design exists to close. It holds durable per-case
+timers — the reassessment timer (13, 14, 15), the approval-gate reminder ladder
+(20a, 20b), and the safety-fail parking SLA. Its core is the failure model: a fire
+whose acknowledgement is lost goes to `UNKNOWN`, never `FAILED`, and is reconciled
+against the checkpoint and audit log before any re-fire — the same discipline
+`SYSTEM_MODELING.md` builds for the treatment move, applied to a second machine. It
+differs in one deliberate way: under uncertainty the treatment move resolves toward
+inaction, the waiting room toward escalation, because the hazards point in opposite
+directions. The plan also names the monitor's worst failure — dying silently, since
+nobody calls it — and makes it detectable (durable timers, dead-man's-switch
+heartbeat, bounded catch-up sweep, `timer_gap` flags), with the schema already
+shaped to add more than one sweeper process later without a rewrite.
 
 **2026-09-14 — intake-channel UI got an accessibility and styling pass.** Focus-visible
 outlines, viewport meta tag, design-token colors, dark-mode-ready structure. No behavior
