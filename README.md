@@ -14,7 +14,8 @@ deteriorated, which improves ER capacity logistics and treatment.
 In VS Code, open the Run and Debug panel and pick a compound from
 `.vscode/launch.json`:
 
-- **All services (crm-stub + intake-channel + board)** — all three APIs, debuggable.
+- **All services (crm-stub + intake-channel + board + sweeper)** — all three APIs plus
+  the waiting-room monitor, debuggable.
 
 Stopping the compound stops every service in it. Open `http://127.0.0.1:8001` for
 the intake form, `http://127.0.0.1:8002` for the board.
@@ -41,11 +42,18 @@ cd triage-app
 uv sync
 uv run triage-guard            # clean / missing / failed / injection
 uv run pytest                  # 92 tests, offline
+uv run sweeper                 # waiting-room monitor — fires reassessment timers
 ```
 
 Each run prints the final state and the full audit trail, labelled with the arrows
 from the Transitions table. With Langfuse configured it also sends one trace per
 run, with a span per node.
+
+`sweeper` is its own long-running process, separate from any single `triage-guard`
+run — without it, a case that reaches `monitoring` schedules a reassessment timer
+but nothing ever fires it, so it never moves to `reassessment_required`. See
+[triage-app/app/monitor/README.md](triage-app/app/monitor/README.md) for how it
+works.
 
 To drive it from a browser instead — including pausing at the acuity gate and
 resolving it as a charge nurse — run `intake-channel/`.

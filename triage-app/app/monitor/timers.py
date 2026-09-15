@@ -34,7 +34,7 @@ def connection() -> sqlite3.Connection:
     would pull in the whole graph module just to get a file path.
     """
     db_path = Path(
-        os.environ.get("TRIAGE_CHECKPOINT_DB", Path(__file__).resolve().parent.parent / ".triage_state.db")
+        os.environ.get("TRIAGE_CHECKPOINT_DB", Path(__file__).resolve().parent.parent.parent / ".triage_state.db")
     )
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL;")

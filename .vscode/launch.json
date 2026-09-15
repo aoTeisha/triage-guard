@@ -42,12 +42,25 @@
       "args": ["board.api:app", "--host", "127.0.0.1", "--port", "8002"],
       "justMyCode": false,
       "console": "integratedTerminal"
+    },
+    {
+      "name": "sweeper (waiting-room monitor)",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/triage-app",
+      "python": "${workspaceFolder}/triage-app/.venv/bin/python",
+      "windows": {
+        "python": "${workspaceFolder}/triage-app/.venv/Scripts/python.exe"
+      },
+      "module": "app.monitor.sweeper",
+      "justMyCode": false,
+      "console": "integratedTerminal"
     }
   ],
   "compounds": [
     {
-      "name": "All services (crm-stub + intake-channel + board)",
-      "configurations": ["crm-stub (:8000)", "intake-channel (:8001)", "board (:8002)"],
+      "name": "All services (crm-stub + intake-channel + board + sweeper)",
+      "configurations": ["crm-stub (:8000)", "intake-channel (:8001)", "board (:8002)", "sweeper (waiting-room monitor)"],
       "stopAll": true
     }
   ]

@@ -1,6 +1,6 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-15 (waiting-room monitor has a design — see *Recent changes*)
+**Last updated:** 2026-09-15 (waiting-room monitor built — see *Recent changes*)
 
 ---
 
@@ -33,7 +33,7 @@ Those five:
 - [ ] the output checker — it validates the shape of what an agent returns, but not yet
       whether the values make sense together — `app/verification.py`
 
-**Three things don't exist at all.** Not stubbed — simply absent.
+**One thing doesn't exist at all.** Not stubbed — simply absent.
 
 - [ ] **The treatment move.** What happens when the system actually moves a patient into
       treatment. `docs/SYSTEM_MODELING.md` spends its entire second half on this: what
@@ -41,15 +41,32 @@ Those five:
       docs are emphatic that you must *check* before trying again, because retrying
       blindly could start treatment on the same patient twice. There is currently no
       code for any of it.
-- [ ] **The waiting-room timers** that flag a patient who's been waiting too long.
-      *Designed, not built:* `docs/plans/2026-09-15-waiting-room-service-design.md`.
-      Runs inside `triage-app` as a sixth agent + worker process, not a separate
-      service — writing a timer and moving a case into `monitoring` has to be one
-      transaction, which a network hop would break.
+
+**The waiting-room monitor is built.** `docs/plans/2026-09-15-waiting-room-service-design.md`
+is now implemented, not just agreed: durable per-case timers, the sweeper that fires
+them, and the failure/reconciliation model it was designed around
+(`triage-app/app/monitor/`). It runs as its own process (`uv run sweeper`), separate
+from any one `triage-guard` run or the other services — nothing starts it
+automatically, so a case that reaches `monitoring` and never gets a sweeper running
+alongside it will schedule a reassessment timer that never fires.
+
+- [ ] **Known gap: reassessment skips the nurse.** The spec says a fired reassessment
+      timer should pause the case until a nurse re-files it with fresh observations
+      (`docs/SPECIFICATION.md:273,486,533` — only that new submission may change
+      acuity). The code doesn't do that yet: `reassessment_required`
+      (`triage-app/app/graph/nodes/reassessment.py:9-11`, marked `ponytail:`) just
+      replays the same stale `raw_payload` straight back through parsing, so a fired
+      timer almost always re-triages a patient on hours-old data with nobody actually
+      looking at them again. That's why `REASSESSMENT REQUIRED` on the board is always
+      empty — the case passes through it instantly and lands back in the queue. Needs
+      a real nurse re-filing endpoint (same shape as the board's existing
+      `/deteriorated`) before this is clinically real.
+
 - [x] **The board** that shows staff the current queue. *Built read-only (`board/`, :8002,
       milestones M0 + M1 of `2026-09-11-board-service-design.md`): it lists every case,
-      sorts by the persisted `order_key`, shows queue position and the arrow trail. Two of
-      its six columns have a writer today; the rest wait on items 4 / 5a / 5b below. The
+      sorts by the persisted `order_key`, shows queue position and the arrow trail. Three of
+      its six columns have a writer today (`waiting`, `human_review`,
+      `reassessment_required`); the rest wait on items 4 / 5a / 5b below. The
       two manual moves (M2) are deliberately not built — see item 4.*
 
 ---

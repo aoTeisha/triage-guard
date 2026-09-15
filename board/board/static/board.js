@@ -14,10 +14,9 @@ const COLUMN_LABELS = {
   formal_validation: "Formal validation",
   patient_released: "Released",
 };
-// Nothing writes these yet (docs/STATUS.md items 4 / 5a / 5b). The column is
-// rendered anyway, with the reason — an empty column is the honest state.
+// Nothing writes these yet (docs/STATUS.md item 4). The column is rendered
+// anyway, with the reason — an empty column is the honest state.
 const NOT_YET_WRITTEN = {
-  reassessment_required: "not in use yet — the waiting-room timers are not built",
   treatment_started: "not in use yet — moving a patient into treatment is not built",
   formal_validation: "not in use yet — discharge and release are not built",
   patient_released: "not in use yet — discharge and release are not built",
