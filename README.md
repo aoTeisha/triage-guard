@@ -9,13 +9,12 @@ deteriorated, which improves ER capacity logistics and treatment.
 - [Architecture and State-Machine Specification](docs/SPECIFICATION.md)
 - [System Modeling](docs/SYSTEM_MODELING.md)
 
-### Run everything at once
+### Run all services at once
 
 In VS Code, open the Run and Debug panel and pick a compound from
 `.vscode/launch.json`:
 
 - **All services (crm-stub + intake-channel + board)** — all three APIs, debuggable.
-- **Everything incl. triage-app demo** — same, plus the triage-app CLI run.
 
 Stopping the compound stops every service in it. Open `http://127.0.0.1:8001` for
 the intake form, `http://127.0.0.1:8002` for the board.
@@ -74,11 +73,11 @@ crm-stub/
 └── docker-compose.yml  # run the crm from docker
 ```
 
-| Operation | Endpoint | Returns |
-|---|---|---|
-| `fetch_patient_data(id)` | `GET /patients/{id}` | `200` found / `404` not_found / `503` db_error |
-| `patch_patient_data(id, visit)` | `PATCH /patients/{id}` | `200` ok / `503` db_error |
-| `is_available()` | `GET /health` | `{"available": true\|false}` |
+| Operation                       | Endpoint               | Returns                                        |
+| ------------------------------- | ---------------------- | ---------------------------------------------- |
+| `fetch_patient_data(id)`        | `GET /patients/{id}`   | `200` found / `404` not_found / `503` db_error |
+| `patch_patient_data(id, visit)` | `PATCH /patients/{id}` | `200` ok / `503` db_error                      |
+| `is_available()`                | `GET /health`          | `{"available": true\|false}`                   |
 
 `db_error` is the only outcome that trips the CRM fail-open path; `not_found` is
 a normal empty (new patient), not a failure. `POST /admin/simulate-down?enabled=true`
@@ -122,7 +121,7 @@ cases out. A nurse-facing kanban of the World plane — one card per live case, 
 column per `clinical_status`, sorted by the `order_key` the control plane already
 assigned. Click a card for its acuity block and its arrow trail.
 
-It is a *view*: the board computes no triage, writes no state, and re-computes no
+It is a _view_: the board computes no triage, writes no state, and re-computes no
 ordering. Two of the six columns have a writer today (`waiting`, `human_review`);
 the other four render empty with the milestone they wait on, rather than being
 filled in by the board to look complete. It never calls the CRM, so a CRM outage

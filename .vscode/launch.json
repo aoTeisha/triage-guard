@@ -42,37 +42,12 @@
       "args": ["board.api:app", "--host", "127.0.0.1", "--port", "8002"],
       "justMyCode": false,
       "console": "integratedTerminal"
-    },
-    {
-      "name": "triage-app (demo case: clean)",
-      "type": "debugpy",
-      "request": "launch",
-      "cwd": "${workspaceFolder}/triage-app",
-      "python": "${workspaceFolder}/triage-app/.venv/bin/python",
-      "windows": {
-        "python": "${workspaceFolder}/triage-app/.venv/Scripts/python.exe"
-      },
-      "module": "app.main",
-      // swap for "missing" / "failed" / "injection" to hit the other arrows
-      "args": ["clean"],
-      "justMyCode": false,
-      "console": "integratedTerminal"
     }
   ],
   "compounds": [
     {
       "name": "All services (crm-stub + intake-channel + board)",
       "configurations": ["crm-stub (:8000)", "intake-channel (:8001)", "board (:8002)"],
-      "stopAll": true
-    },
-    {
-      "name": "Everything incl. triage-app demo",
-      "configurations": [
-        "crm-stub (:8000)",
-        "intake-channel (:8001)",
-        "board (:8002)",
-        "triage-app (demo case: clean)"
-      ],
       "stopAll": true
     }
   ]
