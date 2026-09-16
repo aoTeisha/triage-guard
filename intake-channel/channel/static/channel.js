@@ -88,7 +88,7 @@ function render(body) {
   submitResultEl.innerHTML = "";
 
   submitResultEl.appendChild(summary(body));
-  if (body.gate) submitResultEl.appendChild(gatePanel(body));
+  if (body.gate && body.gate.required_role) submitResultEl.appendChild(gatePanel(body));
   if (body.outcome === "MISSING_FIELDS_DETECTED") {
     submitResultEl.appendChild(
       note(`Missing: ${body.missing_fields.join(", ")}. A completion form for these
