@@ -97,6 +97,16 @@ def waited_minutes(arrival_time: str | None, now: datetime | None = None) -> int
     return max(0, int(delta.total_seconds() // 60))
 
 
+# Per status, which timestamp field is the natural "wait clock" basis. A
+# status absent from this table falls back to arrival_time — the
+# pre-existing behavior for human_review and reassessment_required.
+_WAIT_CLOCK_FIELD: dict[str, str] = {
+    ClinicalStatus.WAITING.value: "waiting_started_at",
+    ClinicalStatus.TREATMENT_STARTED.value: "treatment_started_at",
+    ClinicalStatus.PATIENT_RELEASED.value: "released_at",
+}
+
+
 def card_from_state(
     state: dict[str, Any], now: datetime | None = None, at_gate: bool = False
 ) -> CaseCard | None:
@@ -125,6 +135,8 @@ def card_from_state(
     control_state = getattr(control_state, "value", control_state)
     order_key = state.get("order_key")
 
+    wait_basis = state.get(_WAIT_CLOCK_FIELD.get(status, "arrival_time")) or state.get("arrival_time")
+
     return CaseCard(
         case_id=state.get("case_id") or "",
         patient_id=state.get("stable_patient_id"),
@@ -137,7 +149,7 @@ def card_from_state(
         nurse_proposed_acuity=state.get("nurse_proposed_acuity"),
         system_proposed_acuity=state.get("system_proposed_acuity"),
         arrival_time=state.get("arrival_time"),
-        waited_min=waited_minutes(state.get("arrival_time"), now),
+        waited_min=waited_minutes(wait_basis, now),
         order_key=tuple(order_key) if order_key else None,
         flags=list(state.get("flags") or []),
         degraded=list(state.get("degraded") or []),

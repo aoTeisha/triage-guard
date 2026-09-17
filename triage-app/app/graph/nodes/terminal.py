@@ -13,7 +13,7 @@ from typing import Any
 from langgraph.types import interrupt
 
 from app.budgets import REASSESSMENT_INTERVAL_MINUTES
-from app.deterministic import audit, audit_denial, move_authorized, release_authorized
+from app.deterministic import audit, audit_denial, move_authorized, now_iso, release_authorized
 from app.events import Event
 from app.graph.state import TriageState
 from app.labels import Arrow
@@ -41,6 +41,7 @@ def monitoring(state: TriageState) -> dict[str, Any]:
         "control_state": State.MONITORING.value,
         "approved": True,
         "clinical_status": ClinicalStatus.WAITING.value,
+        "waiting_started_at": now_iso(),
         "audit_log": [
             audit(state.case_id, State.MONITORING, "emit_event_log",
                   "cleared to queue", Arrow.CLEARED_TO_QUEUE),
@@ -102,6 +103,7 @@ def awaiting_reassessment(state: TriageState) -> dict[str, Any]:
         return {
             "actor_role": actor_role,
             "clinical_status": ClinicalStatus.TREATMENT_STARTED.value,
+            "treatment_started_at": now_iso(),
             "audit_log": [audit(state.case_id, State.MONITORING, "emit_event_log",
                                  "move to treatment confirmed", Arrow.MOVE_CONFIRMED)],
         }
@@ -115,6 +117,7 @@ def awaiting_reassessment(state: TriageState) -> dict[str, Any]:
             "actor_role": actor_role,
             "control_state": State.CASE_CLOSED.value,
             "clinical_status": ClinicalStatus.PATIENT_RELEASED.value,
+            "released_at": now_iso(),
             "release_reason": reason,
             "audit_log": [audit(state.case_id, State.CASE_CLOSED, "sign_release",
                                  f"release signed: {reason}", Arrow.RELEASE)],

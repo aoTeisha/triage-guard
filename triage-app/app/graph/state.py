@@ -44,7 +44,8 @@ class TriageState(BaseModel):
     case_id: str = ""
     channel: str = "website"
     control_state: State = State.INTAKE_RECEIVED
-    retry_count: Annotated[dict[str, int], merge_counts] = Field(default_factory=dict)
+    retry_count: Annotated[dict[str, int],
+                           merge_counts] = Field(default_factory=dict)
     correction_rounds: int = 0
 
     # ---- Data plane: the raw and parsed intake submission ---------------------
@@ -82,6 +83,9 @@ class TriageState(BaseModel):
 
     # ---- World plane: where the case sits in the physical waiting queue --------
     clinical_status: Optional[ClinicalStatus] = None
+    waiting_started_at: Optional[str] = None
+    treatment_started_at: Optional[str] = None
+    released_at: Optional[str] = None
     acuity_bucket: Optional[AcuityBucket] = None
     order_key: Optional[tuple[int, str]] = None
     arrival_time: Optional[str] = None
@@ -116,4 +120,5 @@ class TriageState(BaseModel):
     failed_stage: Optional[State] = None
 
     # ---- Audit trail (append-only) --------------------------------------------
-    audit_log: Annotated[list[dict[str, Any]], operator.add] = Field(default_factory=list)
+    audit_log: Annotated[list[dict[str, Any]],
+                         operator.add] = Field(default_factory=list)

@@ -195,7 +195,23 @@ function formatWait(min) {
   return min < 60 ? `${min}m` : `${Math.floor(min / 60)}h ${min % 60}m`;
 }
 
+const WAIT_LABELS = {
+  treatment_started: "Treatment started",
+  patient_released: "Patient released",
+};
+
+function waitLabel(card) {
+  return (card && WAIT_LABELS[card.status]) || "waiting";
+}
+
+// "waiting" is ongoing, so it takes no "ago"; the other two labels name a
+// past event, so "ago" reads correctly after their elapsed time.
+function waitSuffix(card) {
+  return card && WAIT_LABELS[card.status] ? " ago" : "";
+}
+
 function isRed(card, thresholds) {
+  if (card.status in WAIT_LABELS) return false;
   const limit = thresholds[card.bucket];
   return limit !== undefined && card.waited_min >= limit;
 }
@@ -212,9 +228,10 @@ function renderCard(card, thresholds) {
 
   const meta = el("div", "meta");
   const wait = el("span", "wait" + (isRed(card, thresholds) ? " red" : ""),
-                  "waiting " + formatWait(card.waited_min));
-  meta.append(wait, document.createTextNode(
-    `  ·  ${card.patient_label}  ·  patient ${card.patient_id || "unknown"}`));
+                  waitLabel(card) + " " + formatWait(card.waited_min) + waitSuffix(card));
+  const who = el("div", "patient-line",
+                 `${card.patient_label} · patient ${card.patient_id || "unknown"}`);
+  meta.append(wait, who);
   node.append(meta);
 
   const chips = el("div", "chips");
@@ -578,7 +595,7 @@ async function openPanel(caseId) {
   const { view, card, checkpoints } = await res.json();
 
   const mainInfo = [
-    ["waiting", card ? formatWait(card.waited_min) : "—"],
+    [waitLabel(card), card ? formatWait(card.waited_min) + waitSuffix(card) : "—"],
     ["queue position", card && card.position ? card.position : "—"],
     ["on the board in", card ? plain(COLUMN_LABELS, card.status) : "off the board"],
     ["right now", plain(STAGE_LABELS, view.control_state)],
