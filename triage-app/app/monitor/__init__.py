@@ -7,10 +7,11 @@ Three modules, one job split by layer:
     fire.py      the fire state machine: dispatch, ack, reconcile, notify
     sweeper.py   the worker loop (`uv run sweeper`) that drives the two above
 
-The graph nodes that pause and resume (`app.graph.nodes.terminal.monitoring` /
-`awaiting_reassessment`, `app.graph.nodes.gate.awaiting_human_approval`) import
-`timers` from here directly; they never import `fire` or `sweeper` — the monitor
-proposes a moment into the graph, it does not decide what the graph does with it.
+Graph boundary: When a case reaches monitoring states (awaiting_reassessment,
+awaiting_human_approval), those nodes create timer records via `timers`. That's
+all — they never execute or retry them. The background sweeper process reads
+those timers, fires them, handles retries and reconciliation. The graph can't
+see any of that work.
 """
 
 from __future__ import annotations
