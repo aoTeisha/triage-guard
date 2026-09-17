@@ -370,16 +370,18 @@ function movesSection(caseId, card) {
     () => setTimeout(() => openPanel(caseId), 300),
   );
 
+  const canRelease = card && ["waiting", "treatment_started"].includes(card.status);
+
   const reasonSelect = el("select", "reason-select");
-  [["", "select reason"], ["discharge", "Discharge"], ["ama", "AMA"],
+  [["", "release reason"], ["discharge", "Discharge"], ["ama", "AMA"],
    ["transfer", "Transfer"], ["admit", "Admit"]].forEach(([value, label]) => {
     const opt = el("option", null, label);
     opt.value = value;
     reasonSelect.append(opt);
   });
+  reasonSelect.disabled = !canRelease;
 
   const releaseBtn = el("button", "release-btn", "Release patient");
-  const canRelease = card && ["waiting", "treatment_started"].includes(card.status);
   releaseBtn.disabled = !canRelease;
   releaseBtn.title = canRelease
     ? "" : "release is only wired up from waiting / treatment started in this version";
@@ -396,7 +398,10 @@ function movesSection(caseId, card) {
     );
   };
 
-  controls.append(moveBtn, reasonSelect, releaseBtn);
+  const releaseGroup = el("div", "release-group");
+  releaseGroup.append(reasonSelect, releaseBtn);
+
+  controls.append(moveBtn, releaseGroup);
   box.append(controls, msg);
   return box;
 }
