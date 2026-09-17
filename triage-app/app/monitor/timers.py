@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -91,6 +92,15 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def due_in(minutes: int) -> str:
+    """ISO8601 UTC timestamp `minutes` from now — the `due_at` every caller
+    of `schedule` needs. Centralized so the three graph nodes that schedule a
+    timer (`monitoring`, `awaiting_human_approval`, `reassessment_required`)
+    don't each redo the same `datetime.now(timezone.utc) + timedelta(...)`.
+    """
+    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
+
+
 def schedule(conn: sqlite3.Connection, *, case_id: str, kind: str, cycle: int, due_at: str) -> str:
     """Insert a new SCHEDULED timer row. `timer_id` is built as
     `case_id:kind:cycle`.
@@ -124,6 +134,15 @@ def set_state(conn: sqlite3.Connection, timer_id: str, fire_state: str, **fields
     conn.commit()
 
 
+def _rows(cur: sqlite3.Cursor, *columns: str) -> list[dict]:
+    """Cursor rows as dicts keyed by `columns`, in the same order as the
+    query's `RETURNING`/`SELECT` list. `claim_due` and `claim_retryable` both
+    claim rows this way; sqlite3's default row factory only gives back plain
+    tuples, so something has to name the columns.
+    """
+    return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+
 def claim_due(conn: sqlite3.Connection, *, worker_id: str, lease_seconds: int) -> list[dict]:
     """Atomically claim every SCHEDULED timer whose `due_at` has passed.
 
@@ -148,10 +167,7 @@ def claim_due(conn: sqlite3.Connection, *, worker_id: str, lease_seconds: int) -
         """,
         (f"+{lease_seconds} seconds", worker_id),
     )
-    claimed = [
-        dict(zip(("timer_id", "case_id", "kind", "cycle", "due_at"), row))
-        for row in cur.fetchall()
-    ]
+    claimed = _rows(cur, "timer_id", "case_id", "kind", "cycle", "due_at")
     conn.commit()
     return claimed
 
@@ -177,10 +193,7 @@ def claim_retryable(conn: sqlite3.Connection, *, worker_id: str, lease_seconds: 
         """,
         (f"+{lease_seconds} seconds", worker_id),
     )
-    claimed = [
-        dict(zip(("timer_id", "case_id", "kind", "cycle", "due_at", "fire_state", "fire_id", "attempts"), row))
-        for row in cur.fetchall()
-    ]
+    claimed = _rows(cur, "timer_id", "case_id", "kind", "cycle", "due_at", "fire_state", "fire_id", "attempts")
     conn.commit()
     return claimed
 

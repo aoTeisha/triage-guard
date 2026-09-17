@@ -28,7 +28,7 @@ from app.graph.nodes.intake import (
     parsing,
     submission_failed,
 )
-from app.graph.nodes.reassessment import reassessment_required
+from app.graph.nodes.reassessment import awaiting_reassessment_submission, reassessment_required
 from app.graph.nodes.redaction import redacting_routing
 from app.graph.nodes.safety import safety_fallback, safety_validating, verdict_proposed
 from app.graph.nodes.terminal import action_denied, agent_failed, awaiting_reassessment, monitoring
@@ -54,6 +54,7 @@ __all__ = [
     "monitoring",
     "awaiting_reassessment",
     "reassessment_required",
+    "awaiting_reassessment_submission",
     "agent_failed",
     "action_denied",
 ]

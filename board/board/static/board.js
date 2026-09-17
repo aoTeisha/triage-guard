@@ -6,6 +6,10 @@
 // ponytail: revisit the no-framework call if this file passes ~400 lines.
 
 const REFRESH_MS = 5000;
+// /reassess lives on intake-channel, a separate service/origin from the
+// board — one hardcoded dev-deployment constant, matching intake-channel's
+// own CORS allow-list default (BOARD_ORIGIN in channel/api.py).
+const INTAKE_CHANNEL_ORIGIN = "http://localhost:8001";
 const COLUMN_LABELS = {
   waiting: "Waiting",
   human_review: "Human review",
@@ -267,6 +271,86 @@ function movesSection() {
   return box;
 }
 
+function refilePanel(caseId) {
+  const box = el("div", "section refile");
+  box.append(el("h3", null, "Re-file reassessment"),
+             el("div", "meta", "The reassessment timer fired. Enter this patient's current "
+               + "observations to re-triage them — the system never carries the old numbers "
+               + "forward on its own."));
+
+  const acuity = el("select");
+  const placeholder = el("option", null, "select ESI level");
+  placeholder.value = "";
+  acuity.append(placeholder);
+  [1, 2, 3, 4, 5].forEach((n) => {
+    const opt = el("option", null, `ESI ${n}`);
+    opt.value = String(n);
+    acuity.append(opt);
+  });
+
+  const complaint = el("input");
+  complaint.type = "text";
+  complaint.placeholder = "chief complaint";
+
+  const hr = el("input"); hr.type = "number"; hr.placeholder = "HR";
+  const bp = el("input"); bp.type = "text"; bp.placeholder = "BP (e.g. 120/80)";
+  const spo2 = el("input"); spo2.type = "number"; spo2.placeholder = "SpO2";
+  const temp = el("input"); temp.type = "number"; temp.step = "0.1"; temp.placeholder = "Temp °C";
+
+  const msg = el("div", "msg");
+  const submit = el("button", null, "Submit re-file");
+  const vitalsBox = el("div", "vitals");
+  vitalsBox.append(hr, bp, spo2, temp);
+
+  box.append(
+    el("label", null, "Nurse-proposed acuity"), acuity,
+    el("label", null, "Chief complaint"), complaint,
+    el("label", null, "Vitals"), vitalsBox,
+    submit, msg,
+  );
+
+  submit.onclick = async () => {
+    if (!acuity.value || !complaint.value.trim()) {
+      msg.className = "msg err";
+      msg.textContent = "acuity and chief complaint are required";
+      return;
+    }
+    submit.disabled = true;
+    msg.className = "msg";
+    msg.textContent = "submitting…";
+    try {
+      const res = await fetch(`${INTAKE_CHANNEL_ORIGIN}/reassess/${encodeURIComponent(caseId)}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          nurse_proposed_acuity: Number(acuity.value),
+          chief_complaint: complaint.value.trim(),
+          vitals: { hr: hr.value ? Number(hr.value) : null, bp: bp.value || null,
+                    spo2: spo2.value ? Number(spo2.value) : null,
+                    temp_c: temp.value ? Number(temp.value) : null },
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        msg.className = "msg err";
+        msg.textContent = body.detail || `failed (${res.status})`;
+        submit.disabled = false;
+        return;
+      }
+      msg.className = "msg ok";
+      msg.textContent = "re-filed — re-entering intake";
+      refresh();
+      setTimeout(() => openPanel(caseId), 300);
+    } catch (err) {
+      msg.className = "msg err";
+      msg.textContent = "network error — is intake-channel running?";
+      submit.disabled = false;
+    }
+  };
+
+  return box;
+}
+
 async function openPanel(caseId) {
   selected = caseId;
   // A case stays reachable by link — including one that has left the board.
@@ -313,6 +397,7 @@ async function openPanel(caseId) {
   body.append(acuity);
 
   body.append(movesSection());
+  if (view.control_state === "reassessment_required") body.append(refilePanel(caseId));
 
   const trailBox = el("div", "section");
   trailBox.append(el("h3", null, "Audit trail — everything that happened to this case"),

@@ -6,7 +6,6 @@ safety validation.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.actors import human_bridge
@@ -29,11 +28,9 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
     `timer_id` (a repeat call with the same id is a no-op), so a replay just
     re-schedules the same two reminder timers instead of duplicating them.
     """
-    now = datetime.now(timezone.utc)
     for cycle, delay in GATE_REMINDER_DELAY_MINUTES.items():
-        due_at = (now + timedelta(minutes=delay)).isoformat()
         timers.schedule(timers.connection(), case_id=state.case_id, kind="gate_reminder",
-                         cycle=cycle, due_at=due_at)
+                         cycle=cycle, due_at=timers.due_in(delay))
 
     reason = state.escalation_reason or human_bridge.SAFETY_FAIL
 

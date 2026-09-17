@@ -44,6 +44,20 @@ its own process, separate from the main app.
 Tests for all three live in `tests/monitor/` (`test_timers.py`, `test_fire.py`,
 `test_sweeper.py`), same split as the code.
 
+```mermaid
+flowchart LR
+  TS["timers.py<br/>schema · schedule · claim/lease · heartbeat"]
+  FI["fire.py<br/>dispatch · reconcile · notify"]
+  SW["sweeper.py<br/>the loop (uv run sweeper)"]
+  GR["graph nodes<br/>monitoring · awaiting_human_approval · reassessment_required"]
+
+  GR -- "timers.schedule(...)" --> TS
+  SW -- "claim_due / claim_retryable" --> TS
+  SW -- "hand each claimed row to" --> FI
+  FI -- "timers.set_state(...)" --> TS
+  FI -- "graph.invoke(Command(resume=...))<br/>wakes the paused case" --> GR
+```
+
 ## The key idea: the case is "paused," not "finished"
 
 Before this code existed, once a case reached the queue (`monitoring`), the
@@ -62,6 +76,27 @@ waiting for.
 
 ## Walking through one reassessment, start to finish
 
+```mermaid
+sequenceDiagram
+  participant Case as graph (case)
+  participant Store as timer store
+  participant Sweeper as sweeper (every 5s)
+  participant Nurse as nurse
+
+  Case->>Store: schedule("reassessment", due_at)
+  Case->>Case: interrupt() — pauses at awaiting_reassessment
+  loop until due
+    Sweeper->>Store: claim_due()
+  end
+  Store-->>Sweeper: timer due
+  Sweeper->>Case: fire.dispatch() → Command(resume=REASSESSMENT_TIMEOUT)
+  Case->>Store: schedule("reassessment_reminder", due_at)
+  Case->>Case: interrupt() — pauses at awaiting_reassessment_submission
+  Nurse->>Case: POST /reassess/{case_id} (fresh vitals)
+  Case->>Case: re-runs classify → gate → safety, same as a first triage
+  Case->>Store: schedule next "reassessment" (cycle + 1)
+```
+
 1. A case gets triaged and clears to the queue. The `monitoring` node runs:
   it writes "cleared to queue" to the audit trail, and calls
    `timers.schedule(...)` to insert a row saying "check this case again in
@@ -75,10 +110,18 @@ waiting for.
   hands it to `fire.dispatch()`.
 5. `fire.dispatch()` calls `graph.invoke(Command(resume={"event":
   "REASSESSMENT_TIMEOUT", ...}), config)`on that case. This "wakes up" the  frozen`awaiting_reassessment` node with the event as its answer.
-6. The case moves on: `reassessment_required` → back to `parsing`, and the
-  whole pipeline re-runs on the case (in this skeleton, it just re-checks the
-   same intake data — a real nurse re-filing new data is a future feature).
-7. If the patient is still fine, the case clears to the queue again, and a
+6. `reassessment_required` commits, starts a reminder timer of its own (see
+  below), and the case pauses again — this time at `awaiting_reassessment_submission`,
+   waiting for a nurse to actually re-file it. Nothing re-enters intake until
+   that happens: `intake-channel`'s `POST /reassess/{case_id}` (surfaced as a
+   form on the board's case panel, once a case reaches this pause) is what
+   answers it, with fresh vitals and chief complaint. The case's own routing
+   fields (`case_id`, `free_text`, etc.) are carried over unchanged — only what
+   a nurse can actually observe gets overwritten.
+7. Once the nurse submits, the whole pipeline re-runs on the fresh data —
+   classification, the gate, safety — exactly like a brand new case, because a
+   changed acuity has to go through the same checks a first triage would.
+8. If the patient is still fine, the case clears to the queue again, and a
   brand new timer gets scheduled for the *next* reassessment. This loops for
    as long as the patient is waiting.
 
@@ -91,23 +134,49 @@ A "fire state machine" is just a fancy way of saying: every timer has a
 status, and there are rules for which status can become which other status.
 
 
-| Status               | Plain meaning                                                                                |
-| -------------------- | -------------------------------------------------------------------------------------------- |
-| `SCHEDULED`          | Waiting for its time to come.                                                                |
-| `DUE`                | Its time came; the sweeper picked it up.                                                     |
-| `DISPATCHING`             | The sweeper is actively trying to deliver the event right now.                               |
-| `DELIVERED`          | It worked. Done.                                                                             |
-| `FAILED`             | We got a clear "no" — the case is closed, or doesn't exist. Safe to retry later, or give up. |
-| `UNKNOWN`            | We don't know if it worked. The connection could have died mid-attempt.                      |
-| `RECONCILING`        | We're re-checking the case's own history to find out what actually happened.                 |
-| `ESCALATED_TO_HUMAN` | We tried and checked enough times and still don't know — page a human.                       |
-| `CANCELLED`          | The reminder doesn't matter anymore (only used for gate reminders, see below).               |
+| Status (`fire_state`) | Plain meaning                                                                                |
+| ---------------------- | -------------------------------------------------------------------------------------------- |
+| `SCHEDULED`            | Waiting for its time to come.                                                                |
+| `DUE`                  | Its time came; the sweeper picked it up.                                                     |
+| `DISPATCHING`          | The sweeper is actively trying to deliver the event right now.                               |
+| `DELIVERED`            | It worked. Done.                                                                             |
+| `FAILED`               | We got a clear "no" — the case is closed, or doesn't exist. Safe to retry later, or give up. |
+| `UNKNOWN`              | We don't know if it worked. The connection could have died mid-attempt.                      |
+| `ESCALATED_TO_HUMAN`   | We tried and checked enough times and still don't know — page a human.                       |
+| `CANCELLED`            | The reminder doesn't matter anymore (only used for notify-only reminders, see below).        |
 
+These eight are every value the `fire_state` column actually takes — there's no
+stored "reconciling" status. Reconciling is something `fire.reconcile()` *does*
+to an `UNKNOWN` row, synchronously, in one call: it resolves straight to
+`DELIVERED`, `FAILED`, back to `UNKNOWN` (try again next tick), or
+`ESCALATED_TO_HUMAN` (budget spent) — never leaves a row sitting in a
+"currently reconciling" state in between.
+
+```mermaid
+stateDiagram-v2
+  [*] --> SCHEDULED
+  SCHEDULED --> DUE: due_at passed (claim_due)
+  DUE --> DISPATCHING: reassessment (fire.dispatch)
+  DUE --> DELIVERED: notify-only reminder, sent
+  DUE --> CANCELLED: notify-only reminder, pause already resolved
+  DUE --> FAILED: notify-only reminder, budget exhausted
+  DISPATCHING --> DELIVERED: resume landed
+  DISPATCHING --> FAILED: resume raised, or case already gone
+  DISPATCHING --> UNKNOWN: process died mid-call (lease expired)
+  FAILED --> DISPATCHING: redispatched (claim_retryable)
+  UNKNOWN --> DELIVERED: reconcile finds fire_id in the audit log
+  UNKNOWN --> FAILED: reconcile finds case still at the same pause
+  UNKNOWN --> UNKNOWN: reconcile stays inconclusive, budget left
+  UNKNOWN --> ESCALATED_TO_HUMAN: reconcile budget spent
+  DELIVERED --> [*]
+  CANCELLED --> [*]
+  ESCALATED_TO_HUMAN --> [*]
+```
 
 The one rule that matters most: `UNKNOWN` **never jumps straight back to**
 `DISPATCHING`**.** If we're not sure whether something happened, we don't just try
 again blindly — a second, unnecessary delivery could re-notify a nurse twice,
-or worse. Instead we go through `RECONCILING` first: read the case's own audit
+or worse. Instead `reconcile()` runs first: read the case's own audit
 trail and check "does it already show this exact event landed?" Only if the
 answer is a clear "no" do we retry.
 
@@ -116,20 +185,29 @@ This is why every event carries a `fire_id` — a fingerprint made from
 audit trail for "did *this specific* fire already happen" instead of just
 "did *a* reassessment happen."
 
-## The gate reminder ladder (a simpler, different case)
+## Notify-only reminders (a simpler, different case)
 
-There's a second kind of timer: gate reminders. When a case is sitting at the
-human-approval gate waiting for a charge nurse to decide something, two
-reminder timers get scheduled at the same time: one that pings the assigned
-nurse after 10 minutes, another that widens to *any* charge nurse after 20.
+There's a second kind of timer, in two flavors: reminders. When a case is
+sitting at the human-approval gate waiting for a charge nurse to decide
+something, two `gate_reminder` timers get scheduled at the same time: one
+that pings the assigned nurse after 10 minutes, another that widens to *any*
+charge nurse after 20.
 
-These are simpler than reassessment timers because **they don't change
-anything about the case** — they just send a notification. So they skip the
-whole `DISPATCHING`/`UNKNOWN`/`RECONCILING` dance entirely. `fire.notify()` just
-checks "is the gate still open?" — if yes, send the notification (once per
-reason, and only if we haven't already sent too many to this recipient
-recently); if no, mark it `CANCELLED`, since the nurse already answered and a
-late reminder would be pointless.
+The reassessment re-filing pause (above) works the same way with one rung
+instead of two: entering `reassessment_required` schedules a single
+`reassessment_reminder` timer, straight to any charge nurse, in case a nurse
+never gets around to re-filing the case.
+
+Both are simpler than reassessment *delivery* timers because **they don't
+change anything about the case** — they just send a notification. So they
+skip the whole `DISPATCHING`/`UNKNOWN`/reconcile dance entirely.
+`fire.notify()` looks up which pause a reminder's kind belongs to
+(`_REMINDER_PAUSES`) and checks "is the case still sitting there?" — if yes,
+send the notification (once per reason, and only if we haven't already sent
+too many to this recipient recently); if no — the gate was answered, or the
+nurse already re-filed — mark it `CANCELLED`, since a late reminder would be
+pointless. An unrecognized timer kind has no pause to check, so it's
+cancelled the same way rather than delivered blind.
 
 ## The heartbeat: watching the watcher
 

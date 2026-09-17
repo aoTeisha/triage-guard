@@ -97,6 +97,23 @@
                     border-radius: 6px; padding: 0.3rem 0.6rem; margin-right: 0.4rem; }
     .moves button[disabled] { cursor: not-allowed; }
     .moves .why { color: var(--muted); font-size: 0.75rem; margin-top: 0.4rem; }
+
+    .refile { border-top: none; margin-top: 1.2rem; background: #2a2308; border: 1px solid #5c4a10;
+              border-left: 3px solid var(--warn); border-radius: 8px; padding: 0.8rem 0.9rem; }
+    .refile h3 { color: var(--warn); font-size: 0.8rem; }
+    .refile h3::before { content: "⏱ "; }
+    .refile label { display: block; font-size: 0.75rem; color: var(--muted); margin: 0.5rem 0 0.15rem; }
+    .refile input, .refile select { width: 100%; background: var(--panel-2); color: var(--text);
+                                     border: 1px solid var(--line); border-radius: 6px;
+                                     padding: 0.3rem 0.5rem; font: inherit; }
+    .refile .vitals { display: grid; grid-template-columns: 1fr 1fr; gap: 0 0.5rem; }
+    .refile button { margin-top: 0.7rem; background: var(--warn); color: #1a1400; border: 1px solid #ffbd47;
+                     padding: 0.4rem 0.9rem; border-radius: 6px; cursor: pointer; font-weight: 600; }
+    .refile button:hover:not([disabled]) { background: #ffb84d; }
+    .refile button[disabled] { opacity: 0.6; cursor: not-allowed; }
+    .refile .msg { font-size: 0.78rem; margin-top: 0.5rem; }
+    .refile .msg.err { color: var(--emergent); }
+    .refile .msg.ok { color: var(--ok); }
   </style>
 </head>
 <body>

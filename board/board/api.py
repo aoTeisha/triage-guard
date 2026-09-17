@@ -22,6 +22,13 @@ directly — it re-enters that case's paused LangGraph run with a
 `Command(resume=...)`, the same mechanism intake-channel's own `/resume`
 endpoint uses.
 
+This server issues no other writes, but the page it serves does: a case
+sitting at `reassessment_required` shows a re-filing form in its detail
+panel that calls `intake-channel`'s `POST /reassess/{case_id}` directly from
+the browser, not through this backend — a second front door for the same
+"answer a paused case" action `/deteriorated` and intake-channel's own
+`/resume` already do, just reached from here instead of the intake form.
+
 Run:
     uv run board
 """

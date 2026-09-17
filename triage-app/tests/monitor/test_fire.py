@@ -67,11 +67,11 @@ def test_dispatch_delivers_a_pending_fire(conn, graph, run):
     assert outcome == "DELIVERED"
     row = conn.execute("SELECT fire_state FROM timers WHERE timer_id=?", (timer["timer_id"],)).fetchone()
     assert row == ("DELIVERED",)
-    # A case with no issues clears safety and verdict checks again and pauses
-    # once more for its next reassessment cycle, all within this one resume
-    # call — it doesn't get left stuck mid-pipeline.
+    # The fire landed and the case moved off `monitoring` — but it now rests
+    # at the reassessment re-filing pause, waiting for a nurse, not back at a
+    # fresh monitoring cycle. tests/test_reassessment.py covers that pause.
     result = hydrate(graph.get_state(config_for(timer["case_id"])).values)
-    assert result["control_state"] == State.MONITORING.value
+    assert result["control_state"] == State.REASSESSMENT_REQUIRED.value
     assert result["reassessment_cycle"] == 1
 
 

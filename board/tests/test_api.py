@@ -182,10 +182,11 @@ def test_deteriorated_endpoint_re_enters_the_graph_while_waiting(checkpoint_db):
 
     assert resp.status_code == 200
     detail = client.get(f"/api/case/{case['case_id']}").json()
-    # A clean case clears safety and verdict checks again and pauses once more
-    # for its next reassessment cycle — the same resume loop
-    # `app.monitor.fire.dispatch`'s own tests exercise directly.
-    assert detail["view"]["control_state"] == "monitoring"
+    # A reported deterioration lands the case at the reassessment re-filing
+    # pause, waiting for a nurse's fresh observations — it does not replay the
+    # stale intake payload. triage-app's tests/test_reassessment.py covers the
+    # pause; intake-channel's POST /reassess/{case_id} is what answers it.
+    assert detail["view"]["control_state"] == "reassessment_required"
     assert any(
         rec.get("explanation", "").startswith("reassessment timer fired: DETERIORATION_DETECTED")
         for rec in detail["view"]["audit_log"]

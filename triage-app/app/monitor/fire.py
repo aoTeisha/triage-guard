@@ -29,6 +29,15 @@ from app.states import State
 # nurse assigned to the case, step 1 widens the reminder to any charge nurse.
 _GATE_RUNG_RECIPIENTS = {0: "assigned_nurse", 1: "any_charge_nurse"}
 
+# Each notify-only timer kind, and the node the case must still be paused at
+# for its reminder to be worth sending. A case that has moved on has resolved
+# whatever the reminder was about, so the timer is cancelled rather than
+# nudging staff about something already handled.
+_REMINDER_PAUSES = {
+    "gate_reminder": State.AWAITING_HUMAN_APPROVAL.value,
+    "reassessment_reminder": "awaiting_reassessment_submission",
+}
+
 
 def fire_id(case_id: str, kind: str, cycle: int, due_at: str) -> str:
     """A deterministic id for one timer firing, stable across re-dispatches
@@ -134,14 +143,17 @@ def reconcile(conn, timer: dict[str, Any], *, graph) -> str:
 
 def notify(conn, timer: dict[str, Any], *, graph) -> str:
     """Sends a gate reminder (nudging staff about an unanswered approval
-    request). Notify-only: it doesn't change any case state and there's no
-    acknowledgment to wait for, so it never passes through the
-    `DISPATCHING`/`UNKNOWN` states `dispatch`/`reconcile` use.
+    request) or a re-filing reminder (nudging staff about a case still
+    waiting on a nurse to re-file it). Notify-only: it doesn't change any
+    case state and there's no acknowledgment to wait for, so it never passes
+    through the `DISPATCHING`/`UNKNOWN` states `dispatch`/`reconcile` use.
 
-    Returns `CANCELLED` if the gate has already been resolved by the time
-    this runs, rather than sending a now-stale reminder; `FAILED` if the
-    recipient has already hit their notification budget for this time
-    window — that's always recorded as a `FAILED` state, never a silent drop.
+    Returns `CANCELLED` if the pause this reminder was about has already been
+    resolved by the time this runs (including an unknown timer kind, which
+    has no pause to check and so is never worth delivering), rather than
+    sending a now-stale reminder; `FAILED` if the recipient has already hit
+    their notification budget for this time window — that's always recorded
+    as a `FAILED` state, never a silent drop.
     """
     case_id = timer["case_id"]
     snapshot = graph.get_state(config_for(case_id))
@@ -154,11 +166,16 @@ def notify(conn, timer: dict[str, Any], *, graph) -> str:
     # *previous* node set, not this one. Only `snapshot.next` (which node is
     # queued up to run next) reliably shows that the case is actually paused
     # here.
-    if State.AWAITING_HUMAN_APPROVAL not in snapshot.next:
+    pause = _REMINDER_PAUSES.get(timer["kind"])
+    if pause is None or pause not in snapshot.next:
         timers.set_state(conn, timer["timer_id"], "CANCELLED")
         return "CANCELLED"
 
-    recipient_class = _GATE_RUNG_RECIPIENTS.get(timer["cycle"], "any_charge_nurse")
+    recipient_class = (
+        _GATE_RUNG_RECIPIENTS.get(timer["cycle"], "any_charge_nurse")
+        if timer["kind"] == "gate_reminder"
+        else "any_charge_nurse"
+    )
     if timers.notification_count_in_window(
         conn, recipient_class=recipient_class, window_minutes=NOTIFICATION_WINDOW_MINUTES
     ) >= NOTIFICATION_BUDGET_PER_WINDOW:

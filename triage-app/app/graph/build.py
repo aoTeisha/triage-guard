@@ -163,6 +163,7 @@ def build_graph(checkpointer=None):
     b.add_node(State.MONITORING, nodes.monitoring)
     b.add_node("awaiting_reassessment", nodes.awaiting_reassessment)
     b.add_node(State.REASSESSMENT_REQUIRED, nodes.reassessment_required)
+    b.add_node("awaiting_reassessment_submission", nodes.awaiting_reassessment_submission)
     b.add_node(State.AGENT_FAILED, nodes.agent_failed)
     b.add_node(State.ACTION_DENIED, nodes.action_denied)
     # Degrade handlers, as separate nodes rather than branches folded inside
@@ -282,7 +283,8 @@ def build_graph(checkpointer=None):
     # ---- when a reassessment timer fires, the case re-enters intake from scratch --
     b.add_edge(State.MONITORING, "awaiting_reassessment")
     b.add_edge("awaiting_reassessment", State.REASSESSMENT_REQUIRED)
-    b.add_edge(State.REASSESSMENT_REQUIRED, State.PARSING)
+    b.add_edge(State.REASSESSMENT_REQUIRED, "awaiting_reassessment_submission")
+    b.add_edge("awaiting_reassessment_submission", State.PARSING)
 
     # ---- terminals --------------------------------------------------------------
     b.add_edge(State.AGENT_FAILED, END)

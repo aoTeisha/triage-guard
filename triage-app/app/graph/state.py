@@ -89,6 +89,11 @@ class TriageState(BaseModel):
     # Incremented on every fire, so a later cycle never reuses an earlier
     # one's `timer_id` and its now-stale `due_at`.
     reassessment_cycle: int = 0
+    # How many times this case has been parked waiting for a nurse to re-file
+    # it. Counts waiting periods, not completed reassessments, so each one gets
+    # its own reminder timer id (`timers.schedule` is idempotent on
+    # case_id:kind:cycle, so reusing a number would silently skip the reminder).
+    refile_waits: int = 0
 
     # ---- Human approval gate ----------------------------------------------------
     escalation_reason: Optional[str] = None      # "discrepancy" | "safety_fail"

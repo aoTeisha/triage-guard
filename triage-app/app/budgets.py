@@ -133,6 +133,13 @@ GATE_REMINDER_DELAY_MINUTES: dict[int, int] = {
     1: 20,
 }
 
+# How long a case may sit in `reassessment_required` waiting for a nurse to
+# re-file it with fresh observations before a charge nurse is reminded.
+# Without this, that pause is the one place in the system where a waiting
+# patient has no timer running against them. Same status as the other timings
+# here: a working placeholder pending clinical sign-off.
+REASSESSMENT_REMINDER_DELAY_MINUTES: int = 15
+
 # A worker's heartbeat is considered stale once it's older than this many
 # sweep intervals (`app.monitor.sweeper.SWEEP_INTERVAL_SECONDS`). The sweep
 # interval itself is a known, measured constant; this multiplier is the only

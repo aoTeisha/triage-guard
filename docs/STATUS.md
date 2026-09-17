@@ -1,6 +1,6 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-15 (waiting-room monitor built — see *Recent changes*)
+**Last updated:** 2026-09-16 (reassessment now waits for the nurse — see *Recent changes*)
 
 ---
 
@@ -50,17 +50,30 @@ from any one `triage-guard` run or the other services — nothing starts it
 automatically, so a case that reaches `monitoring` and never gets a sweeper running
 alongside it will schedule a reassessment timer that never fires.
 
-- [ ] **Known gap: reassessment skips the nurse.** The spec says a fired reassessment
-      timer should pause the case until a nurse re-files it with fresh observations
-      (`docs/SPECIFICATION.md:273,486,533` — only that new submission may change
-      acuity). The code doesn't do that yet: `reassessment_required`
-      (`triage-app/app/graph/nodes/reassessment.py:9-11`, marked `ponytail:`) just
-      replays the same stale `raw_payload` straight back through parsing, so a fired
-      timer almost always re-triages a patient on hours-old data with nobody actually
-      looking at them again. That's why `REASSESSMENT REQUIRED` on the board is always
-      empty — the case passes through it instantly and lands back in the queue. Needs
-      a real nurse re-filing endpoint (same shape as the board's existing
-      `/deteriorated`) before this is clinically real.
+- [x] **Reassessment now genuinely waits for the nurse.** Was: a fired reassessment
+      timer replayed the same stale `raw_payload` straight through parsing, so nobody
+      actually looked at the patient again. Fixed, 2026-09-16: `reassessment_required`
+      commits and starts a reminder timer, then a new pause node
+      (`awaiting_reassessment_submission`, `triage-app/app/graph/nodes/reassessment.py`)
+      genuinely freezes the case until a nurse submits fresh vitals and a chief
+      complaint. `POST /reassess/{case_id}` (`intake-channel/channel/api.py`) answers
+      it; the board's case panel has a form that calls it directly. `REASSESSMENT
+      REQUIRED` on the board now actually populates (`clinical_status` is written on
+      entry, which it wasn't before) and a case parked there for 15 minutes with no
+      re-file nudges a charge nurse (`reassessment_reminder` timer,
+      one rung — see `docs/plans/2026-09-15-waiting-room-service-design.md` §17 Q4's
+      2026-09-16 amendment for why not two). `/resume/{case_id}` also gained a guard it
+      was missing before this: it now refuses a case parked at the re-filing pause
+      instead of silently corrupting it.
+
+      Known, unrelated: `intake-channel/tests/test_api.py::test_a_clean_submission_runs_the_whole_pipeline`
+      and `::test_a_charge_nurse_can_resolve_the_gate_and_the_case_completes` fail today
+      because the already-merged waiting-room monitor made `/submit`'s reported
+      `status` become `"awaiting_human_approval"` for *any* pending pause, not just a
+      human gate — `app/views.py`'s `case_view()` never got updated for that. Predates
+      this fix, no file it touched overlaps. Needs its own decision (what should a
+      non-human waiting-room pause report as `status`?) before those two tests can be
+      fixed correctly rather than papered over.
 
 - [x] **The board** that shows staff the current queue. *Built read-only (`board/`, :8002,
       milestones M0 + M1 of `2026-09-11-board-service-design.md`): it lists every case,
@@ -72,6 +85,21 @@ alongside it will schedule a reassessment timer that never fires.
 ---
 
 ## Recent changes
+
+**2026-09-16 — reassessment genuinely waits for a nurse to re-file.** Closes the
+"reassessment skips the nurse" gap this file used to list above. `reassessment_required`
+(`triage-app/app/graph/nodes/reassessment.py`) is now split into a commit node and a
+real pause (`awaiting_reassessment_submission`), the same two-node shape
+`monitoring`/`awaiting_reassessment` already used — a fired timer no longer replays
+stale intake data. `POST /reassess/{case_id}` in `intake-channel` answers the pause; a
+form on the board's case detail panel calls it directly (cross-origin, one CORS
+allow-list entry added to `intake-channel/channel/api.py`). A `reassessment_reminder`
+timer (one rung, straight to any charge nurse — see the 2026-09-16 amendment to
+`docs/plans/2026-09-15-waiting-room-service-design.md` §17 Q4) nudges staff if nobody
+re-files. `/resume/{case_id}` also picked up a guard it was missing: it now refuses a
+case parked at the re-filing pause instead of silently corrupting it, a gap this
+change exposed in code nobody had touched otherwise. Full design/build notes:
+`docs/superpowers/plans/2026-09-16-reassessment-nurse-refiling/`.
 
 **2026-09-15 — the waiting-room monitor has a design.** Agreed, not yet built:
 `docs/plans/2026-09-15-waiting-room-service-design.md`. Runs inside `triage-app` —

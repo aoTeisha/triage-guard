@@ -8,7 +8,6 @@ the run outright.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from langgraph.types import interrupt
@@ -33,10 +32,7 @@ def monitoring(state: TriageState) -> dict[str, Any]:
     much later.
     """
     band = state.acuity or 5
-    due_at = (
-        datetime.now(timezone.utc)
-        + timedelta(minutes=REASSESSMENT_INTERVAL_MINUTES.get(band, REASSESSMENT_INTERVAL_MINUTES[5]))
-    ).isoformat()
+    due_at = timers.due_in(REASSESSMENT_INTERVAL_MINUTES.get(band, REASSESSMENT_INTERVAL_MINUTES[5]))
     timers.schedule(timers.connection(), case_id=state.case_id, kind="reassessment",
                      cycle=state.reassessment_cycle, due_at=due_at)
 

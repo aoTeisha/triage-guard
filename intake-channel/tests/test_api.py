@@ -9,8 +9,11 @@ import httpx
 import pytest
 import respx
 from fastapi.testclient import TestClient
+from langgraph.types import Command
 
 import channel.api as api_module
+from app.mock_cases import DEMO_CASES
+from app.runner import config_for, start_case
 from channel.patient_lookup import CRM_BASE_URL
 
 client = TestClient(api_module.app)
@@ -231,3 +234,107 @@ def test_a_case_can_be_read_back_after_the_request_that_created_it():
 
 def test_reading_an_unknown_case_is_a_404():
     assert client.get("/case/case-does-not-exist").status_code == 404
+
+
+# ---- the reassessment re-filing pause, through the UI's endpoint -----------
+
+
+def _reach_refile_pause(case_id: str = "case-reassess-1"):
+    """Start a clean case, let it clear to the queue, then fire its timer."""
+    from app import runner
+
+    case = dict(DEMO_CASES["clean"])
+    case["case_id"] = case_id
+    start_case(case, thread_id=case_id)
+    runner.graph().invoke(
+        Command(resume={"event": "REASSESSMENT_TIMEOUT", "fire_id": "f1"}),
+        config_for(case_id),
+    )
+    return case
+
+
+def test_reassess_endpoint_moves_the_case_on_with_fresh_observations():
+    case = _reach_refile_pause()
+
+    resp = client.post(
+        f"/reassess/{case['case_id']}",
+        json={
+            "nurse_proposed_acuity": 1,
+            "chief_complaint": "worsening chest pain",
+            "vitals": {"hr": 140, "bp": "90/60", "spo2": 88, "temp_c": 38.2},
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["acuity"] == 1
+
+
+def test_a_refile_always_parses_cleanly_and_never_ends_the_run():
+    """The merge in `awaiting_reassessment_submission` carries `free_text` and
+    `case_id` over from the original submission, and both are in
+    REQUIRED_FIELDS. If someone rewrites that node to build a payload from
+    scratch, every re-file would route to missing_fields_requested -> END and
+    silently drop a patient who is physically still in the waiting room. This
+    test is the tripwire for that.
+    """
+    case = _reach_refile_pause("case-reassess-2")
+
+    resp = client.post(
+        f"/reassess/{case['case_id']}",
+        json={"nurse_proposed_acuity": 3, "chief_complaint": "unchanged", "vitals": {}},
+    )
+
+    assert resp.status_code == 200
+    view = resp.json()
+    assert view["outcome"] == "DATA_PARSED"
+    assert view["control_state"] not in ("missing_fields_requested", "input_rejected")
+
+
+def test_reassess_endpoint_404s_for_an_unknown_case():
+    resp = client.post(
+        "/reassess/does-not-exist",
+        json={"nurse_proposed_acuity": 3, "chief_complaint": "x", "vitals": {}},
+    )
+    assert resp.status_code == 404
+
+
+def test_reassess_endpoint_refuses_a_case_not_awaiting_a_refile():
+    case = dict(DEMO_CASES["clean"])
+    case["case_id"] = "case-not-waiting"
+    start_case(case, thread_id=case["case_id"])  # paused at monitoring, not re-filing
+
+    resp = client.post(
+        f"/reassess/{case['case_id']}",
+        json={"nurse_proposed_acuity": 3, "chief_complaint": "x", "vitals": {}},
+    )
+
+    assert resp.status_code == 409
+
+
+def test_resume_endpoint_refuses_a_case_parked_at_the_refile_pause():
+    """/resume answers the human-approval gate, not the re-filing pause. A
+    ResumeRequest body has neither `nurse_proposed_acuity`, `chief_complaint`
+    nor `vitals`, so without a guard `awaiting_reassessment_submission` would
+    happily consume it, sending `None` into the case's clinical fields and
+    dropping a patient who is still physically in the waiting room.
+    """
+    from app.runner import snapshot as raw_snapshot
+
+    case = _reach_refile_pause("case-resume-guard")
+
+    resp = client.post(
+        f"/resume/{case['case_id']}",
+        json={"decision": "use_system_acuity", "resolver_role": "charge_nurse"},
+    )
+
+    assert resp.status_code == 409
+
+    # `/case/{case_id}` (case_view) doesn't project raw_payload/nurse_proposed_acuity,
+    # so check the persisted state directly -- proving the guard actually stopped the
+    # run before it could consume the pause, not just that it returned an error code.
+    values = raw_snapshot(case["case_id"])
+    assert values["nurse_proposed_acuity"] == case["nurse_proposed_acuity"]
+    assert values["raw_payload"]["chief_complaint"] == case["chief_complaint"]
+
+    fetched = client.get(f"/case/{case['case_id']}").json()
+    assert fetched["control_state"] == "reassessment_required"

@@ -38,10 +38,14 @@ rules and deserves its own design. The UI renders those controls disabled and
 there is no endpoint behind them, because a board that quietly became the second
 writer to the World plane would break the invariant the whole design rests on.
 
-**Four columns are empty on purpose.** Only `waiting` and `human_review` have a
-writer today. `reassessment_required` (STATUS 5a), `treatment_started` (STATUS 4)
-and `formal_validation` / `patient_released` (STATUS 5b) render empty with the
-reason shown. Each later milestone lights one up.
+**Three columns are still empty on purpose.** `waiting`, `human_review`, and
+`reassessment_required` all have a writer now — the last one since 2026-09-16, when
+`reassessment_required` (the graph node) started writing `clinical_status` on entry, and
+gained a real pause a nurse actually re-files (`POST /reassess/{case_id}` in
+`intake-channel`, wired to a form on this board's case panel — see `docs/STATUS.md`'s
+2026-09-16 entry). `treatment_started` (STATUS 4) and `formal_validation` /
+`patient_released` (STATUS 5b) still render empty with the reason shown. Each later
+milestone lights one up.
 
 **A case suspended at the gate is on the board.** `gate.py` writes
 `clinical_status = human_review` when it *returns*, and a run paused at the

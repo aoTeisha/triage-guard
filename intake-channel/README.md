@@ -55,6 +55,7 @@ leaves the case exactly where it was.
 | `GET /lookup/{id}` | CRM proxy — found / not_found / db_error all return 200 |
 | `POST /submit` | build a case and run it through the graph |
 | `POST /resume/{case_id}` | answer a human gate |
+| `POST /reassess/{case_id}` | answer the reassessment re-filing pause (also reachable from the board's case panel — CORS-allowed) |
 | `GET /case/{case_id}` | read the checkpointed state and audit trail |
 
 See `docs/SPECIFICATION.md` for the intake outcomes and the gate.

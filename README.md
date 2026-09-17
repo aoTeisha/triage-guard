@@ -41,7 +41,7 @@ cp triage-app/.env.example triage-app/.env      # optional — mock mode needs n
 cd triage-app
 uv sync
 uv run triage-guard            # clean / missing / failed / injection
-uv run pytest                  # 92 tests, offline
+uv run pytest                  # 148 tests, offline
 uv run sweeper                 # waiting-room monitor — fires reassessment timers
 ```
 
@@ -56,7 +56,10 @@ but nothing ever fires it, so it never moves to `reassessment_required`. See
 works.
 
 To drive it from a browser instead — including pausing at the acuity gate and
-resolving it as a charge nurse — run `intake-channel/`.
+resolving it as a charge nurse — run `intake-channel/`. Once a case's reassessment
+timer fires, it pauses again waiting for a nurse to re-file it with fresh
+observations; the board (`board/`) surfaces that pause as a form on the case's detail
+panel, calling `intake-channel`'s `POST /reassess/{case_id}` directly.
 
 See [triage-app/README.md](triage-app/README.md) for the full details, and
 [docs/plans/2026-09-10-langgraph-migration-design.md](docs/plans/2026-09-10-langgraph-migration-design.md)
