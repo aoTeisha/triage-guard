@@ -94,6 +94,10 @@ class TriageState(BaseModel):
     # its own reminder timer id (`timers.schedule` is idempotent on
     # case_id:kind:cycle, so reusing a number would silently skip the reminder).
     refile_waits: int = 0
+    # Set when a release is signed. Kept on the case so the audit trail and
+    # the detail panel can both show why a patient was released without
+    # re-parsing the audit log.
+    release_reason: Optional[str] = None
 
     # ---- Human approval gate ----------------------------------------------------
     escalation_reason: Optional[str] = None      # "discrepancy" | "safety_fail"

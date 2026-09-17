@@ -282,7 +282,21 @@ def build_graph(checkpointer=None):
 
     # ---- when a reassessment timer fires, the case re-enters intake from scratch --
     b.add_edge(State.MONITORING, "awaiting_reassessment")
-    b.add_edge("awaiting_reassessment", State.REASSESSMENT_REQUIRED)
+    b.add_conditional_edges(
+        "awaiting_reassessment",
+        routers.route_wait_resume,
+        {
+            Route.PROCEED:  State.REASSESSMENT_REQUIRED,
+            Route.MOVED:    "awaiting_reassessment",
+            Route.RELEASED: END,
+            # Not State.ACTION_DENIED: that edges to END, which would
+            # permanently end a still-waiting case's run over a routine
+            # mis-typed actor_role, silently dropping it out of the
+            # reassessment safety net. Loop back and stay parked instead —
+            # see terminal.py's `denied()` helper docstring.
+            Route.DENIED:   "awaiting_reassessment",
+        },
+    )
     b.add_edge(State.REASSESSMENT_REQUIRED, "awaiting_reassessment_submission")
     b.add_edge("awaiting_reassessment_submission", State.PARSING)
 

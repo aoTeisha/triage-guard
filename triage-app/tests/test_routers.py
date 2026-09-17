@@ -15,7 +15,7 @@ from app.events import Event
 from app.graph import TriageState
 from app.graph import routers
 from app.labels import Route
-from app.states import AcuityBucket, AcuitySource
+from app.states import AcuityBucket, AcuitySource, ClinicalStatus
 
 
 def s(**kw) -> TriageState:
@@ -164,3 +164,38 @@ def test_arrival_breaks_ties_inside_a_bucket():
     first = assign_order_key(3, "2026-01-01T00:00:00+00:00")
     second = assign_order_key(5, "2026-01-01T00:00:01+00:00")
     assert first < second
+
+
+# ---- awaiting_reassessment's three-way exit (move / release / reassess) ----
+
+
+def _state(arrow=None, clinical_status=None):
+    return s(
+        clinical_status=clinical_status,
+        audit_log=[{"arrow": arrow}] if arrow else [],
+    )
+
+
+def test_route_wait_resume_sends_blk_to_denied():
+    assert routers.route_wait_resume(_state(arrow="BLK")) == Route.DENIED
+
+
+def test_route_wait_resume_sends_release_to_released():
+    assert routers.route_wait_resume(_state(arrow="REL")) == Route.RELEASED
+
+
+def test_route_wait_resume_sends_a_case_already_in_treatment_back_to_moved():
+    """Covers both the just-moved case and a stale timer firing afterward —
+    both look identical to this router: clinical_status is treatment_started
+    and the arrow is neither BLK nor REL.
+    """
+    assert routers.route_wait_resume(
+        _state(arrow="19", clinical_status=ClinicalStatus.TREATMENT_STARTED.value)
+    ) == Route.MOVED
+    assert routers.route_wait_resume(
+        _state(arrow="14", clinical_status=ClinicalStatus.TREATMENT_STARTED.value)
+    ) == Route.MOVED
+
+
+def test_route_wait_resume_defaults_to_proceed_for_a_normal_reassessment():
+    assert routers.route_wait_resume(_state(arrow="14", clinical_status="waiting")) == Route.PROCEED

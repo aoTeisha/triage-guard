@@ -32,20 +32,31 @@ checkpoint store as `triage-app` (`TRIAGE_CHECKPOINT_DB`), read-only.
 `TriageState`, never re-computes `order_key`, and never decides acuity. It reads
 persisted state and derives two display values — queue position and wait time.
 
-**M2 is not built.** `POST /move` and `/release` wait on the treatment-move
-machine (`docs/STATUS.md` item 4), which is a second state machine with its own
-rules and deserves its own design. The UI renders those controls disabled and
-there is no endpoint behind them, because a board that quietly became the second
-writer to the World plane would break the invariant the whole design rests on.
+**Move-to-treatment and release, minimal version (2026-09-17).** A nurse can
+now click "Start treatment" and "Release patient" on a case's detail panel.
+Both re-enter that case's paused LangGraph run with `Command(resume=...)` —
+the same mechanism `/deteriorated` already used — rather than writing case
+state directly; the real authorization check (`move_authorized` /
+`release_authorized`) runs inside the graph node, not in this API layer.
+This is deliberately **not** the full treatment-move machine from
+`docs/STATUS.md` item 4: no Tool Gateway, no idempotency key, no
+`PENDING/CONFIRMED/FAILED/UNKNOWN` execution states, no reconciliation —
+those exist to protect against a downstream hospital system that this
+project doesn't have. It's also only wired from the waiting-room pause
+(`control_state == monitoring`), not from the human-approval gate or the
+reassessment re-file pause — see
+`docs/superpowers/plans/2026-09-17-treatment-move-and-release/findings.md`
+for the reasoning and what's out of scope.
 
-**Three columns are still empty on purpose.** `waiting`, `human_review`, and
-`reassessment_required` all have a writer now — the last one since 2026-09-16, when
-`reassessment_required` (the graph node) started writing `clinical_status` on entry, and
-gained a real pause a nurse actually re-files (`POST /reassess/{case_id}` in
-`intake-channel`, wired to a form on this board's case panel — see `docs/STATUS.md`'s
-2026-09-16 entry). `treatment_started` (STATUS 4) and `formal_validation` /
-`patient_released` (STATUS 5b) still render empty with the reason shown. Each later
-milestone lights one up.
+**A released card is not removed — it moves to the drawer.** `patient_released`
+cases stay reachable through `/api/board` (an unsigned-but-departed case must
+stay open, per the spec's AMA rule); the frontend renders that column
+separately from the main queue (`DRAWER_COLUMN` in `board.js`) instead of
+inline with active cases.
+
+**One column is still empty on purpose.** `formal_validation` has no writer —
+this minimal version releases straight from `treatment_started`, skipping it
+(release is state-independent per spec, so this is spec-legal, not a gap).
 
 **A case suspended at the gate is on the board.** `gate.py` writes
 `clinical_status = human_review` when it *returns*, and a run paused at the
@@ -84,6 +95,10 @@ definition.
 | `GET /api/board` | columns, cards, counters, notifications — one call per refresh |
 | `GET /api/case/{case_id}` | detail panel: the shared case view, its card, its trail |
 | `GET /api/health` | |
+| `GET /api/heartbeat` | is the background sweeper still alive? |
+| `POST /api/case/{case_id}/deteriorated` | nurse reports a worsening condition while waiting |
+| `POST /api/case/{case_id}/move-to-treatment` | nurse moves a waiting case into treatment |
+| `POST /api/case/{case_id}/release` | nurse releases a case (reason: discharge/ama/transfer/admit) |
 
 The page polls `/api/board` every 5s. That is one SQLite read and the whole repo
 runs on one box; SSE is a later swap behind the same payload.

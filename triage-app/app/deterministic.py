@@ -98,6 +98,15 @@ def audit(
     }
 
 
+def audit_denial(case_id: str, control_state: State, why: str) -> dict[str, Any]:
+    """The BLK row every authorization refusal writes. Shared by the human
+    gate's unauthorized-resolver branch and the waiting-room pause's
+    move/release refusals, so the denial-record shape is defined once.
+    """
+    return audit(case_id, control_state, "explain_denial", why, Arrow.BLK,
+                 denying_layer="Prolog (authorization)")
+
+
 # ---- symbolic-layer predicates (SKELETON — swap for real engines) -----------
 
 
@@ -131,6 +140,20 @@ def move_authorized(
     if actor_role not in {"nurse", "charge_nurse", "shift_lead"}:
         return False, f"move refused: role {actor_role!r} not authorized"
     return True, "move authorized"
+
+
+def release_authorized(reason: str, actor_role: str) -> tuple[bool, str]:
+    """OPA authorization for release (§ release_authorized): a valid reason
+    plus an authorized signer. State-independent — release can happen from
+    any active state, so this takes no source-state argument.
+    """
+    valid_reasons = {"discharge", "ama", "transfer", "admit"}
+    if reason not in valid_reasons:
+        return False, f"release refused: invalid reason {reason!r}"
+    authorized, why = actor_is_charge(actor_role)
+    if not authorized:
+        return False, f"release refused: {why}"
+    return True, "release authorized"
 
 
 def actor_is_charge(actor_role: str) -> tuple[bool, str]:

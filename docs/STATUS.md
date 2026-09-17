@@ -1,6 +1,6 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-16 (reassessment now waits for the nurse — see *Recent changes*)
+**Last updated:** 2026-09-17 (a nurse can move a patient to treatment and release them, from the board — see *Recent changes*)
 
 ---
 
@@ -77,14 +77,32 @@ alongside it will schedule a reassessment timer that never fires.
 
 - [x] **The board** that shows staff the current queue. *Built read-only (`board/`, :8002,
       milestones M0 + M1 of `2026-09-11-board-service-design.md`): it lists every case,
-      sorts by the persisted `order_key`, shows queue position and the arrow trail. Three of
+      sorts by the persisted `order_key`, shows queue position and the arrow trail. Five of
       its six columns have a writer today (`waiting`, `human_review`,
-      `reassessment_required`); the rest wait on items 4 / 5a / 5b below. The
-      two manual moves (M2) are deliberately not built — see item 4.*
+      `reassessment_required`, `treatment_started`, `patient_released` as of 2026-09-17);
+      only `formal_validation` still renders empty, waiting on item 4's full execution
+      machine. The two manual moves exist as a minimal version (2026-09-17, no Tool
+      Gateway/idempotency/reconciliation) — see item 5c below.*
 
 ---
 
 ## Recent changes
+
+**2026-09-17 — a nurse can move a waiting patient into treatment, and release
+them, from the board.** Minimal version, wired only from the waiting-room pause
+(`awaiting_reassessment`) — see *Where things stand* above and
+`docs/superpowers/plans/2026-09-17-treatment-move-and-release/findings.md` for
+why the human-approval gate and the reassessment re-file pause are out of
+scope here. Two new board endpoints (`POST /api/case/{case_id}/move-to-treatment`,
+`POST /api/case/{case_id}/release`) re-enter a case's paused LangGraph run with
+`Command(resume=...)` — the same mechanism intake-channel's own `/resume` uses
+— rather than writing case state directly; the in-graph guards
+`move_authorized` / `release_authorized` (`app/deterministic.py`) do the actual
+authorization check, and a refusal is a normal 200 response
+(`status: "denied"`), not an HTTP error. `board.js` gained two new buttons
+("Start treatment", "Release patient") in the case detail panel. Full
+design/build notes, scope cuts, and the post-implementation review rounds:
+`docs/superpowers/plans/2026-09-17-treatment-move-and-release/`.
 
 **2026-09-16 — reassessment genuinely waits for a nurse to re-file.** Closes the
 "reassessment skips the nurse" gap this file used to list above. `reassessment_required`
@@ -186,10 +204,20 @@ gets treated as a leftover and discovered late.
 - [ ] **4. Design and build the treatment-move machine.** Its own project. Design first.
 - [ ] **5a.** The waiting-room timers. Design agreed
       (`docs/plans/2026-09-15-waiting-room-service-design.md`); M0/M1 unblocked today.
-- [ ] **5b.** The release / discharge step.
+- [x] **5b.** The release / discharge step. **Minimal version, 2026-09-17:** a charge
+      nurse can release a case (any reason of discharge/ama/transfer/admit) via
+      `release_authorized`, re-entering the waiting-room pause with `Command(resume=...)`
+      — no Tool Gateway, no idempotency key, no `PENDING/CONFIRMED/FAILED/UNKNOWN`
+      execution states, no reconciliation. Those exist to protect against a downstream
+      hospital system this project doesn't have; item 4's full execution machine below is
+      still not built. Only wired from the waiting-room pause, not the human-approval gate
+      or the reassessment re-file pause — see
+      `docs/superpowers/plans/2026-09-17-treatment-move-and-release/findings.md`.
 - [x] **5c.** The board. Read-only board built (`board/`, :8002). Its write half —
-      `POST /move` and `/release` — stays blocked on item 4, so that the treatment-move
-      machine does not get improvised inside a UI.
+      `POST /api/case/{case_id}/move-to-treatment` and `/release` — now exists (2026-09-17,
+      minimal version, see item 5b above), re-entering the paused graph run rather than
+      writing case state directly. Item 4's full treatment-move execution machine is still
+      not built.
 
 ---
 

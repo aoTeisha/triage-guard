@@ -120,3 +120,5 @@ class Route(str, Enum):
     HALT = "halt"
     ESCALATE = "escalate"
     CLEARED = "cleared"
+    MOVED = "moved"
+    RELEASED = "released"

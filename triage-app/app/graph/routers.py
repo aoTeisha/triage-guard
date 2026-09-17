@@ -14,8 +14,8 @@ from __future__ import annotations
 from app.budgets import confidence_ok, correction_rounds_left, retry_budget_left
 from app.events import Event
 from app.graph.state import TriageState
-from app.labels import Route
-from app.states import State
+from app.labels import Arrow, Route
+from app.states import ClinicalStatus, State
 
 
 def route_intake(state: TriageState) -> Event:
@@ -131,4 +131,26 @@ def route_gate(state: TriageState) -> Route:
         # Loop guard exhausted. The case stays at the gate, escalated; the spec
         # does not name who it escalates to, so it is not routed onward here.
         return Route.EXHAUSTED
+    return Route.PROCEED
+
+
+def route_wait_resume(state: TriageState) -> Route:
+    """Where `awaiting_reassessment` goes next, based on what it just wrote.
+
+    BLK and RELEASE are told apart by the arrow the node just logged, not by
+    re-deriving authorization here — the node already decided that. A move
+    is told apart by `clinical_status` rather than its arrow: once a case is
+    `treatment_started`, ANY later resume (a stale reassessment timer, a
+    deterioration report — the timer scheduled at queue-entry keeps running
+    independently of this case's later moves) must keep routing back here
+    instead of falling through to `REASSESSMENT_REQUIRED`, which would wrongly
+    revert `clinical_status` for a patient who is already in treatment.
+    """
+    last_arrow = state.audit_log[-1].get("arrow") if state.audit_log else None
+    if last_arrow == Arrow.BLK.value:
+        return Route.DENIED
+    if last_arrow == Arrow.RELEASE.value:
+        return Route.RELEASED
+    if state.clinical_status == ClinicalStatus.TREATMENT_STARTED.value:
+        return Route.MOVED
     return Route.PROCEED

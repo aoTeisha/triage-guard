@@ -49,6 +49,7 @@ def case_view(state: dict[str, Any], pending: dict[str, Any] | None) -> dict[str
         "acuity_gap": state.get("acuity_gap"),
         "safety_passed": state.get("safety_passed"),
         "approved": state.get("approved"),
+        "release_reason": state.get("release_reason"),
         "degraded": state.get("degraded", []),
         "flags": state.get("flags", []),
         "gate": pending,
@@ -145,6 +146,6 @@ def card_from_state(
 
 
 # The six World-plane statuses, in spec order. `case_closed` is not one of them.
-# Four of the six have no writer yet (STATUS.md items 4 / 5a / 5b) and render
-# empty — the board shows the gap rather than hiding it.
+# Only `formal_validation` has no writer yet (STATUS.md item 4's full execution
+# machine) and renders empty — the board shows the gap rather than hiding it.
 BOARD_COLUMNS = [s.value for s in ClinicalStatus]

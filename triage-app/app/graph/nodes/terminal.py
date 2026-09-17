@@ -13,7 +13,8 @@ from typing import Any
 from langgraph.types import interrupt
 
 from app.budgets import REASSESSMENT_INTERVAL_MINUTES
-from app.deterministic import audit
+from app.deterministic import audit, audit_denial, move_authorized, release_authorized
+from app.events import Event
 from app.graph.state import TriageState
 from app.labels import Arrow
 from app.monitor import timers
@@ -69,16 +70,62 @@ def awaiting_reassessment(state: TriageState) -> dict[str, Any]:
     # Only compare fire_ids when there actually is one. A nurse-initiated
     # DETERIORATION_DETECTED event carries no fire_id at all (`None`), and
     # without this guard, `None == None` would make it look like a duplicate
-    # of some unrelated earlier audit row that also has no fire_id.
+    # of some unrelated earlier audit row that also has no fire_id. Runs
+    # before the event branches below too — a redundant resume must
+    # short-circuit regardless of which event it carries.
     if fire_id and any(rec.get("fire_id") == fire_id for rec in state.audit_log):
         return {"control_state": State.MONITORING.value}
+
+    def denied(why: str) -> dict[str, Any]:
+        # Denial stays parked, not ended: a mis-typed actor_role is routine
+        # input from a UI button, not a resolved human decision the way the
+        # approval gate's BLK is — the case must stay retriable by a
+        # legitimate follow-up, not fall out of the reassessment safety net.
+        return {
+            "actor_role": actor_role,
+            "audit_log": [audit_denial(state.case_id, State.MONITORING, why)],
+        }
+
+    event = fired.get("event")
+    actor_role = fired.get("actor_role", state.actor_role)
+
+    if event == Event.MOVE_REQUESTED.value:
+        if state.clinical_status == ClinicalStatus.TREATMENT_STARTED.value:
+            # A duplicate/replayed move for a case already in treatment —
+            # move_authorized has no notion of clinical_status, so without
+            # this it would silently re-confirm and append a second
+            # MOVE_CONFIRMED row with no error.
+            return denied("move refused: already in treatment")
+        authorized, why = move_authorized(state.safety_passed, state.approved, actor_role)
+        if not authorized:
+            return denied(why)
+        return {
+            "actor_role": actor_role,
+            "clinical_status": ClinicalStatus.TREATMENT_STARTED.value,
+            "audit_log": [audit(state.case_id, State.MONITORING, "emit_event_log",
+                                 "move to treatment confirmed", Arrow.MOVE_CONFIRMED)],
+        }
+
+    if event == Event.RELEASE_REQUESTED.value:
+        reason = fired.get("reason", "")
+        authorized, why = release_authorized(reason, actor_role)
+        if not authorized:
+            return denied(why)
+        return {
+            "actor_role": actor_role,
+            "control_state": State.CASE_CLOSED.value,
+            "clinical_status": ClinicalStatus.PATIENT_RELEASED.value,
+            "release_reason": reason,
+            "audit_log": [audit(state.case_id, State.CASE_CLOSED, "sign_release",
+                                 f"release signed: {reason}", Arrow.RELEASE)],
+        }
 
     update: dict[str, Any] = {
         "control_state": State.MONITORING.value,
         "reassessment_cycle": state.reassessment_cycle + 1,
         "audit_log": [
             audit(state.case_id, State.MONITORING, "emit_event_log",
-                  f"reassessment timer fired: {fired.get('event')}", Arrow.REASSESSMENT_DUE,
+                  f"reassessment timer fired: {event}", Arrow.REASSESSMENT_DUE,
                   fire_id=fire_id),
         ],
     }

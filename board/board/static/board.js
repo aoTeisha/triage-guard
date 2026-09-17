@@ -10,6 +10,19 @@ const REFRESH_MS = 5000;
 // board — one hardcoded dev-deployment constant, matching intake-channel's
 // own CORS allow-list default (BOARD_ORIGIN in channel/api.py).
 const INTAKE_CHANNEL_ORIGIN = "http://localhost:8001";
+// Mirrors _OPTIONS in app/actors/human_bridge.py — the resume payload's valid
+// decisions per escalation reason. Duplicated here the same way the origin
+// above is: one hardcoded dev-deployment constant, not a shared source.
+const GATE_OPTIONS = {
+  discrepancy: ["use_nurse_acuity", "use_system_acuity"],
+  low_confidence: ["use_nurse_acuity", "use_system_acuity"],
+  safety_fail: ["corrected", "escalate_further"],
+};
+const GATE_HEADINGS = {
+  discrepancy: "Acuity discrepancy",
+  low_confidence: "Low-confidence acuity — needs confirmation",
+  safety_fail: "Safety validation failed — correct and revalidate",
+};
 const COLUMN_LABELS = {
   waiting: "Waiting",
   human_review: "Human review",
@@ -18,12 +31,12 @@ const COLUMN_LABELS = {
   formal_validation: "Formal validation",
   patient_released: "Released",
 };
-// Nothing writes these yet (docs/STATUS.md item 4). The column is rendered
-// anyway, with the reason — an empty column is the honest state.
+// Nothing writes formal_validation yet — this minimal version releases
+// straight from treatment_started, skipping it (see findings.md). The
+// column is rendered anyway, with the reason — an empty column is the
+// honest state.
 const NOT_YET_WRITTEN = {
-  treatment_started: "not in use yet — moving a patient into treatment is not built",
-  formal_validation: "not in use yet — discharge and release are not built",
-  patient_released: "not in use yet — discharge and release are not built",
+  formal_validation: "not in use yet — this version releases without a formal sign-off step",
 };
 
 // The state fields say why a case is unusual; these say it in words.
@@ -90,6 +103,9 @@ const OUTCOME_LABELS = {
   SUBMISSION_FAILED: "nothing usable in the submission",
   INVALID_INPUT_DETECTED: "rejected as unsafe input",
 };
+const RELEASE_REASON_LABELS = {
+  discharge: "Discharge", ama: "AMA", transfer: "Transfer", admit: "Admit",
+};
 
 // What a notification is about, in words. Arrow codes stay in the tooltip.
 const NOTICE_LABELS = {
@@ -137,19 +153,42 @@ function renderCounters(c) {
 }
 
 function renderNotifications(items) {
-  const box = document.getElementById("notifications");
+  const badge = document.getElementById("notif-badge");
+  badge.textContent = String(items.length);
+  badge.hidden = items.length === 0;
+
+  const box = document.getElementById("notif-list");
   if (!items.length) {
-    box.replaceChildren(el("div", "note", "no notifications"));
+    box.replaceChildren(el("div", "notif-item", "no notifications"));
     return;
   }
   box.replaceChildren(...items.map((n) => {
-    const node = el("div", "note" + (n.arrow === "BLK" ? " blk" : ""));
-    node.append(el("span", "arrow", plain(NOTICE_LABELS, n.arrow)),
-                document.createTextNode(n.complaint ? "  " + n.complaint : ""));
+    const node = el("div", "notif-item" + (n.arrow === "BLK" ? " blk" : ""));
+    node.append(el("div", "arrow", plain(NOTICE_LABELS, n.arrow)),
+                el("div", "complaint", n.complaint || ""),
+                el("div", "at", n.at));
     node.title = `${n.case_id} · arrow ${n.arrow} · ${n.action} · ${readable(n.explanation)} · ${n.at}`;
+    // Clicking a notification opens the case panel but leaves this sidebar
+    // open — only the X closes it.
     node.onclick = () => openPanel(n.case_id);
     return node;
   }));
+}
+
+function toggleNotifPanel() {
+  const panel = document.getElementById("notif-panel");
+  if (panel.classList.contains("open")) {
+    closeNotifPanel();
+  } else {
+    panel.hidden = false;
+    panel.classList.add("open");
+  }
+}
+
+function closeNotifPanel() {
+  const panel = document.getElementById("notif-panel");
+  panel.classList.remove("open");
+  panel.hidden = true;
 }
 
 function formatWait(min) {
@@ -219,7 +258,7 @@ function renderBoard(data) {
   const released = byStatus[DRAWER_COLUMN] || [];
   document.getElementById("released").replaceChildren(
     ...(released.length ? released.map((c) => renderCard(c, data.red_after_min))
-                        : [el("div", "todo", NOT_YET_WRITTEN[DRAWER_COLUMN])]));
+                        : [el("div", "todo", "no patients released yet")]));
 }
 
 function kv(pairs) {
@@ -256,18 +295,183 @@ function trail(records) {
   return table;
 }
 
-function movesSection() {
+// Shared by both buttons in `movesSection`. The endpoint returns HTTP 200
+// even when the in-graph guard (`move_authorized`/`release_authorized`)
+// refuses the action — `status: "denied"` in the body is how a refusal is
+// told apart from success, so a wrong-role click can't show a false
+// "moved"/"released" confirmation. On refusal the button re-enables (the
+// case stays retriable, e.g. by a charge nurse instead of a nurse) rather
+// than treating it as terminal.
+async function postCaseAction(btn, msg, url, body, pendingText, okText, onOk) {
+  btn.disabled = true;
+  msg.className = "msg";
+  msg.textContent = pendingText;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    msg.className = "msg err";
+    msg.textContent = "network error";
+    btn.disabled = false;
+    return;
+  }
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+  if (!res.ok) {
+    msg.className = "msg err";
+    msg.textContent = (data && data.detail) || `failed (${res.status})`;
+    btn.disabled = false;
+    return;
+  }
+  if (!data || typeof data.status !== "string") {
+    // A malformed 200 body must not be read as silent success — the real
+    // outcome of the action is unknown.
+    msg.className = "msg err";
+    msg.textContent = "unexpected response from server";
+    btn.disabled = false;
+    return;
+  }
+  if (data.status === "denied") {
+    msg.className = "msg err";
+    msg.textContent = data.detail || "denied";
+    btn.disabled = false;
+    refresh();
+    return;
+  }
+  msg.className = "msg ok";
+  msg.textContent = okText;
+  refresh();
+  onOk();
+}
+
+function movesSection(caseId, card) {
   const box = el("div", "section moves");
   box.append(el("h3", null, "Manual status change"));
-  ["Start treatment", "Release patient"].forEach((label) => {
-    const b = el("button", null, label);
-    b.disabled = true;
-    b.title = "Milestone M2 — needs the treatment-move machine (STATUS item 4)";
-    box.append(b);
+
+  const controls = el("div", "controls");
+  const msg = el("div", "msg");
+
+  const moveBtn = el("button", "move-btn", "Start treatment");
+  moveBtn.disabled = card ? card.status !== "waiting" : true;
+  moveBtn.title = moveBtn.disabled
+    ? "only a patient currently waiting can be moved into treatment"
+    : "";
+  moveBtn.onclick = () => postCaseAction(
+    moveBtn, msg, `/api/case/${encodeURIComponent(caseId)}/move-to-treatment`,
+    { actor_role: "nurse" }, "moving…", "moved to treatment",
+    () => setTimeout(() => openPanel(caseId), 300),
+  );
+
+  const reasonSelect = el("select", "reason-select");
+  [["", "select reason"], ["discharge", "Discharge"], ["ama", "AMA"],
+   ["transfer", "Transfer"], ["admit", "Admit"]].forEach(([value, label]) => {
+    const opt = el("option", null, label);
+    opt.value = value;
+    reasonSelect.append(opt);
   });
-  box.append(el("div", "why",
-    "Disabled: the board issues no writes yet. Every transition goes through the "
-    + "graph, so these arrive with the treatment-move and release steps, not before."));
+
+  const releaseBtn = el("button", "release-btn", "Release patient");
+  const canRelease = card && ["waiting", "treatment_started"].includes(card.status);
+  releaseBtn.disabled = !canRelease;
+  releaseBtn.title = canRelease
+    ? "" : "release is only wired up from waiting / treatment started in this version";
+  releaseBtn.onclick = () => {
+    if (!reasonSelect.value) {
+      msg.className = "msg err";
+      msg.textContent = "pick a release reason first";
+      return;
+    }
+    postCaseAction(
+      releaseBtn, msg, `/api/case/${encodeURIComponent(caseId)}/release`,
+      { reason: reasonSelect.value, actor_role: "charge_nurse" }, "releasing…", "released",
+      closePanel,
+    );
+  };
+
+  controls.append(moveBtn, reasonSelect, releaseBtn);
+  box.append(controls, msg);
+  return box;
+}
+
+function gatePanel(caseId, view, card) {
+  // `view.gate` is the board's own stub pending object (see board/board/api.py's
+  // `case()`), not the raw interrupt payload — `.gate` on it is the escalation
+  // reason string.
+  const rawReason = view.gate && view.gate.gate;
+  const reason = GATE_OPTIONS[rawReason] ? rawReason : null;
+  const severe = reason === "safety_fail";
+  const box = el("div", "section gate-resolve" + (severe ? " severe" : ""));
+  box.append(el("h3", null, "Resolve gate"));
+
+  const heading = reason === "discrepancy" || reason === "low_confidence"
+    ? `${GATE_HEADINGS[reason]} — nurse proposed ${card ? card.nurse_proposed_acuity : "—"}, `
+      + `system proposed ${card ? card.system_proposed_acuity : "—"} (gap ${view.acuity_gap}).`
+    : reason
+      ? GATE_HEADINGS[reason]
+      : `Awaiting a charge nurse's decision (${rawReason || "reason unknown"}).`;
+  box.append(el("div", "heading", heading));
+
+  const role = el("select");
+  [["charge_nurse", "charge_nurse"], ["shift_lead", "shift_lead"],
+   ["nurse", "nurse (not authorized — will be refused)"]].forEach(([value, label]) => {
+    const opt = el("option", null, label);
+    opt.value = value;
+    role.append(opt);
+  });
+
+  // Readable stand-ins for the raw decision codes the API expects. The two
+  // acuity-reason decisions get the actual proposed number, so the nurse
+  // isn't cross-referencing the heading above to know what each button does.
+  const decisionLabels = {
+    use_nurse_acuity: `Use nurse's acuity — ESI ${card ? card.nurse_proposed_acuity : "?"}`,
+    use_system_acuity: `Use system's acuity — ESI ${card ? card.system_proposed_acuity : "?"}`,
+    corrected: "Corrected — resubmit for revalidation",
+    escalate_further: "Escalate further",
+  };
+
+  const msg = el("div", "msg");
+  const options = el("div", "controls");
+  (GATE_OPTIONS[reason] || []).forEach((decision) => {
+    const btn = el("button", null, decisionLabels[decision] || decision);
+    btn.onclick = async () => {
+      options.querySelectorAll("button").forEach((b) => (b.disabled = true));
+      msg.className = "msg";
+      msg.textContent = "resolving…";
+      try {
+        const res = await fetch(`${INTAKE_CHANNEL_ORIGIN}/resume/${encodeURIComponent(caseId)}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ decision, resolver_role: role.value }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          msg.className = "msg err";
+          msg.textContent = body.detail || `failed (${res.status})`;
+          options.querySelectorAll("button").forEach((b) => (b.disabled = false));
+          return;
+        }
+        msg.className = "msg ok";
+        msg.textContent = "resolved";
+        refresh();
+        setTimeout(() => openPanel(caseId), 300);
+      } catch {
+        msg.className = "msg err";
+        msg.textContent = "network error — is intake-channel running?";
+        options.querySelectorAll("button").forEach((b) => (b.disabled = false));
+      }
+    };
+    options.append(btn);
+  });
+
+  box.append(el("label", null, "Resolver role"), role, options, msg);
   return box;
 }
 
@@ -368,21 +572,26 @@ async function openPanel(caseId) {
   }
   const { view, card, checkpoints } = await res.json();
 
+  const mainInfo = [
+    ["waiting", card ? formatWait(card.waited_min) : "—"],
+    ["queue position", card && card.position ? card.position : "—"],
+    ["on the board in", card ? plain(COLUMN_LABELS, card.status) : "off the board"],
+    ["right now", plain(STAGE_LABELS, view.control_state)],
+    ["the submission", plain(OUTCOME_LABELS, view.outcome, "not read yet")],
+    ["safety check", view.safety_passed ? "passed" : "not passed"],
+    ["cleared to the queue", view.approved ? "yes" : "not yet"],
+    ["saved steps", checkpoints],
+  ];
+  if (view.release_reason) {
+    mainInfo.push(["release reason", plain(RELEASE_REASON_LABELS, view.release_reason)]);
+  }
+
   body.replaceChildren(
     el("h2", null, (card && card.complaint) || caseId),
     el("div", "meta",
        `patient ${card && card.patient_id ? card.patient_id : "unknown"}`
        + `${card ? " · " + card.patient_label : ""} · case ${caseId}`),
-    kv([
-      ["waiting", card ? formatWait(card.waited_min) : "—"],
-      ["queue position", card && card.position ? card.position : "—"],
-      ["on the board in", card ? plain(COLUMN_LABELS, card.status) : "off the board"],
-      ["right now", plain(STAGE_LABELS, view.control_state)],
-      ["the submission", plain(OUTCOME_LABELS, view.outcome, "not read yet")],
-      ["safety check", view.safety_passed ? "passed" : "not passed"],
-      ["cleared to the queue", view.approved ? "yes" : "not yet"],
-      ["saved steps", checkpoints],
-    ]),
+    kv(mainInfo),
   );
 
   const acuity = el("div", "section");
@@ -396,7 +605,8 @@ async function openPanel(caseId) {
   ]));
   body.append(acuity);
 
-  body.append(movesSection());
+  body.append(movesSection(caseId, card));
+  if (view.status === "awaiting_human_approval") body.append(gatePanel(caseId, view, card));
   if (view.control_state === "reassessment_required") body.append(refilePanel(caseId));
 
   const trailBox = el("div", "section");
@@ -421,6 +631,7 @@ async function refresh() {
     renderBoard(data);
     // After the render, so the first load highlights nothing.
     seen = new Set(data.cards.map((c) => c.case_id));
+    if (selected) await refreshMovesSection(selected);
   } catch (err) {
     // A failed poll is not a reason to blank a clinical board: keep the last
     // render on screen and try again on the next tick.
@@ -428,8 +639,33 @@ async function refresh() {
   }
 }
 
+// The open panel's "Start treatment"/"Release patient" buttons are built
+// from a one-time card snapshot (see movesSection) and otherwise never
+// re-evaluated while the panel stays open — a status change elsewhere
+// (another nurse, another tab) would leave a stale-enabled button showing.
+// Re-fetching and swapping just this section on every poll, rather than the
+// whole panel via openPanel(), avoids a "loading…" flash and doesn't wipe
+// the audit trail or scroll position every 5s.
+async function refreshMovesSection(caseId) {
+  const oldMoves = document.querySelector("#panel-body .moves");
+  if (!oldMoves) return;
+  const res = await fetch(`/api/case/${encodeURIComponent(caseId)}`);
+  if (!res.ok) return;
+  const { card } = await res.json();
+  const prevReason = oldMoves.querySelector(".reason-select")?.value;
+  const freshMoves = movesSection(caseId, card);
+  if (prevReason) freshMoves.querySelector(".reason-select").value = prevReason;
+  oldMoves.replaceWith(freshMoves);
+}
+
 document.getElementById("panel-close").onclick = closePanel;
-document.addEventListener("keydown", (e) => e.key === "Escape" && closePanel());
+document.getElementById("notif-bell").onclick = toggleNotifPanel;
+document.getElementById("notif-panel-close").onclick = closeNotifPanel;
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  closePanel();
+  closeNotifPanel();
+});
 if (location.hash.startsWith("#case-")) openPanel(location.hash.slice("#case-".length));
 refresh();
 setInterval(refresh, REFRESH_MS);

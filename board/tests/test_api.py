@@ -153,18 +153,120 @@ def test_board_counters_show_monitor_degraded(checkpoint_db):
     assert client.get("/api/board").json()["counters"]["monitor_degraded"] is False
 
 
-def test_the_board_issues_no_writes_except_the_named_exception(seeded):
-    """Move/release endpoints don't exist yet, so there's no way to trigger
-    them by accident. The one deliberate exception is `/deteriorated` — a
-    nurse-observed condition change re-entering the case's graph run, the
-    same way intake-channel's own `/resume` endpoint does.
+def test_the_board_issues_writes_only_through_named_exceptions(seeded):
+    """Move/release now exist, but only as named, single-purpose re-entry
+    points — not a general write API. `/move` (no hyphen) still isn't a
+    real path, guarding against an accidental typo'd route silently working.
     """
     assert client.post(f"/api/case/{seeded[0]}/move", json={}).status_code == 404
-    assert client.post(f"/api/case/{seeded[0]}/release", json={}).status_code == 404
     post_paths = {
         r.path for r in api_module.app.routes if getattr(r, "methods", set()) & {"POST"}
     }
-    assert post_paths == {"/api/case/{case_id}/deteriorated"}
+    assert post_paths == {
+        "/api/case/{case_id}/deteriorated",
+        "/api/case/{case_id}/move-to-treatment",
+        "/api/case/{case_id}/release",
+    }
+
+
+def test_move_to_treatment_endpoint_updates_the_card(seeded):
+    resp = client.post(f"/api/case/{seeded[0]}/move-to-treatment",
+                        json={"actor_role": "nurse"})
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+    card = next(c for c in client.get("/api/board").json()["cards"]
+                if c["case_id"] == seeded[0])
+    assert card["status"] == "treatment_started"
+
+
+def test_release_endpoint_marks_the_card_released(seeded):
+    """The card is NOT removed from `/api/board`'s `cards` — it moves to the
+    `patient_released` status, and the frontend's drawer section (already
+    built, board.js `DRAWER_COLUMN`) is what visually separates it from the
+    main columns.
+    """
+    resp = client.post(f"/api/case/{seeded[0]}/release",
+                        json={"reason": "discharge", "actor_role": "charge_nurse"})
+    assert resp.status_code == 200
+
+    card = next(c for c in client.get("/api/board").json()["cards"]
+                if c["case_id"] == seeded[0])
+    assert card["status"] == "patient_released"
+
+    detail = client.get(f"/api/case/{seeded[0]}").json()
+    assert detail["view"]["release_reason"] == "discharge"
+
+
+def test_release_endpoint_defaults_actor_role_to_nurse_not_charge_nurse(seeded):
+    """An omitted actor_role must degrade safely — get denied by
+    release_authorized — not silently grant release authority.
+    """
+    resp = client.post(f"/api/case/{seeded[0]}/release", json={"reason": "discharge"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "denied"
+
+
+def test_racing_release_requests_each_report_their_own_outcome(seeded):
+    """Two near-simultaneous /release calls for the same case — a plain
+    nurse (must be denied) and a charge nurse (must succeed) — must each
+    report their OWN outcome, not whichever audit row landed last in the
+    checkpoint under real thread-pool concurrency.
+    """
+    import threading
+
+    barrier = threading.Barrier(2)
+    results = {}
+
+    def call(role, key):
+        barrier.wait()
+        resp = client.post(f"/api/case/{seeded[0]}/release",
+                            json={"reason": "discharge", "actor_role": role})
+        results[key] = resp.json()
+
+    t1 = threading.Thread(target=call, args=("nurse", "nurse"))
+    t2 = threading.Thread(target=call, args=("charge_nurse", "charge"))
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+
+    assert results["nurse"]["status"] == "denied"
+    assert results["charge"]["status"] == "ok"
+
+
+def test_release_endpoint_refuses_a_plain_nurse(seeded):
+    resp = client.post(f"/api/case/{seeded[0]}/release",
+                        json={"reason": "discharge", "actor_role": "nurse"})
+    assert resp.status_code == 200   # accepted, but denied inside the graph — see docstring
+    assert resp.json()["status"] == "denied"
+    assert "nurse" in resp.json()["detail"]
+
+    card = next(c for c in client.get("/api/board").json()["cards"]
+                if c["case_id"] == seeded[0])
+    assert card["status"] == "waiting", "a denied release must not change clinical status"
+
+    # And the case must still be retriable — not permanently ended by the denial.
+    retry = client.post(f"/api/case/{seeded[0]}/release",
+                         json={"reason": "discharge", "actor_role": "charge_nurse"})
+    assert retry.json() == {"status": "ok"}
+
+
+def test_move_to_treatment_404s_for_an_unknown_case(checkpoint_db):
+    resp = client.post("/api/case/does-not-exist/move-to-treatment", json={"actor_role": "nurse"})
+    assert resp.status_code == 404
+
+
+def test_move_to_treatment_refuses_a_case_at_the_human_gate(checkpoint_db):
+    from app.runner import start_case
+
+    case = dict(DEMO_CASES["clean"])
+    case["case_id"] = f"gated-{uuid4().hex[:6]}"
+    case["nurse_proposed_acuity"] = 5
+    _, pending = start_case(case, thread_id=case["case_id"])
+    assert pending and pending.get("gate")
+
+    resp = client.post(f"/api/case/{case['case_id']}/move-to-treatment",
+                        json={"actor_role": "nurse"})
+    assert resp.status_code == 409
 
 
 def test_deteriorated_endpoint_re_enters_the_graph_while_waiting(checkpoint_db):

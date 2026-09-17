@@ -10,7 +10,7 @@ from typing import Any
 
 from app.actors import human_bridge
 from app.budgets import GATE_REMINDER_DELAY_MINUTES
-from app.deterministic import actor_is_charge, assign_order_key, audit, bucket_for, now_iso
+from app.deterministic import actor_is_charge, assign_order_key, audit, audit_denial, bucket_for, now_iso
 from app.graph.state import TriageState
 from app.labels import Arrow
 from app.monitor import timers
@@ -67,10 +67,7 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
         # Whoever responded isn't authorized as a charge nurse: refuse the
         # attempt and leave the case exactly where it was.
         return base | {
-            "audit_log": [recorded,
-                          audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
-                                "explain_denial", why, Arrow.BLK,
-                                denying_layer="Prolog (authorization)")],
+            "audit_log": [recorded, audit_denial(state.case_id, State.AWAITING_HUMAN_APPROVAL, why)],
         }
 
     if reason in human_bridge.ACUITY_REASONS:

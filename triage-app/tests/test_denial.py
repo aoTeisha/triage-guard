@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from langgraph.types import Command
 
-from app.deterministic import actor_is_charge, move_authorized
+from app.deterministic import actor_is_charge, move_authorized, release_authorized
 from app.runner import hydrate
 from app.states import State
 from tests.conftest import arrows
@@ -45,6 +45,21 @@ def test_a_treatment_move_needs_safety_and_approval_and_a_role():
 def test_move_refusal_names_which_condition_failed():
     assert "safety" in move_authorized(False, True, "nurse")[1]
     assert "approved" in move_authorized(True, False, "nurse")[1]
+
+
+def test_release_needs_a_valid_reason_and_a_charge_role():
+    assert release_authorized("discharge", "charge_nurse")[0] is True
+    assert release_authorized("ama", "shift_lead")[0] is True
+    assert release_authorized("discharge", "nurse")[0] is False       # role
+    assert release_authorized("not_a_reason", "charge_nurse")[0] is False  # reason
+    assert release_authorized("", "charge_nurse")[0] is False
+
+
+def test_release_denial_explains_itself():
+    ok, why = release_authorized("discharge", "nurse")
+    assert not ok and "nurse" in why
+    ok, why = release_authorized("bogus", "charge_nurse")
+    assert not ok and "bogus" in why
 
 
 # ---- BLK end to end -----------------------------------------------------------

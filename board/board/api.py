@@ -7,20 +7,26 @@ answers gate questions).
     GET  /api/case/{case_id}          detail panel: the shared case view + its trail
     GET  /api/health
     GET  /api/heartbeat               is the background sweeper process still alive?
-    POST /api/case/{case_id}/deteriorated   nurse-initiated DETERIORATION_DETECTED
+    POST /api/case/{case_id}/deteriorated       nurse-initiated DETERIORATION_DETECTED
+    POST /api/case/{case_id}/move-to-treatment  nurse-initiated MOVE_REQUESTED
+    POST /api/case/{case_id}/release            nurse-initiated RELEASE_REQUESTED
 
-Read-only by design, with one exception. `POST /move` and `/release` (moving a
-case into treatment, or releasing it) are not built yet — the code that would
-manage those transitions doesn't exist (see docs/STATUS.md item 4) — and until
-it does, this board must not become a second place that writes case state on
-top of it. The UI shows those controls disabled and there is no endpoint
-behind them.
-
-`/deteriorated` is the deliberate exception: a nurse reports the patient's
-condition worsening while still waiting. It does not write case state
-directly — it re-enters that case's paused LangGraph run with a
+Read-only by design, with three deliberate exceptions — `/deteriorated`,
+`/move-to-treatment`, and `/release`. None of them write case state
+directly: each re-enters that case's paused LangGraph run with a
 `Command(resume=...)`, the same mechanism intake-channel's own `/resume`
-endpoint uses.
+endpoint uses. The real authorization check for a move or a release
+(`move_authorized` / `release_authorized`) runs inside the graph node that
+receives the resume, not here — a request this layer accepts can still come
+back refused, the same way `/deteriorated` already can.
+
+This is the minimal version: both new endpoints only work while a case is
+genuinely parked in the waiting-room pause (`control_state == monitoring`),
+not from the human-approval gate or the reassessment re-file pause. See
+docs/superpowers/plans/2026-09-17-treatment-move-and-release/findings.md
+for why those two are out of scope here, and docs/STATUS.md item 4 for the
+full treatment-move execution machine (Tool Gateway, idempotency,
+reconciliation) this version deliberately skips.
 
 This server issues no other writes, but the page it serves does: a case
 sitting at `reassessment_required` shows a re-filing form in its detail
@@ -210,6 +216,23 @@ class DeteriorationReport(BaseModel):
     actor_role: str = "nurse"
 
 
+def _waiting_snapshot(case_id: str):
+    """Fetch a case's graph handle + config, refusing (404/409) unless it's
+    genuinely parked in the waiting-room pause (`control_state == monitoring`
+    — the same fact `app.monitor.fire.dispatch` checks before firing a
+    reassessment timer). Shared by `deteriorated`, `move_to_treatment`, and
+    `release` — the only three endpoints that resume a paused run.
+    """
+    g = runner.graph()
+    config = config_for(case_id)
+    snapshot = g.get_state(config)
+    if not snapshot.values:
+        raise HTTPException(status_code=404, detail=f"no case {case_id}")
+    if snapshot.values.get("control_state") != State.MONITORING.value:
+        raise HTTPException(status_code=409, detail="case is not currently waiting in the queue")
+    return g, config, snapshot
+
+
 @app.post("/api/case/{case_id}/deteriorated")
 def deteriorated(case_id: str, report: DeteriorationReport):
     """Lets a nurse report that a patient's condition is worsening while they
@@ -219,24 +242,86 @@ def deteriorated(case_id: str, report: DeteriorationReport):
     into that case's own thread, the same mechanism intake-channel's own
     `/resume` endpoint uses, rather than writing to case state directly.
     """
-    g = runner.graph()
-    config = config_for(case_id)
-    snapshot = g.get_state(config)
-    if not snapshot.values:
-        raise HTTPException(status_code=404, detail=f"no case {case_id}")
-    # This only makes sense while the case is genuinely paused waiting in the
-    # queue: `control_state` is set to `monitoring` and stays there exactly
-    # while a run is suspended at that pause point — the same fact
-    # `app.monitor.fire.dispatch` checks before firing a reassessment timer.
-    if snapshot.values.get("control_state") != State.MONITORING.value:
-        raise HTTPException(status_code=409, detail="case is not currently waiting in the queue")
-
+    g, config, _ = _waiting_snapshot(case_id)
     g.invoke(
         Command(resume={"event": "DETERIORATION_DETECTED", "signal": report.signal,
                          "actor_role": report.actor_role}),
         config,
     )
     return {"status": "ok"}
+
+
+class MoveToTreatmentReport(BaseModel):
+    actor_role: str = "nurse"
+
+
+class ReleaseReport(BaseModel):
+    reason: str
+    actor_role: str = "nurse"
+
+
+def _resume_waiting_case(case_id: str, resume: dict) -> dict:
+    """Shared by `/move-to-treatment` and `/release`: re-enter a case's
+    waiting-room pause with `Command(resume=...)`, refusing (404/409) unless
+    it's genuinely parked there, then report whether the in-graph guard
+    (`move_authorized` / `release_authorized`) actually accepted the action.
+
+    A guard refusal is a normal outcome, not an HTTP error — the request was
+    valid and processed, the graph just said no (same convention
+    `/deteriorated` already follows) — so this still returns 200, with
+    `status: "denied"` and the guard's own explanation, letting the caller
+    (the board UI) tell "accepted" apart from "refused" instead of assuming
+    every 200 means success.
+
+    Reads the outcome from `g.invoke()`'s own return value, not a second
+    `g.get_state()` call — two near-simultaneous requests for the same case
+    (a double-click, or two nurses) can otherwise interleave, and a second
+    `get_state()` risks reading whichever request's audit row landed last
+    rather than this call's own. If the audit log didn't grow at all, this
+    request's resume never actually applied — another request already
+    consumed the pending interrupt between our guard check and this
+    `invoke()` — so it's reported the same way as "case not currently
+    waiting" rather than a false "ok".
+    """
+    g, config, snapshot = _waiting_snapshot(case_id)
+    before = len(snapshot.values.get("audit_log") or [])
+
+    result = g.invoke(Command(resume=resume), config)
+
+    after_log = result.get("audit_log") or []
+    if len(after_log) <= before:
+        raise HTTPException(status_code=409, detail="case already left the waiting-room pause")
+
+    last = after_log[-1]
+    if last.get("arrow") == Arrow.BLK.value:
+        return {"status": "denied", "detail": last.get("explanation")}
+    return {"status": "ok"}
+
+
+@app.post("/api/case/{case_id}/move-to-treatment")
+def move_to_treatment(case_id: str, report: MoveToTreatmentReport):
+    """Nurse-initiated move into treatment. Same shape as `/deteriorated`:
+    re-enters the paused run rather than writing case state directly.
+    Only works from the waiting-room pause (see
+    docs/superpowers/plans/2026-09-17-treatment-move-and-release/
+    findings.md: only that pause is wired in this version).
+    """
+    return _resume_waiting_case(
+        case_id, {"event": "MOVE_REQUESTED", "actor_role": report.actor_role}
+    )
+
+
+@app.post("/api/case/{case_id}/release")
+def release(case_id: str, report: ReleaseReport):
+    """Nurse-initiated release. Same shape as `/deteriorated` and
+    `/move-to-treatment` above. The real authorization check
+    (`release_authorized`, charge-role + valid reason) runs inside the
+    graph node, not here.
+    """
+    return _resume_waiting_case(
+        case_id,
+        {"event": "RELEASE_REQUESTED", "reason": report.reason, "actor_role": report.actor_role},
+    )
 
 
 @app.get("/api/case/{case_id}")
