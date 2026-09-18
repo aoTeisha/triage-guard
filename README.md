@@ -37,6 +37,7 @@ one generative step, the Acuity Classifier, is mocked by default and needs no ke
 
 ```bash
 cd langfuse && docker compose up -d && cd ..   # Langfuse stack, if not already up
+docker compose -f db/docker-compose.yml up -d  # shared Postgres — checkpoints + timers
 cp triage-app/.env.example triage-app/.env      # optional — mock mode needs nothing in it
 cd triage-app
 uv sync
@@ -67,16 +68,17 @@ for why this is LangGraph and not CrewAI.
 
 ## The CRM stub
 
-A local stand-in for the patient-history CRM the crew reads from: a SQLite DB of
-20 mock patients behind the exact contract in the spec, wrapped in FastAPI. Not a
-real external system — but because the contract matches, a real CRM can replace
-it without touching the rest of the architecture.
+A local stand-in for the patient-history CRM the crew reads from: 20 mock
+patients in the shared Postgres's `crm` database, behind the exact contract in
+the spec, wrapped in FastAPI. Not a real external system — but because the
+contract matches, a real CRM can replace it without touching the rest of the
+architecture.
 
 ```
 crm-stub/
 ├── crm/
 │   ├── models.py       # PatientRecord, FetchResult/PatchResult, status enums
-│   ├── repository.py   # SQLite implementation of the three operations
+│   ├── repository.py   # Postgres implementation of the three operations
 │   ├── seed.py         # 20 varied mock patients
 │   └── api.py          # FastAPI wrapper + `uv run crm` entrypoint
 ├── tests/
