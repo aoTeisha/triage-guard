@@ -10,10 +10,11 @@ from __future__ import annotations
 from langgraph.types import Command
 
 from app.deterministic import actor_is_charge, move_authorized, release_authorized
+from app.monitor import fire
 from app.runner import hydrate
 from app.states import State
 from tests.conftest import arrows
-from tests.test_gates import GAP_CASE
+from tests.test_gates import CHARGE, GAP_CASE
 
 JUNIOR = {"decision": "use_system_acuity", "resolver_role": "nurse"}
 
@@ -65,16 +66,17 @@ def test_release_denial_explains_itself():
 # ---- BLK end to end -----------------------------------------------------------
 
 
-def test_an_unauthorized_resolver_is_refused_at_the_gate(graph, run):
+def test_an_unauthorized_resolver_is_refused_and_the_gate_stays_open(graph, run):
     _, pending, thread = run(GAP_CASE)
     assert pending is not None
+    config = {"configurable": {"thread_id": thread}}
 
-    denied = hydrate(
-        graph.invoke(Command(resume=JUNIOR), {"configurable": {"thread_id": thread}})
-    )
+    denied = hydrate(graph.invoke(Command(resume=JUNIOR), config))
 
-    assert denied["control_state"] == State.ACTION_DENIED.value
     assert "BLK" in arrows(denied)
+    assert denied["control_state"] == State.AWAITING_HUMAN_APPROVAL.value
+    assert State.AWAITING_HUMAN_APPROVAL.value in graph.get_state(config).next, \
+        "the run must still be paused at the gate, not ended"
 
 
 def test_a_refused_gate_changes_no_case_state(graph, run):
@@ -117,3 +119,30 @@ def test_a_denied_case_never_reaches_the_queue(graph, run):
 
     assert denied["control_state"] != State.MONITORING.value
     assert "11·pass" not in arrows(denied)
+
+
+def test_a_refused_gate_can_still_be_resolved_afterwards(graph, run):
+    """The whole bug: after a junior's attempt was refused, a charge nurse
+    must still be able to answer the same gate.
+    """
+    _, _, thread = run(GAP_CASE)
+    config = {"configurable": {"thread_id": thread}}
+    graph.invoke(Command(resume=JUNIOR), config)
+
+    resolved = hydrate(graph.invoke(Command(resume=CHARGE), config))
+
+    assert resolved["acuity_source"] == "human_confirmed"
+    assert State.AWAITING_HUMAN_APPROVAL.value not in graph.get_state(config).next
+
+
+def test_a_refused_gate_keeps_its_reminders_deliverable(conn, graph, run):
+    """A reminder is only sent while the gate is genuinely open — `fire.notify`
+    cancels it otherwise. Ending the run on a refusal silently cancelled both
+    reminders, so nobody was ever nudged about the stranded case.
+    """
+    _, _, thread = run(GAP_CASE)
+    graph.invoke(Command(resume=JUNIOR), {"configurable": {"thread_id": thread}})
+    timer = {"timer_id": "t-after-refusal", "case_id": thread, "kind": "gate_reminder",
+             "cycle": 0, "due_at": "2000-01-01T00:00:00Z"}
+
+    assert fire.notify(conn, timer, graph=graph) == "DELIVERED"

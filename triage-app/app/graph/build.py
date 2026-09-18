@@ -37,7 +37,11 @@ from app.states import State
 # now. `tests/test_edges.py` fails if any state is neither wired as a node
 # below nor listed in this set, so nothing can silently fall through the
 # cracks.
-UNIMPLEMENTED_STATES: frozenset[State] = frozenset({State.CASE_CLOSED})
+# `CASE_CLOSED` isn't wired yet. `ACTION_DENIED` is deliberately not a node:
+# the spec (§ Transitions, the ACTION_DENIED row) says a refused action
+# "stays in current state", so a refusal is a BLK audit row written by the
+# node that refused, which then re-pauses — never a place a case rests.
+UNIMPLEMENTED_STATES: frozenset[State] = frozenset({State.CASE_CLOSED, State.ACTION_DENIED})
 
 # States whose node calls out to something that can fail at the transport
 # level (a crashed process, a dropped connection) rather than just returning
@@ -165,7 +169,6 @@ def build_graph(checkpointer=None):
     b.add_node(State.REASSESSMENT_REQUIRED, nodes.reassessment_required)
     b.add_node("awaiting_reassessment_submission", nodes.awaiting_reassessment_submission)
     b.add_node(State.AGENT_FAILED, nodes.agent_failed)
-    b.add_node(State.ACTION_DENIED, nodes.action_denied)
     # Degrade handlers, as separate nodes rather than branches folded inside
     # their step, so a crash-triggered fallback shows up as its own box in
     # the rendered graph instead of being buried inside an if-statement.
@@ -275,8 +278,17 @@ def build_graph(checkpointer=None):
         routers.route_gate,
         {
             Route.PROCEED:   State.SAFETY_VALIDATING,
-            Route.DENIED:    State.ACTION_DENIED,
-            Route.EXHAUSTED: END,      # correction rounds spent; case held at gate
+            # Not a terminal: the gate refuses the attempt (its own BLK row)
+            # and re-pauses, so an unauthorized click from the board leaves
+            # the case exactly as resolvable as before, with its reminder
+            # timers still armed. Same reasoning as `awaiting_reassessment`'s
+            # DENIED edge below. Ending the run here cleared the interrupt,
+            # hid the resolve form, and cancelled both reminders.
+            Route.DENIED:    State.AWAITING_HUMAN_APPROVAL,
+            # correction rounds spent. Ends the run (does NOT keep the case
+            # resolvable) — same class of bug as DENIED above, flagged but
+            # not fixed here: see findings.md's "Flagged, not fixed" section.
+            Route.EXHAUSTED: END,
         },
     )
 
@@ -289,11 +301,11 @@ def build_graph(checkpointer=None):
             Route.PROCEED:  State.REASSESSMENT_REQUIRED,
             Route.MOVED:    "awaiting_reassessment",
             Route.RELEASED: END,
-            # Not State.ACTION_DENIED: that edges to END, which would
-            # permanently end a still-waiting case's run over a routine
-            # mis-typed actor_role, silently dropping it out of the
-            # reassessment safety net. Loop back and stay parked instead —
-            # see terminal.py's `denied()` helper docstring.
+            # A mis-typed actor_role here is routine UI input, not a
+            # resolved decision, so ending the run would permanently drop
+            # a still-waiting case out of the reassessment safety net.
+            # Loop back and stay parked instead — same choice the gate's
+            # own DENIED edge above makes, for the same reason.
             Route.DENIED:   "awaiting_reassessment",
         },
     )
@@ -302,6 +314,5 @@ def build_graph(checkpointer=None):
 
     # ---- terminals --------------------------------------------------------------
     b.add_edge(State.AGENT_FAILED, END)
-    b.add_edge(State.ACTION_DENIED, END)
 
     return b.compile(checkpointer=checkpointer)

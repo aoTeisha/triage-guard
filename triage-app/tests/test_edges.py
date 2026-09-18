@@ -105,10 +105,13 @@ def test_the_gate_returns_to_safety_never_straight_to_monitoring():
     assert State.MONITORING.value not in targets
 
 
-def test_denial_is_reachable_and_terminal():
-    """BLK: the attempt is refused and the case does not move on."""
-    assert (State.AWAITING_HUMAN_APPROVAL.value, State.ACTION_DENIED.value) in edges()
-    assert {t for s, t in edges() if s == State.ACTION_DENIED.value} == {"__end__"}
+def test_a_refused_gate_loops_back_to_the_gate():
+    """BLK at the approval gate: the attempt is refused and the case stays
+    parked at the gate, resolvable — it does not end the run. Mirrors what
+    the reassessment pause already does with its own denials.
+    """
+    assert (State.AWAITING_HUMAN_APPROVAL.value, State.AWAITING_HUMAN_APPROVAL.value) in edges()
+    assert State.ACTION_DENIED.value not in {s for s, _ in edges()} | {t for _, t in edges()}
 
 
 def test_monitoring_is_only_reachable_through_a_passing_verdict():

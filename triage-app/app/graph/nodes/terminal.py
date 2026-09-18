@@ -1,9 +1,8 @@
-"""monitoring, agent_failed, action_denied.
+"""monitoring, agent_failed.
 
 `monitoring` and its follow-up `awaiting_reassessment` are the waiting-room
 pause: a case sits here until a reassessment timer fires or a nurse reports
-a change. `agent_failed` and `action_denied` are terminal states that end
-the run outright.
+a change. `agent_failed` is the terminal state that ends the run outright.
 """
 
 from __future__ import annotations
@@ -79,9 +78,9 @@ def awaiting_reassessment(state: TriageState) -> dict[str, Any]:
 
     def denied(why: str) -> dict[str, Any]:
         # Denial stays parked, not ended: a mis-typed actor_role is routine
-        # input from a UI button, not a resolved human decision the way the
-        # approval gate's BLK is — the case must stay retriable by a
+        # input from a UI button. The case must stay retriable by a
         # legitimate follow-up, not fall out of the reassessment safety net.
+        # The approval gate treats its own refusals the same way.
         return {
             "actor_role": actor_role,
             "audit_log": [audit_denial(state.case_id, State.MONITORING, why)],
@@ -149,16 +148,4 @@ def agent_failed(state: TriageState) -> dict[str, Any]:
         "audit_log": [audit(state.case_id, State.AGENT_FAILED, "alert_technician",
                             f"halted at {state.failed_stage or 'unknown stage'}; "
                             "awaiting AGENT_RECOVERED", Arrow.AF_RECOVER)],
-    }
-
-
-def action_denied(state: TriageState) -> dict[str, Any]:
-    """Records that an attempted action was refused. Writes no other case
-    state — the case stays exactly where it was, and a later event is what
-    re-enters the graph, not this node.
-    """
-    return {
-        "control_state": State.ACTION_DENIED.value,
-        "audit_log": [audit(state.case_id, State.ACTION_DENIED, "emit_event_log",
-                            "attempted action refused; case did not move", Arrow.BLK)],
     }

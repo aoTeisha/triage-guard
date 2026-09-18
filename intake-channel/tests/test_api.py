@@ -217,7 +217,10 @@ def test_a_charge_nurse_can_resolve_the_gate_and_the_case_completes():
 
 @respx.mock
 def test_an_unauthorized_resolver_is_refused_through_the_api():
-    """BLK reaches the browser as a refusal, not as a silent success."""
+    """BLK reaches the browser as a refusal, not as a silent success — and
+    the case is still gated afterwards, so the same form can be answered
+    again by someone who is authorized.
+    """
     _crm()
     paused = _submit("gap")
 
@@ -226,9 +229,17 @@ def test_an_unauthorized_resolver_is_refused_through_the_api():
         json={"decision": "use_system_acuity", "resolver_role": "nurse"},
     ).json()
 
-    assert denied["control_state"] == "action_denied"
+    assert denied["status"] == "awaiting_human_approval"
+    assert denied["gate"] is not None
     assert denied["acuity"] is None
     assert any(r["arrow"] == "BLK" for r in denied["audit_log"])
+
+    resolved = client.post(
+        f"/resume/{paused['case_id']}",
+        json={"decision": "use_system_acuity", "resolver_role": "charge_nurse"},
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["acuity_source"] == "human_confirmed"
 
 
 @respx.mock

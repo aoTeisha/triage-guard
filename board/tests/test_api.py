@@ -318,3 +318,25 @@ def test_deteriorated_endpoint_404s_for_an_unknown_case(checkpoint_db):
         json={"signal": "x", "actor_role": "nurse"},
     )
     assert resp.status_code == 404
+
+
+def test_a_refused_resolution_leaves_the_gate_open_on_the_board(checkpoint_db):
+    """Picking the unauthorized role on the resolve form must not strand the
+    case: the panel keeps offering the form and the card keeps its
+    awaiting-approval marker.
+    """
+    from app.runner import resume_case, start_case
+
+    case = dict(DEMO_CASES["clean"])
+    case["case_id"] = f"refused-{uuid4().hex[:6]}"
+    case["nurse_proposed_acuity"] = 5
+    _, pending = start_case(case, thread_id=case["case_id"])
+    assert pending
+
+    resume_case(case["case_id"], {"decision": "use_system_acuity", "resolver_role": "nurse"})
+
+    detail = client.get(f"/api/case/{case['case_id']}").json()
+    assert detail["view"]["status"] == "awaiting_human_approval"
+    assert any(r["arrow"] == "BLK" for r in detail["view"]["audit_log"])
+    card = next(c for c in client.get("/api/board").json()["cards"] if c["case_id"] == case["case_id"])
+    assert card["gate_pending"] is True

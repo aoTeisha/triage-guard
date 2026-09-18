@@ -39,7 +39,7 @@ What LangGraph gives that the Flow could not:
 | --- | --- |
 | A declared set of allowed edges | `add_conditional_edges(node, router, {label: node})` in `graph/build.py` |
 | Per-agent retry budget `N` | `RetryPolicy(max_attempts=N)` per node, from `budgets.py` |
-| `BLK` — refuse an action, case does not move | `Route.DENIED` → `action_denied` → END |
+| `BLK` — refuse an action, case does not move | `Route.DENIED` loops back to the node that refused (`awaiting_human_approval` → itself, `awaiting_reassessment` → itself); the node writes the BLK row and re-pauses |
 | A human gate that survives a restart | `interrupt()` + checkpointer, no model interpreting the clinician |
 | A diagram that cannot lie | `draw_mermaid()` renders the declared edge set |
 
