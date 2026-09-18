@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from .models import FetchStatus, PatchStatus
 from .repository import CRMRepository
 
-DB_PATH = os.environ.get("CRM_DB_PATH", "patients.db")
+DB_PATH = os.environ.get("CRM_DATABASE_URL", "postgresql://triage:triage@localhost:5434/crm")
 
 app = FastAPI(title="Triage Guard — CRM stub", version="1.0.0")
 repo = CRMRepository(db_path=DB_PATH)
@@ -91,18 +91,16 @@ def run() -> None:
     Host/port come from CRM_HOST / CRM_PORT so the same entry point works
     locally and in the container.
     """
-    import sqlite3
-
+    import psycopg
     import uvicorn
 
-    from .repository import SCHEMA
     from .seed import seed
 
-    # Seed when the table is empty, not when the file is missing: constructing
-    # the repository above already created an empty DB file.
-    conn = sqlite3.connect(DB_PATH)
+    # Seed when the table is empty, not when the database is missing:
+    # constructing `repo` above already created and committed the schema, so
+    # this only has to count rows.
+    conn = psycopg.connect(DB_PATH)
     try:
-        conn.executescript(SCHEMA)
         empty = conn.execute("SELECT COUNT(*) FROM patients").fetchone()[0] == 0
     finally:
         conn.close()

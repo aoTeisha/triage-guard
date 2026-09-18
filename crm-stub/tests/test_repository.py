@@ -3,8 +3,8 @@ the db-error simulation that exercises the fail-open path.
 """
 
 import json
-import sqlite3
 
+import psycopg
 import pytest
 
 from crm.models import FetchStatus, PatchStatus
@@ -12,17 +12,16 @@ from crm.repository import CRMRepository, SCHEMA, _now_iso
 
 
 @pytest.fixture
-def repo(tmp_path):
-    """A repository on a temporary file DB, seeded with one known patient."""
-    db = tmp_path / "test.db"
-    r = CRMRepository(db_path=str(db))
-    conn = sqlite3.connect(str(db))
-    conn.executescript(SCHEMA)
+def repo(db_dsn):
+    """A repository on a throwaway Postgres database, seeded with one known patient."""
+    r = CRMRepository(db_path=db_dsn)
+    conn = psycopg.connect(db_dsn)
+    conn.execute(SCHEMA)
     conn.execute(
         """INSERT INTO patients
            (stable_patient_id, name, date_of_birth,
             known_conditions, prior_visits, last_updated)
-           VALUES (?, ?, ?, ?, ?, ?)""",
+           VALUES (%s, %s, %s, %s, %s, %s)""",
         (
             "P-1001", "Alon Mizrahi", "1958-03-12",
             json.dumps(["hypertension", "type 2 diabetes"]),

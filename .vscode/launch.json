@@ -61,6 +61,7 @@
     {
       "name": "All services (crm-stub + intake-channel + board + sweeper)",
       "configurations": ["crm-stub (:8000)", "intake-channel (:8001)", "board (:8002)", "sweeper (waiting-room monitor)"],
+      "preLaunchTask": "postgres: up",
       "stopAll": true
     }
   ]

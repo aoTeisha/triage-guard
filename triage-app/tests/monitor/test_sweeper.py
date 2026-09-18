@@ -44,7 +44,7 @@ def test_run_once_dispatches_a_claimed_timer(conn, graph, run):
 
     sweeper.run_once(conn, worker_id="w1", graph=graph)
 
-    row = conn.execute("SELECT fire_state FROM timers WHERE case_id=?", (thread,)).fetchone()
+    row = conn.execute("SELECT fire_state FROM timers WHERE case_id=%s", (thread,)).fetchone()
     assert row == ("DELIVERED",)
     result = hydrate(graph.get_state(config_for(thread)).values)
     assert result["reassessment_cycle"] == 1
@@ -57,7 +57,7 @@ def test_run_once_redispatches_a_failed_timer_on_a_later_tick(conn, graph):
 
     sweeper.run_once(conn, worker_id="w1", graph=graph)
 
-    row = conn.execute("SELECT fire_state FROM timers WHERE timer_id=?", (timer_id,)).fetchone()
+    row = conn.execute("SELECT fire_state FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
     assert row == ("FAILED",)  # case still doesn't exist: refused again, not silently dropped
 
 
@@ -95,5 +95,5 @@ def test_run_once_reconciles_an_unknown_timer(conn, graph, run):
 
     sweeper.run_once(conn, worker_id="w1", graph=graph)
 
-    row = conn.execute("SELECT fire_state FROM timers WHERE timer_id=?", (timer_id,)).fetchone()
+    row = conn.execute("SELECT fire_state FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
     assert row == ("FAILED",)

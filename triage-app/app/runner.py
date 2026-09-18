@@ -11,9 +11,8 @@ resuming means re-entering that thread.
 from __future__ import annotations
 
 import os
-import sqlite3
+import sys
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from langgraph.types import Command
@@ -22,11 +21,15 @@ from app.actors import human_bridge
 from app.graph import TriageState, build_graph
 from app.observability import langfuse_callbacks
 
-# Local checkpoint store. Gitignored; a real deployment swaps this for Postgres
-# without touching anything else in this file.
-DB_PATH = Path(
-    os.environ.get("TRIAGE_CHECKPOINT_DB", Path(__file__).resolve().parent.parent / ".triage_state.db")
+# Shared Postgres checkpoint store — same DSN the timers module writes to
+# (see app/monitor/timers.py), so a timer row and the case state it refers
+# to can be written in one transaction.
+DSN = os.environ.get(
+    "TRIAGE_CHECKPOINT_DB", "postgresql://triage:triage@localhost:5434/triage"
 )
+
+
+_saver_cm = None  # kept alive for the process's lifetime; see `graph()` below.
 
 
 @lru_cache(maxsize=1)
@@ -34,11 +37,26 @@ def graph():
     """The compiled graph, with persistence. Cached — compiling is not free and
     the topology never changes at runtime.
     """
-    from langgraph.checkpoint.sqlite import SqliteSaver
+    global _saver_cm
+    from langgraph.checkpoint.postgres import PostgresSaver
 
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    return build_graph(checkpointer=SqliteSaver(conn))
+    # `from_conn_string` is a context manager backed by a generator; entering
+    # it without keeping a reference lets Python garbage-collect the
+    # generator once this function returns, which closes the connection
+    # under it. Stashing it at module level keeps it alive for as long as
+    # the cached graph is used.
+    cm = PostgresSaver.from_conn_string(DSN)
+    saver = cm.__enter__()
+    try:
+        saver.setup()
+        compiled = build_graph(checkpointer=saver)
+    except BaseException:
+        # `lru_cache` doesn't cache a raising call, so a later retry would
+        # enter a second context manager and orphan this one's connection.
+        cm.__exit__(*sys.exc_info())
+        raise
+    _saver_cm = cm
+    return compiled
 
 
 def config_for(case_id: str) -> dict[str, Any]:

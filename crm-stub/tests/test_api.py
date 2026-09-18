@@ -11,11 +11,10 @@ from crm.seed import seed
 
 
 @pytest.fixture
-def client(tmp_path):
-    db = tmp_path / "api.db"
-    seed(str(db))
-    # point the app's repo at the temp DB
-    api_module.repo = CRMRepository(db_path=str(db))
+def client(db_dsn):
+    seed(db_dsn)
+    # point the app's repo at the throwaway DB
+    api_module.repo = CRMRepository(db_path=db_dsn)
     return TestClient(api_module.app)
 
 

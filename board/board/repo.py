@@ -3,17 +3,18 @@
 `app.runner` gives `snapshot(case_id)` and `history(case_id)`; both need an id you
 already have. A board is exactly an enumeration, so this module supplies it.
 
-`CheckpointRepo` enumerates the checkpointer itself: `SqliteSaver` keeps one
+`CheckpointRepo` enumerates the checkpointer itself: `PostgresSaver` keeps one
 row-set per `thread_id`, and `thread_id == case_id` by construction in
 `app.runner`. No new writes, no schema to keep in sync with the graph.
 """
 
 from __future__ import annotations
 
-import sqlite3
 from contextlib import closing
 from datetime import datetime
 from typing import Any
+
+import psycopg
 
 from app import runner
 from app.states import State
@@ -30,16 +31,21 @@ class CheckpointRepo:
     """
 
     def case_ids(self) -> list[str]:
-        # runner.DB_PATH is read per call, not captured at import: the tests
-        # point it at a temp file, and a captured path would ignore them.
-        # Read-only: the board must not be able to write the checkpoint store
-        # even by accident. Before the first case there is no file, or a file
-        # whose tables the checkpointer has not created yet — both mean an empty
-        # board, which is the correct answer and not an error page.
+        # runner.DSN is read per call, not captured at import: the tests point
+        # it at a throwaway database, and a captured DSN would ignore them.
+        # Read-only session: the board must not be able to write the checkpoint
+        # store even by accident, and Postgres enforces that here rather than
+        # trusting every future edit to this class to stay a SELECT.
+        # OperationalError as well as UndefinedTable: before the first case the
+        # checkpointer's tables don't exist, and the board may also start before
+        # Postgres is up. Both mean an empty board, which is the correct answer
+        # and not an error page.
         try:
-            with closing(sqlite3.connect(f"file:{runner.DB_PATH}?mode=ro", uri=True)) as conn:
+            with closing(
+                psycopg.connect(runner.DSN, options="-c default_transaction_read_only=on")
+            ) as conn:
                 rows = conn.execute("SELECT DISTINCT thread_id FROM checkpoints").fetchall()
-        except sqlite3.OperationalError:
+        except (psycopg.errors.UndefinedTable, psycopg.OperationalError):
             return []
         return [r[0] for r in rows]
 

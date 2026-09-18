@@ -84,7 +84,7 @@ def test_entering_the_refile_pause_schedules_a_reminder(conn, graph, run):
     _fire_the_timer(graph, thread)
 
     row = conn.execute(
-        "SELECT kind, fire_state FROM timers WHERE case_id=? AND kind='reassessment_reminder'",
+        "SELECT kind, fire_state FROM timers WHERE case_id=%s AND kind='reassessment_reminder'",
         (case["case_id"],),
     ).fetchone()
     assert row == ("reassessment_reminder", "SCHEDULED")
@@ -106,7 +106,7 @@ def test_the_reminder_notifies_a_charge_nurse_while_the_case_still_waits(conn, g
 
     assert outcome == "DELIVERED"
     assert conn.execute(
-        "SELECT recipient_class FROM notifications WHERE case_id=?", (thread,)
+        "SELECT recipient_class FROM notifications WHERE case_id=%s", (thread,)
     ).fetchone() == ("any_charge_nurse",)
 
 
@@ -124,5 +124,5 @@ def test_the_reminder_is_cancelled_once_the_nurse_has_refiled(conn, graph, run):
 
     assert outcome == "CANCELLED"
     assert conn.execute(
-        "SELECT COUNT(*) FROM notifications WHERE case_id=?", (thread,)
+        "SELECT COUNT(*) FROM notifications WHERE case_id=%s", (thread,)
     ).fetchone()[0] == 0

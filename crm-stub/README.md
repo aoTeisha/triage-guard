@@ -40,18 +40,19 @@ docker-compose.yml     # service on the official uv image + healthcheck
 ## Run with uv (local)
 
 ```bash
-uv sync      # create the env and install deps
-uv run crm   # seeds patients.db on first run, then serves on :8000
+docker compose -f ../db/docker-compose.yml up -d postgres   # starts the shared Postgres
+uv sync                         # create the env and install deps
+uv run crm                      # seeds the `crm` database on first run, then serves on :8000
 ```
 
-`CRM_DB_PATH`, `CRM_HOST` and `CRM_PORT` override the defaults
-(`patients.db`, `127.0.0.1`, `8000`).
+`CRM_DATABASE_URL`, `CRM_HOST` and `CRM_PORT` override the defaults
+(`postgresql://triage:triage@localhost:5434/crm`, `127.0.0.1`, `8000`).
 
 For reload during development, or to seed on its own:
 
 ```bash
 uv run uvicorn crm.api:app --reload
-uv run crm-seed --db patients.db --reset
+uv run crm-seed --reset
 ```
 
 ## Run with Docker Compose
@@ -62,10 +63,11 @@ docker compose up
 
 No Dockerfile: the service runs the official uv image with this directory
 bind-mounted and runs the same `uv run crm` entry point, so it installs deps,
-seeds `patients.db` if empty, and serves the API on `localhost:8000`. The DB is
-a normal file in this directory,
-so it persists across restarts and is shared with local `uv run`. The `/health`
-endpoint backs the container healthcheck.
+seeds the `crm` database if empty, and serves the API on `localhost:8000`. The
+data lives in the shared Postgres (`../db/docker-compose.yml`, its own `crm`
+database), so it persists across restarts and is shared with local `uv run` —
+start that container first. The `/health` endpoint backs the container
+healthcheck.
 
 ## Endpoints
 

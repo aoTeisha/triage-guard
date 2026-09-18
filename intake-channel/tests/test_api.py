@@ -20,24 +20,35 @@ client = TestClient(api_module.app)
 
 
 @pytest.fixture(autouse=True)
-def offline(monkeypatch, tmp_path):
-    """Mock actors, no tracing, and a throwaway checkpoint file per test."""
+def offline(monkeypatch):
+    """Mock actors, no tracing, and a throwaway checkpoint database per test."""
     monkeypatch.setenv("TRIAGE_LLM", "mock")
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
 
-    import sqlite3
+    import os
+    import uuid
 
-    from langgraph.checkpoint.sqlite import SqliteSaver
+    import psycopg
+    from langgraph.checkpoint.postgres import PostgresSaver
 
     from app import runner
     from app.graph import build_graph
 
-    conn = sqlite3.connect(str(tmp_path / "ckpt.db"), check_same_thread=False)
-    compiled = build_graph(checkpointer=SqliteSaver(conn))
-    monkeypatch.setattr(runner, "graph", lambda: compiled)
-    yield
-    conn.close()
+    admin_dsn = os.environ.get("POSTGRES_TEST_DSN", "postgresql://triage:triage@localhost:5434/postgres")
+    name = f"test_{uuid.uuid4().hex}"
+    with psycopg.connect(admin_dsn, autocommit=True) as admin:
+        admin.execute(f'CREATE DATABASE "{name}"')
+    dsn = admin_dsn.rsplit("/", 1)[0] + f"/{name}"
+
+    with PostgresSaver.from_conn_string(dsn) as saver:
+        saver.setup()
+        compiled = build_graph(checkpointer=saver)
+        monkeypatch.setattr(runner, "graph", lambda: compiled)
+        yield
+
+    with psycopg.connect(admin_dsn, autocommit=True) as admin:
+        admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
 
 
 def _crm(status: int = 200, body: dict | None = None):

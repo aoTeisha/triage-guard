@@ -10,7 +10,7 @@ from app.monitor import timers
 def test_schedule_inserts_a_scheduled_row(conn):
     timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2026-01-01T00:00:00Z")
 
-    row = conn.execute("SELECT case_id, kind, cycle, due_at, fire_state FROM timers WHERE timer_id=?", (timer_id,)).fetchone()
+    row = conn.execute("SELECT case_id, kind, cycle, due_at, fire_state FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
     assert row == ("c1", "reassessment", 0, "2026-01-01T00:00:00Z", "SCHEDULED")
 
 
@@ -46,7 +46,7 @@ def test_claim_due_claims_a_scheduled_row_with_an_expired_stale_lease(conn):
     # A SCHEDULED row should never carry a lease in normal flow, but the claim
     # query's own lease check must still let a stale/expired one through.
     timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
-    conn.execute("UPDATE timers SET lease_until='2000-01-01T00:00:00Z', worker_id='ghost' WHERE timer_id=?", (timer_id,))
+    conn.execute("UPDATE timers SET lease_until='2000-01-01T00:00:00Z', worker_id='ghost' WHERE timer_id=%s", (timer_id,))
     conn.commit()
 
     claimed = timers.claim_due(conn, worker_id="w2", lease_seconds=30)
@@ -76,7 +76,7 @@ def test_schedule_is_idempotent_on_the_same_case_kind_cycle(conn):
     second = timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2099-01-01T00:00:00Z")
 
     assert first == second
-    rows = conn.execute("SELECT due_at FROM timers WHERE timer_id=?", (first,)).fetchall()
+    rows = conn.execute("SELECT due_at FROM timers WHERE timer_id=%s", (first,)).fetchall()
     assert rows == [("2026-01-01T00:00:00Z",)]
 
 
@@ -85,7 +85,7 @@ def test_set_state_updates_fire_state_and_fields(conn):
 
     timers.set_state(conn, timer_id, "DISPATCHING", fire_id="fid-1", attempts=1)
 
-    row = conn.execute("SELECT fire_state, fire_id, attempts FROM timers WHERE timer_id=?", (timer_id,)).fetchone()
+    row = conn.execute("SELECT fire_state, fire_id, attempts FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
     assert row == ("DISPATCHING", "fid-1", 1)
 
 
@@ -96,7 +96,7 @@ def test_claim_retryable_claims_an_unleased_failed_row(conn):
     claimed = timers.claim_retryable(conn, worker_id="w2", lease_seconds=30)
 
     assert [t["timer_id"] for t in claimed] == [timer_id]
-    row = conn.execute("SELECT fire_state, worker_id FROM timers WHERE timer_id=?", (timer_id,)).fetchone()
+    row = conn.execute("SELECT fire_state, worker_id FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
     assert row == ("FAILED", "w2")
 
 
@@ -111,7 +111,7 @@ def test_claim_retryable_claims_a_firing_row_with_an_expired_lease(conn):
     claimed = timers.claim_retryable(conn, worker_id="w2", lease_seconds=30)
 
     assert [t["timer_id"] for t in claimed] == [timer_id]
-    row = conn.execute("SELECT fire_state, worker_id FROM timers WHERE timer_id=?", (timer_id,)).fetchone()
+    row = conn.execute("SELECT fire_state, worker_id FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
     assert row == ("DISPATCHING", "w2")
 
 

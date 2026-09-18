@@ -13,13 +13,14 @@ passes its own isolated graph explicitly instead.
 from __future__ import annotations
 
 import os
-import sqlite3
 import time
 from datetime import datetime, timezone
 
+import psycopg
+
 from app.budgets import TIMER_GAP_GRACE_MINUTES
 from app.monitor import fire, timers
-from app.runner import DB_PATH, config_for
+from app.runner import config_for
 
 SWEEP_INTERVAL_SECONDS = 5
 LEASE_SECONDS = 30
@@ -40,18 +41,18 @@ def _is_timer_gap(graph, timer: dict) -> bool:
     return overdue_minutes > TIMER_GAP_GRACE_MINUTES.get(band, TIMER_GAP_GRACE_MINUTES[5])
 
 
-def _dispatch(conn: sqlite3.Connection, timer: dict, graph) -> None:
+def _dispatch(conn: psycopg.Connection, timer: dict, graph) -> None:
     fire.dispatch(conn, {**timer, "timer_gap": _is_timer_gap(graph, timer)}, graph=graph)
 
 
-def _handle_due(conn: sqlite3.Connection, timer: dict, graph) -> None:
+def _handle_due(conn: psycopg.Connection, timer: dict, graph) -> None:
     if timer["kind"] == "reassessment":
         _dispatch(conn, timer, graph)
     else:
         fire.notify(conn, timer, graph=graph)  # gate_reminder, safety_park: notify-only
 
 
-def _handle_retry(conn: sqlite3.Connection, timer: dict, graph) -> None:
+def _handle_retry(conn: psycopg.Connection, timer: dict, graph) -> None:
     if timer["kind"] != "reassessment":
         fire.notify(conn, timer, graph=graph)  # no ack to reconcile — just retry
     elif timer["fire_state"] == "FAILED":
@@ -60,7 +61,7 @@ def _handle_retry(conn: sqlite3.Connection, timer: dict, graph) -> None:
         fire.reconcile(conn, timer, graph=graph)
 
 
-def run_once(conn: sqlite3.Connection, *, worker_id: str, graph=None) -> list[dict]:
+def run_once(conn: psycopg.Connection, *, worker_id: str, graph=None) -> list[dict]:
     """One tick. Returns the newly claimed (`DUE`) rows."""
     from app.runner import graph as real_graph
 
@@ -80,9 +81,12 @@ def run_once(conn: sqlite3.Connection, *, worker_id: str, graph=None) -> list[di
 
 def main() -> None:
     worker_id = os.environ.get("SWEEPER_WORKER_ID", f"sweeper-{os.getpid()}")
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    timers.init_schema(conn)
+    # `timers.connection()` rather than a connection of its own: that function
+    # is the one place that decides this store's connection settings (notably
+    # autocommit), and a second `psycopg.connect` here silently drifted from it
+    # once those settings changed — leaving the sweeper's claims uncommitted
+    # and its transaction holding locks on `timers` indefinitely.
+    conn = timers.connection()
     while True:
         run_once(conn, worker_id=worker_id)
         time.sleep(SWEEP_INTERVAL_SECONDS)

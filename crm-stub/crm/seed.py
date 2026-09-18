@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
+
+import psycopg
 
 from .repository import SCHEMA, _now_iso
 
@@ -73,19 +74,23 @@ PATIENTS = [
 ]
 
 
-def seed(db_path: str = "patients.db", reset: bool = False) -> int:
-    conn = sqlite3.connect(db_path)
+def seed(dsn: str = "postgresql://triage:triage@localhost:5434/crm", reset: bool = False) -> int:
+    conn = psycopg.connect(dsn)
     try:
-        conn.executescript(SCHEMA)
+        conn.execute(SCHEMA)
         if reset:
             conn.execute("DELETE FROM patients")
         n = 0
         for pid, name, dob, conditions, visits in PATIENTS:
             conn.execute(
-                """INSERT OR REPLACE INTO patients
+                """INSERT INTO patients
                    (stable_patient_id, name, date_of_birth,
                     known_conditions, prior_visits, last_updated)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   VALUES (%s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (stable_patient_id) DO UPDATE SET
+                     name = excluded.name, date_of_birth = excluded.date_of_birth,
+                     known_conditions = excluded.known_conditions,
+                     prior_visits = excluded.prior_visits, last_updated = excluded.last_updated""",
                 (pid, name, dob, json.dumps(conditions), json.dumps(visits), _now_iso()),
             )
             n += 1
@@ -97,7 +102,7 @@ def seed(db_path: str = "patients.db", reset: bool = False) -> int:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Seed the CRM stub with mock patients.")
-    ap.add_argument("--db", default="patients.db", help="SQLite file path")
+    ap.add_argument("--db", default="postgresql://triage:triage@localhost:5434/crm", help="Postgres DSN")
     ap.add_argument("--reset", action="store_true", help="wipe existing rows first")
     args = ap.parse_args()
     n = seed(args.db, reset=args.reset)

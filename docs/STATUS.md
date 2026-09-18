@@ -1,6 +1,6 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-17 (a nurse can move a patient to treatment and release them, from the board — see *Recent changes*)
+**Last updated:** 2026-09-18 (SQLite retired everywhere — checkpoints, timers, and CRM stub all moved to a shared Postgres — see *Recent changes*)
 
 ---
 
@@ -87,6 +87,26 @@ alongside it will schedule a reassessment timer that never fires.
 ---
 
 ## Recent changes
+
+**2026-09-18 — SQLite is gone; one shared Postgres backs checkpoints, timers,
+and the CRM stub.** `db/docker-compose.yml` (new) runs Postgres 17 on host port
+5434 (5432 is already taken by a native `postgresql.service`), creating two
+databases: `triage` (checkpoints + timers, via `db/init/`) and `crm` (patient
+records). `triage-app/app/runner.py` swaps `SqliteSaver` for LangGraph's
+`PostgresSaver` (`TRIAGE_CHECKPOINT_DB` is now a DSN, not a file path);
+`triage-app/app/monitor/timers.py` points its own connection at the same
+database (autocommit, 5s `lock_timeout` so a stuck row degrades the board
+instead of hanging it) and its schema swapped SQLite-isms
+(`strftime`/`AUTOINCREMENT`) for Postgres equivalents (`to_char`/`SERIAL`).
+`board/board/repo.py`'s read-only enumeration does the same swap, catching
+`UndefinedTable`/`OperationalError` instead of `sqlite3.OperationalError` for
+the empty-board case. `crm-stub` moved off its own `patients.db` file (deleted)
+to the shared server's `crm` database via `psycopg`; its `docker-compose.yml`
+reaches the host's Postgres through `host.docker.internal:5434`. No behavior
+change to any of the graph, monitor, or CRM contract logic — this is a storage
+swap, same reads/writes, same schemas otherwise. `.vscode/tasks.json` (new)
+and a `launch.json` tweak wire up `docker compose -f db/docker-compose.yml up`
+as a launchable task.
 
 **2026-09-17 — a nurse can move a waiting patient into treatment, and release
 them, from the board.** Minimal version, wired only from the waiting-room pause

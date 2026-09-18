@@ -7,8 +7,10 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # SQLite file lives in the bind-mounted project dir, so it persists on the host.
-      CRM_DB_PATH: /app/patients.db
+      # Shared Postgres — the `crm` database on the same server the rest of
+      # the app uses (see ../db/docker-compose.yml). host.docker.internal reaches
+      # the host's published port from inside this container.
+      CRM_DATABASE_URL: postgresql://triage:triage@host.docker.internal:5434/crm
       # Set to "true" to simulate a DB outage (exercises the fail-open path).
       CRM_SIMULATE_DOWN: "false"
       # Must bind 0.0.0.0 in the container for the published port to work.
@@ -19,6 +21,8 @@ services:
       UV_NO_DEV: "1"
     volumes:
       - .:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # Same entry point as `uv run crm` locally; it seeds the DB if missing.
     command: ["uv", "run", "crm"]
     healthcheck:

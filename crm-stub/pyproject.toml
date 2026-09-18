@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "pydantic>=2.6",
+    "psycopg[binary]>=3.1",
 ]
 
 # A uv dependency group, not an extra: uv installs it on `uv sync` by default,

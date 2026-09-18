@@ -65,7 +65,7 @@ def test_dispatch_delivers_a_pending_fire(conn, graph, run):
     outcome = fire.dispatch(conn, timer, graph=graph)
 
     assert outcome == "DELIVERED"
-    row = conn.execute("SELECT fire_state FROM timers WHERE timer_id=?", (timer["timer_id"],)).fetchone()
+    row = conn.execute("SELECT fire_state FROM timers WHERE timer_id=%s", (timer["timer_id"],)).fetchone()
     assert row == ("DELIVERED",)
     # The fire landed and the case moved off `monitoring` — but it now rests
     # at the reassessment re-filing pause, waiting for a nurse, not back at a
@@ -102,7 +102,7 @@ def test_dispatch_refuses_a_case_that_does_not_exist(conn, graph):
     outcome = fire.dispatch(conn, timer, graph=graph)
 
     assert outcome == "FAILED"
-    row = conn.execute("SELECT fire_state FROM timers WHERE timer_id=?", (timer_id,)).fetchone()
+    row = conn.execute("SELECT fire_state FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
     assert row == ("FAILED",)
 
 
@@ -127,7 +127,7 @@ def test_reconcile_fails_a_fire_that_never_applied(conn, graph, run):
     outcome = fire.reconcile(conn, {**timer, "fire_id": fid, "attempts": 0}, graph=graph)
 
     assert outcome == "FAILED"
-    row = conn.execute("SELECT fire_state FROM timers WHERE timer_id=?", (timer["timer_id"],)).fetchone()
+    row = conn.execute("SELECT fire_state FROM timers WHERE timer_id=%s", (timer["timer_id"],)).fetchone()
     assert row == ("FAILED",)
 
 
@@ -143,7 +143,7 @@ def test_reconcile_escalates_when_the_store_is_unreachable_through_the_whole_bud
     outcome = fire.reconcile(conn, {**timer, "fire_id": fid, "attempts": fire.RECONCILE_BUDGET - 1}, graph=graph)
 
     assert outcome == "ESCALATED_TO_HUMAN"
-    row = conn.execute("SELECT recipient_class, reason FROM escalations WHERE fire_id=?", (fid,)).fetchone()
+    row = conn.execute("SELECT recipient_class, reason FROM escalations WHERE fire_id=%s", (fid,)).fetchone()
     assert row == ("technician", "store_unreachable")
 
 
@@ -157,7 +157,7 @@ def test_notify_delivers_a_reminder_while_the_gate_is_still_open(conn, graph, ru
 
     assert outcome == "DELIVERED"
     assert conn.execute(
-        "SELECT recipient_class FROM notifications WHERE case_id=?", (thread,)
+        "SELECT recipient_class FROM notifications WHERE case_id=%s", (thread,)
     ).fetchone() == ("assigned_nurse",)
 
 
@@ -169,7 +169,7 @@ def test_notify_widens_to_any_charge_nurse_on_the_second_rung(conn, graph, run):
     fire.notify(conn, timer, graph=graph)
 
     assert conn.execute(
-        "SELECT recipient_class FROM notifications WHERE case_id=?", (thread,)
+        "SELECT recipient_class FROM notifications WHERE case_id=%s", (thread,)
     ).fetchone() == ("any_charge_nurse",)
 
 
@@ -182,7 +182,7 @@ def test_notify_cancels_a_reminder_for_a_gate_thats_already_resolved(conn, graph
     outcome = fire.notify(conn, timer, graph=graph)
 
     assert outcome == "CANCELLED"
-    assert conn.execute("SELECT COUNT(*) FROM notifications WHERE case_id=?", (thread,)).fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM notifications WHERE case_id=%s", (thread,)).fetchone()[0] == 0
 
 
 def test_notify_stops_sending_once_the_recipients_budget_is_spent(conn, graph, run, monkeypatch):
@@ -196,7 +196,7 @@ def test_notify_stops_sending_once_the_recipients_budget_is_spent(conn, graph, r
     outcome = fire.notify(conn, timer, graph=graph)
 
     assert outcome == "FAILED"
-    assert conn.execute("SELECT COUNT(*) FROM notifications WHERE case_id=?", (thread,)).fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM notifications WHERE case_id=%s", (thread,)).fetchone()[0] == 0
 
 
 def test_dispatch_flags_timer_gap_on_a_severely_overdue_fire(conn, graph, run):

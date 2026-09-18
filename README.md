@@ -97,9 +97,10 @@ forces `db_error` at runtime, so the degrade path can be demoed without a real o
 ### Run
 
 ```bash
+docker compose -f db/docker-compose.yml up -d postgres   # the shared Postgres
 cd crm-stub
 uv sync
-uv run crm        # seeds patients.db on first run, then serves on :8000
+uv run crm        # seeds the `crm` database on first run, then serves on :8000
 ```
 
 Or in a container, same entry point: `cd crm-stub && docker compose up`.

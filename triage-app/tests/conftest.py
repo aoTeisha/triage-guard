@@ -2,27 +2,49 @@
 
 from __future__ import annotations
 
-import sqlite3
+import os
+import uuid
 from typing import Any
-from uuid import uuid4
 
+import psycopg
 import pytest
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.postgres import PostgresSaver
 
 from app.graph import build_graph
 from app.monitor import timers
 from app.runner import hydrate
 
+# Admin connection used only to create/drop each test's throwaway database.
+# Needs `docker compose -f db/docker-compose.yml up -d postgres` running.
+ADMIN_DSN = os.environ.get("POSTGRES_TEST_DSN", "postgresql://triage:triage@localhost:5434/postgres")
+
+
+def _throwaway_db() -> str:
+    """A fresh Postgres database for one test. Same isolation guarantee the
+    old `tmp_path`-file-per-test gave, adapted to a real server: each test
+    gets its own database instead of its own SQLite file.
+    """
+    name = f"test_{uuid.uuid4().hex}"
+    with psycopg.connect(ADMIN_DSN, autocommit=True) as admin:
+        admin.execute(f'CREATE DATABASE "{name}"')
+    return ADMIN_DSN.rsplit("/", 1)[0] + f"/{name}"
+
+
+def _drop_db(dsn: str) -> None:
+    name = dsn.rsplit("/", 1)[1]
+    with psycopg.connect(ADMIN_DSN, autocommit=True) as admin:
+        admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+
 
 @pytest.fixture(autouse=True)
-def offline(monkeypatch, tmp_path):
+def offline(monkeypatch):
     """Force mock mode, silence tracing, and isolate the shared timer store.
 
-    `timers.connection()` caches one SQLite connection per process, reused
-    by both the graph's `monitoring` node and the sweeper. Without clearing
-    that cache between tests, the first test to reach `monitoring` would
-    lock in a connection for the rest of the suite — potentially even the
-    real `.triage_state.db` file, if no earlier test had overridden its path.
+    `timers.connection()` caches one connection per process, reused by both
+    the graph's `monitoring` node and the sweeper. Without clearing that
+    cache between tests, the first test to reach `monitoring` would lock in
+    a connection for the rest of the suite — potentially even the real
+    `triage` database, if no earlier test had overridden its DSN.
     """
     monkeypatch.setenv("TRIAGE_LLM", "mock")
     # Empty, not deleted: `observability.tracing_enabled()` calls load_dotenv(), which
@@ -30,33 +52,42 @@ def offline(monkeypatch, tmp_path):
     # .env switch tracing back on mid-suite and the run would block on localhost:3000.
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
-    monkeypatch.setenv("TRIAGE_CHECKPOINT_DB", str(tmp_path / "timers.db"))
+    dsn = _throwaway_db()
+    monkeypatch.setenv("TRIAGE_CHECKPOINT_DB", dsn)
     timers.connection.cache_clear()
     yield
     timers.connection.cache_clear()
+    _drop_db(dsn)
 
 
 @pytest.fixture
-def conn(tmp_path):
-    """A throwaway timer store, isolated per test (used by test_timers.py,
+def conn():
+    """The throwaway timer store for this test (used by test_timers.py,
     test_fire.py, test_sweeper.py — none of these read/write the checkpointer).
+    Reuses `timers.connection()`, which `offline` already pointed at this
+    test's throwaway database.
     """
-    c = sqlite3.connect(str(tmp_path / "timers.db"))
-    timers.init_schema(c)
-    yield c
-    c.close()
+    return timers.connection()
 
 
 @pytest.fixture
-def graph(tmp_path):
-    """A compiled graph with a throwaway checkpoint file.
+def graph():
+    """A compiled graph with a throwaway checkpoint database.
 
-    File-backed rather than in-memory because the gate tests need a checkpoint
-    that survives a rebuilt graph object — that is the whole point of the pause.
+    A database of its own, separate from `conn`'s — the gate tests need a
+    checkpoint that survives a rebuilt graph object, and nothing here needs
+    the timer store and the checkpoint store to be the same database (they
+    share one DSN in production, but that's a deployment choice, not a
+    correctness requirement — the two are only ever joined by `case_id`, a
+    plain string, never a real foreign key).
     """
-    conn = sqlite3.connect(str(tmp_path / "ckpt.db"), check_same_thread=False)
-    yield build_graph(checkpointer=SqliteSaver(conn))
-    conn.close()
+    dsn = _throwaway_db()
+    try:
+        with PostgresSaver.from_conn_string(dsn) as saver:
+            saver.setup()
+            yield build_graph(checkpointer=saver)
+    finally:
+        _drop_db(dsn)
 
 
 @pytest.fixture
@@ -64,7 +95,7 @@ def run(graph):
     """Invoke the graph on a case and return (final_values, pending_gate)."""
 
     def _run(case: dict[str, Any], thread: str | None = None):
-        thread = thread or f"t-{uuid4().hex[:8]}"
+        thread = thread or f"t-{uuid.uuid4().hex[:8]}"
         result = graph.invoke(
             {
                 "case_id": case["case_id"],

@@ -1,4 +1,4 @@
-"""SQLite-backed CRM repository.
+"""Postgres-backed CRM repository.
 
 Implements the whole CRM contract from SPECIFICATION.md:
 fetch_patient_data / patch_patient_data / is_available, with a
@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
+
+import psycopg
+import psycopg.rows
 
 from .models import (
     FetchResult,
@@ -51,19 +53,21 @@ class DBUnavailable(Exception):
 
 
 class CRMRepository:
-    """Local SQLite implementation of the CRM contract.
+    """Postgres implementation of the CRM contract.
 
     Parameters
     ----------
     db_path:
-        Path to the SQLite file. Use ":memory:" for tests.
+        Postgres DSN (kept the name `db_path` for the smallest diff against
+        callers — it hasn't been a filesystem path since the Postgres swap).
     simulate_down:
         Force every operation to report db_error. If None, falls back to the
         CRM_SIMULATE_DOWN environment flag, re-read on each call so it can be
         toggled at runtime in tests.
     """
 
-    def __init__(self, db_path: str = "patients.db", simulate_down: Optional[bool] = None):
+    def __init__(self, db_path: str = "postgresql://triage:triage@localhost:5434/crm",
+                 simulate_down: Optional[bool] = None):
         self.db_path = db_path
         self._simulate_down = simulate_down
         self._init_schema()
@@ -75,23 +79,21 @@ class CRMRepository:
             return self._simulate_down
         return _env_flag("CRM_SIMULATE_DOWN")
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    def _connect(self) -> psycopg.Connection:
+        return psycopg.connect(self.db_path, row_factory=psycopg.rows.dict_row)
 
     def _init_schema(self) -> None:
         # Schema creation itself is not gated by simulate_down; the switch only
         # models a runtime outage of reads/writes, not a missing database.
         conn = self._connect()
         try:
-            conn.executescript(SCHEMA)
+            conn.execute(SCHEMA)
             conn.commit()
         finally:
             conn.close()
 
     @staticmethod
-    def _row_to_record(row: sqlite3.Row) -> PatientRecord:
+    def _row_to_record(row: dict) -> PatientRecord:
         return PatientRecord(
             stable_patient_id=row["stable_patient_id"],
             name=row["name"],
@@ -115,13 +117,13 @@ class CRMRepository:
             conn = self._connect()
             try:
                 cur = conn.execute(
-                    "SELECT * FROM patients WHERE stable_patient_id = ?",
+                    "SELECT * FROM patients WHERE stable_patient_id = %s",
                     (stable_patient_id,),
                 )
                 row = cur.fetchone()
             finally:
                 conn.close()
-        except sqlite3.Error:
+        except psycopg.Error:
             return FetchResult(FetchStatus.DB_ERROR)
 
         if row is None:
@@ -142,7 +144,7 @@ class CRMRepository:
             conn = self._connect()
             try:
                 cur = conn.execute(
-                    "SELECT * FROM patients WHERE stable_patient_id = ?",
+                    "SELECT * FROM patients WHERE stable_patient_id = %s",
                     (stable_patient_id,),
                 )
                 row = cur.fetchone()
@@ -156,7 +158,7 @@ class CRMRepository:
                         """INSERT INTO patients
                            (stable_patient_id, name, date_of_birth,
                             known_conditions, prior_visits, last_updated)
-                           VALUES (?, ?, ?, ?, ?, ?)""",
+                           VALUES (%s, %s, %s, %s, %s, %s)""",
                         (
                             stable_patient_id,
                             visit_data.get("name", "UNKNOWN"),
@@ -175,8 +177,8 @@ class CRMRepository:
                         visits.append(visit_data["new_visit"])
                     conn.execute(
                         """UPDATE patients
-                           SET known_conditions = ?, prior_visits = ?, last_updated = ?
-                           WHERE stable_patient_id = ?""",
+                           SET known_conditions = %s, prior_visits = %s, last_updated = %s
+                           WHERE stable_patient_id = %s""",
                         (
                             json.dumps(conditions),
                             json.dumps(visits),
@@ -187,7 +189,7 @@ class CRMRepository:
                 conn.commit()
             finally:
                 conn.close()
-        except sqlite3.Error:
+        except psycopg.Error:
             return PatchResult(PatchStatus.DB_ERROR)
 
         return PatchResult(PatchStatus.OK)
@@ -202,6 +204,6 @@ class CRMRepository:
                 conn.execute("SELECT 1")
             finally:
                 conn.close()
-        except sqlite3.Error:
+        except psycopg.Error:
             return False
         return True

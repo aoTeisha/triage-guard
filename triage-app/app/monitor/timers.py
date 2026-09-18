@@ -8,37 +8,50 @@ It never fires anything itself — actually delivering a timer's event,
 handling lost acknowledgments, and de-duplicating fires all live in
 `app.monitor.fire` instead.
 
-Uses the same SQLite file as the graph's checkpointer (`app/runner.py`'s
-`DB_PATH`): a timer row and the case state it refers to sometimes need to be
-written in one transaction, which only works if they're in the same
-database. Because of that, this module never opens its own connection —
-every function here takes an open `conn` from its caller.
+Uses the same Postgres database as the graph's checkpointer (`app/runner.py`'s
+`DSN`) so a case's timers and its state can be read together in one place,
+but not the same connection: the checkpointer owns its own, so the two were
+never in one transaction. Every function here takes an open `conn` from its
+caller rather than reaching for `connection()` itself, which is what lets the
+tests hand each one an isolated database.
 """
 
 from __future__ import annotations
 
 import os
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-from pathlib import Path
+
+import psycopg
 
 
 @lru_cache(maxsize=1)
-def connection() -> sqlite3.Connection:
-    """The shared SQLite connection, opened once per process and reused by
-    both the graph's `monitoring` node and the sweeper — the same file the
-    graph's checkpointer also writes to.
+def connection() -> psycopg.Connection:
+    """This process's connection to the timer store, opened once and reused by
+    every caller in it — the same database the graph's checkpointer writes to.
+
+    One per process, not one shared across them: the sweeper runs as its own
+    process and opens its own connection (`sweeper.main`), which is what makes
+    the atomic claim queries below worth having.
 
     Reads the `TRIAGE_CHECKPOINT_DB` env var independently rather than
-    importing `app.runner.DB_PATH` directly, because importing `app.runner`
-    would pull in the whole graph module just to get a file path.
+    importing `app.runner.DSN` directly, because importing `app.runner`
+    would pull in the whole graph module just to get a connection string.
     """
-    db_path = Path(
-        os.environ.get("TRIAGE_CHECKPOINT_DB", Path(__file__).resolve().parent.parent.parent / ".triage_state.db")
-    )
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    # autocommit: every statement below is self-contained (each write is a
+    # single INSERT/UPDATE, and a lone statement is atomic in Postgres on its
+    # own), so nothing here needs a multi-statement transaction. Without it,
+    # psycopg opens a transaction on the first statement and the read-only
+    # helpers (`heartbeat_status`, `notification_count_in_window`) would leave
+    # this long-lived connection sitting "idle in transaction" forever,
+    # holding locks that block the sweeper's own heartbeat write.
+    #
+    # lock_timeout: the board polls this store every few seconds, so a
+    # statement that can block forever on a lock turns a stuck row into a
+    # hung UI. Failing fast instead lets the caller's degrade path report a
+    # problem, which is the behavior the board is built for.
+    dsn = os.environ.get("TRIAGE_CHECKPOINT_DB", "postgresql://triage:triage@localhost:5434/triage")
+    conn = psycopg.connect(dsn, autocommit=True, options="-c lock_timeout=5s")
     init_schema(conn)
     return conn
 
@@ -55,8 +68,8 @@ CREATE TABLE IF NOT EXISTS timers (
   lease_until  TEXT,
   worker_id    TEXT,
   last_error   TEXT,
-  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at   TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
+  updated_at   TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
 );
 CREATE INDEX IF NOT EXISTS timers_due ON timers (fire_state, due_at);
 
@@ -66,20 +79,20 @@ CREATE TABLE IF NOT EXISTS sweeper_heartbeats (
 );
 
 CREATE TABLE IF NOT EXISTS notifications (
-  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  id               SERIAL PRIMARY KEY,
   case_id          TEXT NOT NULL,
   reason           TEXT NOT NULL,
   channel          TEXT NOT NULL,
   recipient_class  TEXT NOT NULL,
-  sent_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  sent_at          TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
   UNIQUE (case_id, reason)
 );
 
 CREATE TABLE IF NOT EXISTS escalations (
-  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  id               SERIAL PRIMARY KEY,
   case_id          TEXT NOT NULL,
   fire_id          TEXT NOT NULL,
-  raised_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  raised_at        TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
   channel          TEXT NOT NULL,
   recipient_class  TEXT NOT NULL,   -- charge_nurse | technician
   reason           TEXT NOT NULL
@@ -87,9 +100,8 @@ CREATE TABLE IF NOT EXISTS escalations (
 """
 
 
-def init_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(SCHEMA)
-    conn.commit()
+def init_schema(conn: psycopg.Connection) -> None:
+    conn.execute(SCHEMA)
 
 
 def due_in(minutes: int) -> str:
@@ -101,7 +113,7 @@ def due_in(minutes: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
 
 
-def schedule(conn: sqlite3.Connection, *, case_id: str, kind: str, cycle: int, due_at: str) -> str:
+def schedule(conn: psycopg.Connection, *, case_id: str, kind: str, cycle: int, due_at: str) -> str:
     """Insert a new SCHEDULED timer row. `timer_id` is built as
     `case_id:kind:cycle`.
 
@@ -112,38 +124,44 @@ def schedule(conn: sqlite3.Connection, *, case_id: str, kind: str, cycle: int, d
     """
     timer_id = f"{case_id}:{kind}:{cycle}"
     conn.execute(
-        "INSERT OR IGNORE INTO timers (timer_id, case_id, kind, cycle, due_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO timers (timer_id, case_id, kind, cycle, due_at) VALUES (%s, %s, %s, %s, %s) "
+        "ON CONFLICT (timer_id) DO NOTHING",
         (timer_id, case_id, kind, cycle, due_at),
     )
-    conn.commit()
     return timer_id
 
 
-def set_state(conn: sqlite3.Connection, timer_id: str, fire_state: str, **fields: object) -> None:
+def set_state(conn: psycopg.Connection, timer_id: str, fire_state: str, **fields: object) -> None:
     """Move a timer to a new `fire_state`, optionally updating other columns
     (`fire_id`, `attempts`, `lease_until`, `worker_id`, `last_error`) in the
     same write. Only the sweeper's own code (in `app.monitor.fire`) ever
     calls this — the graph itself never writes to the timer store directly.
     """
     columns = ["fire_state", *fields.keys(), "updated_at"]
-    placeholders = ["?"] * (1 + len(fields)) + ["strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"]
+    placeholders = ["%s"] * (1 + len(fields)) + [_now_expr()]
     conn.execute(
-        f"UPDATE timers SET {', '.join(f'{c} = {p}' for c, p in zip(columns, placeholders))} WHERE timer_id = ?",
+        f"UPDATE timers SET {', '.join(f'{c} = {p}' for c, p in zip(columns, placeholders))} WHERE timer_id = %s",
         (fire_state, *fields.values(), timer_id),
     )
-    conn.commit()
 
 
-def _rows(cur: sqlite3.Cursor, *columns: str) -> list[dict]:
+def _now_expr() -> str:
+    """SQL expression for the current UTC time, formatted the same as the
+    ISO8601 strings this store already writes everywhere else.
+    """
+    return "to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')"
+
+
+def _rows(cur: psycopg.Cursor, *columns: str) -> list[dict]:
     """Cursor rows as dicts keyed by `columns`, in the same order as the
     query's `RETURNING`/`SELECT` list. `claim_due` and `claim_retryable` both
-    claim rows this way; sqlite3's default row factory only gives back plain
+    claim rows this way; psycopg's default row factory only gives back plain
     tuples, so something has to name the columns.
     """
     return [dict(zip(columns, row)) for row in cur.fetchall()]
 
 
-def claim_due(conn: sqlite3.Connection, *, worker_id: str, lease_seconds: int) -> list[dict]:
+def claim_due(conn: psycopg.Connection, *, worker_id: str, lease_seconds: int) -> list[dict]:
     """Atomically claim every SCHEDULED timer whose `due_at` has passed.
 
     Uses a single `UPDATE ... RETURNING` statement, so if multiple sweeper
@@ -154,25 +172,24 @@ def claim_due(conn: sqlite3.Connection, *, worker_id: str, lease_seconds: int) -
     lease has expired, not by which worker claimed it first.
     """
     cur = conn.execute(
-        """
+        f"""
         UPDATE timers
            SET fire_state = 'DUE',
-               lease_until = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?),
-               worker_id = ?,
-               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+               lease_until = to_char((now() AT TIME ZONE 'UTC') + %s * INTERVAL '1 second', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+               worker_id = %s,
+               updated_at = {_now_expr()}
          WHERE fire_state = 'SCHEDULED'
-           AND due_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-           AND (lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+           AND due_at <= {_now_expr()}
+           AND (lease_until IS NULL OR lease_until < {_now_expr()})
         RETURNING timer_id, case_id, kind, cycle, due_at
         """,
-        (f"+{lease_seconds} seconds", worker_id),
+        (lease_seconds, worker_id),
     )
     claimed = _rows(cur, "timer_id", "case_id", "kind", "cycle", "due_at")
-    conn.commit()
     return claimed
 
 
-def claim_retryable(conn: sqlite3.Connection, *, worker_id: str, lease_seconds: int) -> list[dict]:
+def claim_retryable(conn: psycopg.Connection, *, worker_id: str, lease_seconds: int) -> list[dict]:
     """Atomically claim every `FAILED`, `UNKNOWN`, or lease-expired
     `DISPATCHING` timer — timers that need a redispatch (`FAILED`), a
     reconcile check (`UNKNOWN`), or that crashed mid-dispatch and are being
@@ -182,23 +199,22 @@ def claim_retryable(conn: sqlite3.Connection, *, worker_id: str, lease_seconds: 
     (`app.monitor.fire`), not this claim query's.
     """
     cur = conn.execute(
-        """
+        f"""
         UPDATE timers
-           SET lease_until = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?),
-               worker_id = ?,
-               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+           SET lease_until = to_char((now() AT TIME ZONE 'UTC') + %s * INTERVAL '1 second', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+               worker_id = %s,
+               updated_at = {_now_expr()}
          WHERE fire_state IN ('FAILED', 'UNKNOWN', 'DISPATCHING')
-           AND (lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+           AND (lease_until IS NULL OR lease_until < {_now_expr()})
         RETURNING timer_id, case_id, kind, cycle, due_at, fire_state, fire_id, attempts
         """,
-        (f"+{lease_seconds} seconds", worker_id),
+        (lease_seconds, worker_id),
     )
     claimed = _rows(cur, "timer_id", "case_id", "kind", "cycle", "due_at", "fire_state", "fire_id", "attempts")
-    conn.commit()
     return claimed
 
 
-def record_notification(conn: sqlite3.Connection, *, case_id: str, reason: str, channel: str,
+def record_notification(conn: psycopg.Connection, *, case_id: str, reason: str, channel: str,
                          recipient_class: str) -> bool:
     """Insert a notification record. Returns `False` if one already exists
     for this exact case+reason combination — so a given reminder step fires
@@ -206,17 +222,17 @@ def record_notification(conn: sqlite3.Connection, *, case_id: str, reason: str, 
     before it gets cancelled.
     """
     try:
-        conn.execute(
-            "INSERT INTO notifications (case_id, reason, channel, recipient_class) VALUES (?, ?, ?, ?)",
-            (case_id, reason, channel, recipient_class),
-        )
-        conn.commit()
+        with conn.transaction():
+            conn.execute(
+                "INSERT INTO notifications (case_id, reason, channel, recipient_class) VALUES (%s, %s, %s, %s)",
+                (case_id, reason, channel, recipient_class),
+            )
         return True
-    except sqlite3.IntegrityError:
+    except psycopg.errors.UniqueViolation:
         return False
 
 
-def notification_count_in_window(conn: sqlite3.Connection, *, recipient_class: str, window_minutes: int) -> int:
+def notification_count_in_window(conn: psycopg.Connection, *, recipient_class: str, window_minutes: int) -> int:
     """How many notifications this recipient class has already received in
     the trailing time window — used by the sweeper to enforce its
     per-recipient notification rate limit and avoid flooding staff.
@@ -224,24 +240,23 @@ def notification_count_in_window(conn: sqlite3.Connection, *, recipient_class: s
     return conn.execute(
         """
         SELECT COUNT(*) FROM notifications
-         WHERE recipient_class = ?
-           AND sent_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)
+         WHERE recipient_class = %s
+           AND sent_at >= to_char((now() AT TIME ZONE 'UTC') - %s * INTERVAL '1 minute', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
         """,
-        (recipient_class, f"-{window_minutes} minutes"),
+        (recipient_class, window_minutes),
     ).fetchone()[0]
 
 
-def record_escalation(conn: sqlite3.Connection, *, case_id: str, fire_id: str, channel: str,
+def record_escalation(conn: psycopg.Connection, *, case_id: str, fire_id: str, channel: str,
                        recipient_class: str, reason: str) -> None:
     """Evidence that the monitor raised an alert itself, out-of-band."""
     conn.execute(
-        "INSERT INTO escalations (case_id, fire_id, channel, recipient_class, reason) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO escalations (case_id, fire_id, channel, recipient_class, reason) VALUES (%s, %s, %s, %s, %s)",
         (case_id, fire_id, channel, recipient_class, reason),
     )
-    conn.commit()
 
 
-def heartbeat_status(conn: sqlite3.Connection, *, stale_after_seconds: int) -> dict:
+def heartbeat_status(conn: psycopg.Connection, *, stale_after_seconds: int) -> dict:
     """Reports whether the sweeper looks alive, based on how recently it last
     beat — checked from outside the sweeper itself, since a process that had
     died couldn't reliably report its own death. No heartbeat row at all
@@ -251,26 +266,25 @@ def heartbeat_status(conn: sqlite3.Connection, *, stale_after_seconds: int) -> d
     rows = conn.execute(
         """
         SELECT worker_id, beat_at,
-               beat_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?) AS stale
+               beat_at < to_char((now() AT TIME ZONE 'UTC') - %s * INTERVAL '1 second', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS stale
           FROM sweeper_heartbeats
         """,
-        (f"-{stale_after_seconds} seconds",),
+        (stale_after_seconds,),
     ).fetchall()
     workers = [{"worker_id": w, "beat_at": b, "stale": bool(s)} for w, b, s in rows]
     degraded = not workers or all(w["stale"] for w in workers)
     return {"workers": workers, "degraded": degraded}
 
 
-def heartbeat(conn: sqlite3.Connection, *, worker_id: str) -> None:
+def heartbeat(conn: psycopg.Connection, *, worker_id: str) -> None:
     """Upsert this worker's heartbeat row, so `heartbeat_status` can tell it's
     still alive.
     """
     conn.execute(
-        """
+        f"""
         INSERT INTO sweeper_heartbeats (worker_id, beat_at)
-        VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        VALUES (%s, {_now_expr()})
         ON CONFLICT (worker_id) DO UPDATE SET beat_at = excluded.beat_at
         """,
         (worker_id,),
     )
-    conn.commit()

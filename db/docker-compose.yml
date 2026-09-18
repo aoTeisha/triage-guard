@@ -1,0 +1,28 @@
+name: triage-guard
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: triage-guard-postgres
+    restart: unless-stopped
+    # Host 5432 is already taken by a native postgresql.service on this
+    # machine — publish on 5434 instead.
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-triage}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-triage}
+      # The image only creates this one DB; the init script below adds `crm`.
+      POSTGRES_DB: triage
+    volumes:
+      - triage_postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-triage}"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  triage_postgres_data:
+    driver: local

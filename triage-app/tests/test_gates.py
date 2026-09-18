@@ -8,16 +8,14 @@ involved.
 
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command
 
 from app.graph import build_graph
 from app.runner import hydrate
 from app.states import State
-from tests.conftest import arrows
+from tests.conftest import _drop_db, _throwaway_db, arrows
 
 # nurse says 5, the classifier proposes 2 (mock fixture) -> gap 3 -> arrow 9c.
 GAP_CASE = {
@@ -76,29 +74,30 @@ def test_a_resolved_gate_re_runs_safety_before_the_queue(graph, run):
     assert resumed["safety_passed"] is True
 
 
-def test_the_pause_survives_a_rebuilt_graph(tmp_path):
+def test_the_pause_survives_a_rebuilt_graph():
     """The real test of durability: throw the graph object away between the pause
     and the resume, as a restarted process would.
     """
-    db = str(tmp_path / "gate.db")
+    dsn = _throwaway_db()
     cfg = {"configurable": {"thread_id": "case-gap"}}
+    try:
+        with PostgresSaver.from_conn_string(dsn) as saver_a:
+            saver_a.setup()
+            first = build_graph(checkpointer=saver_a)
+            paused = first.invoke(
+                {"case_id": GAP_CASE["case_id"], "raw_payload": dict(GAP_CASE),
+                 "nurse_proposed_acuity": 5},
+                cfg,
+            )
+            assert paused.get("__interrupt__")
+        del first
 
-    conn_a = sqlite3.connect(db, check_same_thread=False)
-    first = build_graph(checkpointer=SqliteSaver(conn_a))
-    paused = first.invoke(
-        {"case_id": GAP_CASE["case_id"], "raw_payload": dict(GAP_CASE),
-         "nurse_proposed_acuity": 5},
-        cfg,
-    )
-    assert paused.get("__interrupt__")
-    conn_a.close()
-    del first
-
-    # A different graph object, a different connection — only the checkpoint links them.
-    conn_b = sqlite3.connect(db, check_same_thread=False)
-    second = build_graph(checkpointer=SqliteSaver(conn_b))
-    resumed = hydrate(second.invoke(Command(resume=CHARGE), cfg))
-    conn_b.close()
+        # A different graph object, a different connection — only the checkpoint links them.
+        with PostgresSaver.from_conn_string(dsn) as saver_b:
+            second = build_graph(checkpointer=saver_b)
+            resumed = hydrate(second.invoke(Command(resume=CHARGE), cfg))
+    finally:
+        _drop_db(dsn)
 
     assert resumed["acuity"] == 2
     assert resumed["control_state"] == State.MONITORING.value
