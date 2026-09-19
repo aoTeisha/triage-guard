@@ -92,7 +92,7 @@ _This section introduces the key terms and concepts used throughout the document
 - **State rule:** the agents propose; they do not write. Each Flow step calls its agent, reads the result, and writes it into the shared Flow state (`self.state`), which passes automatically from one step to the next. The exception is `execution_state` for the treatment move, written by a single step only, so a lost receipt cannot start treatment twice (see the Execution section).
 - **Design stance: fail-operational.** Unless a critical component fails, the system keeps working. Non-critical agents switch to a human or manual fallback. Critical agents either switch to human fallback or stop completely (see the **Per-agent failure model**).
 - **Ingestion stance: no live OCR.** The triage intake is a **structured webform** (mock data in this build); there is no OCR pipeline, but a real deployment could add one behind the same interface. Acuity is always supplied by the nurse and never inferred from the raw input. See **Document intake & demo data**.
-- **Identity vs. model input.** The system holds full patient identifiers (they are needed to look up the record); it simply never puts them into the LLM-facing payload. Identity is resolved first (stable-ID lookup), then the model reasons over a `case_id`-keyed clinical payload with no name/ID. See **Identity resolution & patient data** and the **No identifiers in model input** invariant.
+- **Identity vs. the case.** Patient identifiers live only in the CRM. Identity is resolved once, at intake: the nurse enters the patient's national ID, and the CRM returns its own record number, `stable_patient_id`. The case then carries only `stable_patient_id`, never a name or national ID, and the model reasons over a `case_id`-keyed clinical payload. See **Identity resolution & patient data** and invariants **I11** and **I12**.
 - The **arrow numbers** in the Transitions table match the arrows on the diagram.
 - **Notation.** Acuity follows the ESI style, where a lower number means more acute (1 is most urgent, 5 is least). Logic operators: `∧` means and, `∨` means or, `¬` means not, and `->` means implies. Temporal operators (used in **Temporal logic rules** and **Safety invariants**): `G` for always/globally, `F` for eventually, `X` for next step, `U` for until, and `F≤t` for eventually within a set time t.
 
@@ -121,8 +121,10 @@ The Intake Parser validates the submitted webform and produces one of four possi
 
 **Two different jobs, in order.** "Handle PII" is really two separate steps that must happen in sequence:
 
-1. **Identity resolution (needs the real ID).** Right after a clean parse, the identity-resolution step looks the patient up in the CRM using a **stable patient ID only** (national ID). This is the `resolving_identity` state; its entry action is `fetch_patient_data`.
-2. **Payload construction (drops the ID).** The system then merges stored history with this visit's new data and builds the **model-facing payload**: clinical fields only (symptoms, vitals, history), keyed by `case_id`, with **no name/ID**. The identifiers stay on the case record (the nurse and the identity-resolution step still see them); they simply never enter the classifier/safety-validator input.
+1. **Identity resolution (needs the real ID), at intake.** The nurse enters the patient's **national ID**. Intake looks the patient up in the CRM once by that ID and receives the CRM's **`stable_patient_id`** (its internal record number), the patient's history (no name or date of birth) and the age band. Only these enter the case; the national ID does not (I11).
+2. **Payload construction.** The system merges that history with this visit's new data and builds the **model-facing payload**: approved clinical fields only, each a fixed-choice value or a number, keyed by `case_id` (I12). Anything that needs the patient's name, such as the board, asks the CRM by `stable_patient_id` at display time and stores nothing.
+
+> **Target design, 2026-09-19.** The code still treats `stable_patient_id` as the value the nurse types, passes it into the case, and looks it up again in a graph step (`resolving_identity`, arrow 4b). Adding `national_id` to the CRM and moving the lookup to intake is on the implementation to-do list.
 
 **Why identifiers are kept out of the model input:**
 
@@ -135,7 +137,7 @@ The Intake Parser validates the submitted webform and produces one of four possi
 - **No record found** (new patient, nothing stored): **normal**, silent, no flag. Triage proceeds on this visit's data.
 - **DB unreachable:** **same continue-path** (triage on intake-only data) but **flag the case and alert the technician**, because that is a failure, not an expected empty. The CRM is therefore **non-critical / fail-open** (see the Per-agent failure model).
 
-**Write-back.** This visit's new clinical data is persisted to the CRM (`patch_patient_data`) so the record stays current; when the DB was unreachable, the write-back is deferred and reconciled once it returns.
+**Write-back.** This visit's new clinical data is persisted to the CRM (`patch_patient_data`, by `stable_patient_id`) so the record stays current; when the DB was unreachable, the write-back is deferred and reconciled once it returns (I17). Not yet implemented: `patch_patient` exists but is never called.
 
 > **Implementation note.** There is no external CRM in this project. The CRM is a **local
 > SQLite database** with mock patient records, behind the same contract the rest of the
@@ -167,7 +169,8 @@ to the `PatientRecord` the Flow expects.
 
 | Column              | Type                 | Notes                                                  |
 | ------------------- | -------------------- | ------------------------------------------------------ |
-| `stable_patient_id` | TEXT, primary key    | national ID; the only lookup key                       |
+| `stable_patient_id` | TEXT, primary key    | the CRM's internal record number (e.g. `P-1001`); the only patient reference the case carries |
+| `national_id`       | TEXT, unique         | national ID; typed by the nurse at intake; the lookup key; never leaves the CRM   |
 | `name`              | TEXT                 | held by the CRM layer only, never in the model payload |
 | `date_of_birth`     | TEXT (ISO date)      | identifier-class data                                  |
 | `known_conditions`  | TEXT (JSON array)    | e.g. `["diabetes", "hypertension"]`                    |
@@ -176,7 +179,7 @@ to the `PatientRecord` the Flow expects.
 
 _All identifier-class columns (`name`, `date_of_birth`) stay on the CRM side
 under `actor_authorized` and are dropped when the model-facing payload is built - the same
-"no identifiers in model input" rule the rest of the spec enforces._
+identifier rule the rest of the spec enforces (I11)._
 
 ### Interface
 
@@ -185,7 +188,7 @@ so the Flow code is identical whether the CRM is local or real.
 
 | Operation                                           | Returns                                    | Maps to                            |
 | --------------------------------------------------- | ------------------------------------------ | ---------------------------------- |
-| `fetch_patient_data(stable_patient_id)`             | `found(record)` / `not_found` / `db_error` | `fetch_patient_data`, arrow 4b     |
+| `fetch_patient_data(national_id)`                   | `found(record)` / `not_found` / `db_error` | `fetch_patient_data`, arrow 4b     |
 | `patch_patient_data(stable_patient_id, visit_data)` | `ok` / `db_error`                          | `patch_patient_data` write-back    |
 | `is_available()`                                    | `true` / `false`                           | health check for degrade decisions |
 
@@ -248,7 +251,7 @@ _The happy-path pipeline: where the Flow is in processing a case, from the momen
 | `parsing`                 | normal                | invoke Intake Parser                                         |                 | input routed                         | 3          |
 | `data_parsed`             | normal                |                                                              |                 | fields extracted OR flagged missing  | 4          |
 | `resolving_identity`      | normal                | `fetch_patient_data` (stable-ID lookup)                      |                 | stable patient ID present            | 4b         |
-| `redacting_routing`       | normal                | build model-facing payload (drop identifiers), score urgency |                 | no identifiers in model input        | 5, 6       |
+| `redacting_routing`       | normal                | build model-facing payload (drop identifiers), score urgency |                 | no identifiers in model input (I12)  | 5, 6       |
 | `classifying`             | normal                | invoke Acuity Classifier                                     |                 | redacted payload ready               | 7          |
 | `acuity_proposed`         | normal                | compute `acuity_gap`                                         |                 | proposed acuity + confidence present | 8          |
 | `safety_validating`       | normal                | invoke Safety Validation                                     |                 | settled acuity present               | 9          |
@@ -286,7 +289,7 @@ This section shows what the nurse actually sees: the kanban column for each pati
 | `formal_validation`     | system               | final sign-off before close                            | `treatment_started`                                       |
 | `patient_released`      | **human (required)** | discharged, leaves the board                           | **any active state** (discharge / AMA / transfer / admit) |
 
-> **Release rule:** `patient_released` is reachable from **any** live state, not only the treatment path. Every release **requires an authorized nurse sign-off** (`actor_authorized`) plus a valid `release_reason`. "Left the ward vs. left the hospital" is out of scope; both close the card.
+> **Release rule:** `patient_released` is reachable from **any** live state, not only the treatment path. Every release **requires a charge-role sign-off** (`actor_is_charge`) plus a valid `release_reason`. "Left the ward vs. left the hospital" is out of scope; both close the card.
 >
 > **AMA consequence:** the patient may physically leave before the card closes; the card stays open until a nurse signs. A monitor must **not** treat an unsigned-but-departed card as "still waiting."
 >
@@ -354,8 +357,8 @@ These are the boolean checks that decide which transition happens. This is where
 | `confidence_ok`            | `confidence >= threshold` _(threshold to confirm)_. Optional: wire in (low confidence, then gate) or drop. Not applicable during a classifier outage.                                                                                                              | Flow guard          |
 | `safety_pass`              | verdict == pass                                                                                                                                                                                                                                                    | Safety Validation   |
 | `escalation_needed`        | verdict fail ∨ low confidence ∨ policy hit                                                                                                                                                                                                                         | Human Escalation    |
-| `move_authorized`          | target status change permitted for this actor (e.g. `waiting -> treatment_started`) ∧ `actor_authorized` ∧ `safety_passed` ∧ `approved`. Enforces no-approval-bypass: a treatment move is refused unless the case already passed safety and any required approval. | Flow guard          |
-| `release_authorized`       | valid `release_reason` ∧ `actor_authorized`. A _reason plus authorization_ check, **not** a source-state check.                                                                                                                                                    | Flow guard          |
+| `move_authorized`          | target status change permitted for this actor (e.g. `waiting -> treatment_started`) ∧ `actor_authorized` ∧ `safety_passed` ∧ `approved`. Enforces I5 (no bypass): a treatment move is refused unless the case already passed safety and any required approval. | Flow guard          |
+| `release_authorized`       | valid `release_reason` ∧ `actor_is_charge`. A _reason plus authorization_ check, **not** a source-state check.                                                                                                                                                    | Flow guard          |
 | `actor_authorized`         | role ∧ jurisdiction ∧ data-class OK                                                                                                                                                                                                                                | Flow guard (policy) |
 | `retry_budget_left(agent)` | `retry_count[agent] < N[agent]`                                                                                                                                                                                                                                    | Flow guard          |
 | `acuity_agree`             | `acuity_gap == 0`                                                                                                                                                                                                                                                  | Flow guard          |
@@ -367,7 +370,7 @@ These are the boolean checks that decide which transition happens. This is where
 
 > `actor_authorized`: the person is allowed to act: right **role** (nurse / charge nurse), patient in their **jurisdiction** (ward/shift), and **clearance** matches the data class. Reused wherever an action needs a person behind it.
 >
-> `release_authorized`: the case may be closed by release when there is a **valid reason** (discharge / AMA / transfer / admit) **and** an authorized signer. State-independent: release can happen from anywhere.
+> `release_authorized`: the case may be closed by release when there is a **valid reason** (discharge / AMA / transfer / admit) **and** a charge-role signer (charge nurse or shift lead). State-independent: release can happen from anywhere.
 >
 > `acuity_gap` = the absolute difference between `nurse_proposed_acuity` and `system_proposed_acuity`.
 >
@@ -398,7 +401,7 @@ These actions are the side effects a transition can trigger.
 | `explain_denial`                         | Flow step, Prolog           | no                     | yes                                  | Explanation                            | BLK, the "why" string for a denied action                                                                                                                         |
 | `auto_resolve_acuity_to_nurse`           | Flow step                   | yes                    | yes                                  | acuity                                 | `acuity <- nurse_proposed_acuity`; `acuity_source <- auto_resolved`; call `assign_order_key`; log both inputs + choice                                            |
 | `apply_human_acuity(choice)`             | Flow step                   | yes                    | yes                                  | acuity                                 | `acuity <- choice`; `acuity_source <- human_confirmed`; call `assign_order_key`; log resolver + role                                                              |
-| `assign_order_key(acuity, arrival_time)` | Flow step                   | yes                    | yes                                  | order_key                              | the single writer of `order_key`; the one function that computes `(bucket, arrival_time)`, called at intake for the initial key and again whenever acuity changes |
+| `assign_order_key(acuity, arrival_time)` | Flow step                   | yes                    | yes                                  | order_key                              | the single writer of `order_key`; the one function that computes `(acuity, arrival_time)`, called at intake for the initial key and again whenever acuity changes |
 | `sign_release(reason)`                   | Flow step, nurse            | yes                    | yes                                  | ReleaseRecord                          | record reason + actor; then `case_closed`                                                                                                                         |
 | `alert_technician(agent)`                | Flow step, Technician       | yes                    | yes                                  | Alert                                  | fires ops alert; does not block degraded flow                                                                                                                     |
 | `fallback_manual(agent)`                 | Flow step                   | yes                    | yes                                  |                                        | switch a fail-open agent to its human/manual substitute                                                                                                           |
@@ -431,7 +434,7 @@ When an error or timeout occurs, the Flow retries up to the agent's own retry bu
 | CRM / Patient DB        | No        | **open (degrade)**            | _(to confirm)_ | Continue on **intake-only data** (skip history); **flag the case +** `alert_technician`; defer `patch_patient_data` until the DB returns. New-patient empty result is _not_ a failure.                                                               |
 | Acuity Classifier       | No        | **open (degrade)**            | _(to confirm)_ | Drop the system acuity; **fall back to** `nurse_proposed_acuity`; **discrepancy gate is disabled for the outage, flag these cases "cross-check off, review later"**; `alert_technician`.                                                             |
 | PII filter, schema-drop | **Yes**   | **closed (halt)**             | _(to confirm)_ | Deterministic identifier drop. A hard code fault here **stops the line** (`agent_failed`): continuing could leak identifiers. `alert_technician`; resumes only on `AGENT_RECOVERED`.                                                                 |
-| Safety Validation       | Yes       | degrade-to-human              | _(to confirm)_ | Do **not** hard-halt: route **every** case to charge nurse (`awaiting_human_approval`) so no-approval-bypass still holds; `alert_technician`.                                                                                                        |
+| Safety Validation       | Yes       | degrade-to-human              | _(to confirm)_ | Do **not** hard-halt: route **every** case to charge nurse (`awaiting_human_approval`) so I5 (no bypass) still holds; `alert_technician`.                                                                                                        |
 | Human Escalation bridge | Yes       | degrade-to-human              | _(to confirm)_ | `alert_technician`; fall back to a manual notification channel for the gate.                                                                                                                                                                         |
 
 > **Principle:** non-critical, continue via fallback and notify; critical-open, degrade to human and notify; critical-closed, halt and notify, then resume on recovery.
@@ -487,7 +490,7 @@ This table is the core of the state machine. Each edge is shown as **current sta
 | `monitoring`                  | `MOVE_REQUESTED`                                  | `move_authorized` (target = treatment_started)               | OPA (authorization)                        | `emit_event_log`                                                                                         | `monitoring`                 | move authorized                                                       | -> `treatment_started`                     | 1b.y                   |
 | `monitoring`                  | `TRANSITION_ACCEPTED`                             | `move_authorized`                                            | OPA (authorization)                        | `notify_user("accepted")`                                                                                | `monitoring`                 | move confirmed                                                        | -> `treatment_started`                     | 19                     |
 | `monitoring`                  | `TREATMENT_COMPLETE`                              |                                                              |                                            | `emit_event_log`                                                                                         | `monitoring`                 | treatment done, sign off                                              | `treatment_started` -> `formal_validation` | FV                     |
-| _(any active state)_          | `RELEASE_REQUESTED`                               | `release_authorized` (reason ∧ `actor_authorized`)           | OPA (authorization)                        | `sign_release`                                                                                           | `case_closed`                | release signed                                                        | -> `patient_released`                      | REL                    |
+| _(any active state)_          | `RELEASE_REQUESTED`                               | `release_authorized` (reason ∧ `actor_is_charge`)            | OPA (authorization)                        | `sign_release`                                                                                           | `case_closed`                | release signed                                                        | -> `patient_released`                      | REL                    |
 | _(any state, guarded action)_ | `ACTION_DENIED`                                   | a required guard fails                                       | OPA / Prolog / Z3 / Datalog / Temporal     | `emit_event_log`; `explain_denial`                                                                       | **(stays in current state)** | formal layer denied the attempted action                              |                                            | BLK                    |
 | _(any proposing state)_       | `VERIFICATION_PASSED`                             | `output_verified`                                            | Output Verification                        | write proposal to shared state; `emit_event_log`                                                         | (the edge's normal next)     | output verified, proceed                                              |                                            | V·pass                 |
 | _(any proposing state)_       | `VERIFICATION_FAILED` (recoverable)               | ¬`output_verified` ∧ `retry_budget_left(agent)`              | Output Verification                        | discard output; `emit_event_log`; re-invoke the step                                                     | (stay, re-run step)          | malformed output, retry                                               |                                            | V·retry                |
@@ -516,7 +519,7 @@ This table is the core of the state machine. Each edge is shown as **current sta
 > - **Safety fail, gate:** `… 10·fail` -> correct-and-revalidate (see resolved safety-fail branch)
 > - **Reassessment:** `13, 14, 15, 3 …` (full front-door rerun)
 > - **Move to treatment, close:** `1b.y, 19` (`treatment_started`), `FV` (on `TREATMENT_COMPLETE`, `formal_validation`), `REL`
-> - **AMA / release from waiting:** `… 13, REL` (with `reason = ama`, nurse sign-off)
+> - **AMA / release from waiting:** `… 13, REL` (with `reason = ama`, charge-role sign-off)
 > - **Missing fields (demo case 2):** `1a … 16, 1b.x`
 > - **Failed submission (demo case 3):** `1a … 17, 1a·resubmit` (or full manual entry)
 > - **Invalid / injection (demo case 4):** `1a … 18, 1a·rejected`
@@ -529,15 +532,15 @@ This table is the core of the state machine. Each edge is shown as **current sta
 
 > **Forbidden sequences (must be provably blocked):**
 >
-> - **Served out of order:** a queued patient pulled ahead of an emergent one. Blocked by the **bucket-ordering** rule.
-> - **Clock rewrites acuity:** `REASSESSMENT_TIMEOUT` mutates acuity directly instead of forcing a re-look. Blocked by the **acuity-write-authority** rule (the timer only triggers 14, 15; the nurse's re-filed form changes acuity).
-> - **Approval bypass:** reaching `treatment_started` via the system without safety/approval. Blocked by the **no-approval-bypass** rule (`move_authorized` requires `safety_passed ∧ approved`).
-> - **Unauthorized action:** a treatment move or release with a failing guard. Caught by the `BLK` outcome (logged + explained; case does not advance).
-> - **Unauthorized release:** a release with no reason or no authorized actor. Blocked by the **release-authorization** rule.
-> - **Identifiers reach the model:** name/ID present in the classifier payload. Blocked by the **no-identifiers-in-model-input** rule.
-> - **Injection reaches the model:** an injection submission (demo case 4) proceeds past intake to the classifier. Blocked by the **injection-rejected** rule.
-> - **System fails to escalate a waiter:** a waiting patient passes the ceiling T without the system raising an escalation. Blocked by the **wait-liveness** rule (the guarantee is that the system escalates, not that a human acts, see below).
-> - **Stuck failure:** a case sits in `agent_failed` forever. Resolved by `AF·recover` on `AGENT_RECOVERED`.
+> - **Served out of order:** a patient placed ahead of a more acute one. Blocked by **I1 Acuity ordering**.
+> - **Clock rewrites acuity:** `REASSESSMENT_TIMEOUT` mutates acuity directly instead of forcing a re-look. Blocked by **I3 Acuity write-authority** (the timer only triggers 14, 15; the nurse's re-filed form changes acuity).
+> - **Approval bypass:** a case entering the queue or treatment without passing safety and any required approval in its current triage. Blocked by **I5 No bypass**.
+> - **Unauthorized action:** any human action by a person whose role does not permit it. Blocked by **I14 Authorization**; caught by the `BLK` outcome (logged + explained; case does not advance).
+> - **Release without a reason:** blocked by **I9 Release**.
+> - **Identifiers reach the model:** blocked by **I11 Identifier storage** (the case holds no identifiers at all) and **I12 Model input**.
+> - **Prose or injection reaches the model:** blocked by **I12 Model input** (only fixed-choice or numeric fields reach the model).
+> - **System fails to escalate a waiter:** a waiting case passes T without the system raising an escalation. Blocked by **I15 Escalation** (the guarantee is that the system escalates, not that a human acts).
+> - **Stuck or dropped case:** a patient's case stops running before release (a halt, a missing-fields round trip, an exhausted correction loop). Blocked by **I10 No dropped case**.
 
 ---
 
@@ -549,8 +552,8 @@ This section lists the data the machine keeps for each case: the acuity model (`
 | ------------------------------------- | ------- | --------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `case_id`                             | Control | id                                                        | intake                             | downstream reference key; the model sees the case by this, never by name/ID                                                                            |
 | `channel`                             | Control | enum(website)                                             | Channel Router                     | website intake form                                                                                                                                    |
-| `parsed_fields`                       | Data    | struct                                                    | Intake Parser                      | container for the webform fields, including `stable_patient_id`, `nurse_proposed_acuity`, symptoms, vitals, and any free-text; schema _(to define)_    |
-| `parsed_fields.stable_patient_id`     | Data    | id                                                        | nurse (via webform)                | **lookup key** for the CRM; held on the case, excluded from the model payload                                                                          |
+| `parsed_fields`                       | Data    | struct                                                    | Intake Parser                      | container for the webform fields: `nurse_proposed_acuity`, `chief_complaint` (a fixed category, not prose), vitals and the other structured answers; no free text (I12); schema _(to define)_ |
+| `stable_patient_id`                   | Data    | id                                                        | CRM, at intake                     | the CRM's internal record number; the case's only patient reference; excluded from the model payload (I12)             |
 | `parsed_fields.nurse_proposed_acuity` | Data    | enum/level                                                | nurse (via webform)                | **mandatory**; absent, then demo case 2 / arrow 16; always nurse-supplied, never inferred                                                              |
 | `redacted_payload`                    | Data    | struct                                                    | PII filter                         | model-facing; clinical fields only, keyed by `case_id`; **no identifiers**                                                                             |
 | `urgency_scores`                      | Data    | {sentiment, distress, pain}                               | Input Normalizer                   |                                                                                                                                                        |
@@ -563,9 +566,9 @@ This section lists the data the machine keeps for each case: the acuity model (`
 | `safety_passed`                       | Data    | bool                                                      | Flow step                          | set on arrow 10; read by `move_authorized`                                                                                                             |
 | `approved`                            | Data    | bool                                                      | Flow step                          | set on 11·pass / 1b.z·acuity; read by `move_authorized`                                                                                                |
 | `clinical_status`                     | World   | enum (see World plane)                                    | Flow step                          | board column                                                                                                                                           |
-| `acuity_bucket`                       | Data    | enum(emergent[1–2], queued[3–5])                          | derived from final `acuity`        | primary sort key                                                                                                                                       |
-| `arrival_time`                        | Data    | timestamp                                                 | intake                             | tiebreaker within bucket                                                                                                                               |
-| `order_key`                           | World   | (bucket, arrival_time)                                    | `assign_order_key`                 | **assigned at system entry**; persists across state changes                                                                                            |
+| `acuity_bucket`                       | Data    | enum(emergent[1–2], queued[3–5])                          | derived from final `acuity`        | display label on the board only; **not** a sort key                                                                                                    |
+| `arrival_time`                        | Data    | timestamp                                                 | intake                             | tiebreaker within the same acuity                                                                                                                      |
+| `order_key`                           | World   | (acuity, arrival_time)                                    | `assign_order_key`                 | **assigned at system entry**; persists across state changes                                                                                            |
 | `release_reason`                      | Data    | enum(discharge, ama, transfer, admit)                     | nurse                              | recorded at close                                                                                                                                      |
 | `reassessment_timer`                  | World   | timer                                                     | Waiting Room Monitor               | the single per-patient timer; interval set by acuity band; started on entry to `monitoring`; drives `REASSESSMENT_TIMEOUT`                             |
 | `gate_timer`                          | World   | timer                                                     | Waiting Room Monitor               | separate per-gated-case timer; drives the `GATE_TIMER_*` approval-reminder ladder (not a reassessment timer)                                           |
@@ -579,16 +582,17 @@ This section explains how the waiting queue is sorted, and what does **not** aff
 
 `order_key` sorts the waiting queue by two keys, in order:
 
-1. **Bucket:** `emergent` (acuity 1–2) always above `queued` (acuity 3–5).
-2. **Arrival time:** within a bucket, earlier arrival first.
+1. **Acuity:** lower ESI first, so a more acute patient is always ahead (I1).
+2. **Arrival time:** within the same acuity, earlier arrival first.
 
 Consequences:
 
-- A 1 and a 2 are peers (bucket sorts them, arrival breaks the tie); same for 3/4/5.
+- A 1 is always ahead of a 2, a 2 ahead of a 3, and so on. `acuity_bucket` (emergent 1–2 / queued 3–5) remains only as a display label.
 - `order_key` is assigned at system entry and **persists across state changes**: going into `reassessment_required` or `human_review` does not move you in line.
-- Only a real **acuity** change (via reassessment/deterioration/override) moves you between buckets. State labels and the clock never move you.
+- A case disputed at the gate (gap ≥ 2) queues by the nurse's acuity until the charge nurse settles it.
+- Only a real **acuity** change (via reassessment/deterioration/override) changes your key (I2). State labels and the clock never do.
 - **Timer firing forces a reassessment (14, 15); it does not re-sort the queue.**
-- Under overload, ordering guarantees **fairness**, not **service**. Liveness is delivered by the escalation path (the wait-liveness rule), not the sort.
+- Under overload, ordering guarantees **fairness**, not **service**. A strict acuity sort could leave a low-acuity patient waiting indefinitely (starvation, a liveness failure); that is handled by the escalation path (I15), not the sort.
 
 > **Reversible vs. irreversible actions (capacity design).** Queue placement and re-ordering
 > are **reversible** and run **automatically**, with no human gate - if a re-order turns out
@@ -617,24 +621,32 @@ _This section states the neurosymbolic split in one place: what the neural compo
 
 ## Safety invariants
 
-These are the properties enforced by the symbolic layer (Prolog, Datalog, Z3, OPA) and the runtime monitor. This is the governance half of the neurosymbolic split. Each property is a checkable proposition with a target formalism.
+These are the properties enforced by the symbolic layer (OPA, Z3, Prolog, Datalog) and the runtime temporal monitor. This is the governance half of the neurosymbolic split. Each property is a checkable proposition, and each one can fail: for each, a wrong system exists that it would catch. Reviewed and finalized 2026-09-19.
 
-| Property                         | Family           | Statement                                                                                                                                                                                                                                 | Formalism     |
-| -------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| No bypass of approval            | Safety           | never reach `treatment_started` via the system without passing safety/approval (enforced by `move_authorized` requiring `safety_passed ∧ approved`)                                                                                       | _(to define)_ |
-| Single execution writer          | Safety           | `execution_state` for the treatment move is written by one step only                                                                                                                                                                      | _(to define)_ |
-| No identifiers in model input    | Safety           | the classifier/safety-validator payload contains no name/ID/DOB/phone; the patient is referenced downstream only by `case_id`. Real identifiers are held only by the CRM layer and the identity-resolution step under `actor_authorized`. | OPA/Rego      |
-| Output validity                  | Safety           | every agent proposal passes output verification (schema + value ranges + invariants) before the Flow reads it into shared state; a failed check is logged and routed to fallback, never read into state silently                          | _(to define)_ |
-| Reassessment bound               | Bounded          | after `waiting`, a reassessment is scheduled within ≤ T                                                                                                                                                                                   | LTL `F≤t`     |
-| Escalation liveness              | Liveness         | every `human_review` is eventually resolved by a human                                                                                                                                                                                    | LTL `F`       |
-| Wait liveness (system escalates) | Liveness/Bounded | within T of entering `waiting`, the system **raises an escalation** (reminder ladder + widen). The system guarantees the alert, not that a human acts. `G(waiting -> F≤T escalation_raised)`                                              | LTL `F≤t`     |
-| Injection rejected               | Safety           | an input with `reason = injection` never proceeds to classify. `G(injection_detected -> X ¬classifying)`                                                                                                                                  | _(to define)_ |
-| Bucket ordering                  | Safety           | `G(¬(queued.order_key < emergent.order_key))`                                                                                                                                                                                             | Z3            |
-| Acuity write-authority           | Safety           | `acuity` is written only by (a) initial-classification resolution at the gate, (b) reassessment carrying new clinical evidence, or (c) human override. Neither the timer nor the danger-zone vitals annotation ever changes `acuity`.                          | Datalog       |
-| Release authorization            | Safety           | every `case_closed` via release carries a valid `release_reason` and an authorized nurse actor                                                                                                                                            | OPA/Rego      |
-| Failure recoverability           | Liveness         | a case in `agent_failed` is eventually resumed or manually handled (never stuck): `G(agent_failed -> F resolved)`                                                                                                                         | LTL `F`       |
+| #   | Property | Family | Statement | Temporal rule | Checked by |
+| --- | -------- | ------ | --------- | ------------- | ---------- |
+| I1 | Acuity ordering | Safety | No patient is ordered ahead of a more acute one. | `G(in_queue(a) ∧ in_queue(b) ∧ acuity(a) < acuity(b) → key(a) < key(b))` | tests; temporal monitor |
+| I2 | Stable queue key | Safety | Once a patient has entered the system, their `order_key` changes only when their acuity changes. | `G(key_changed → acuity_changed)` | tests; temporal monitor |
+| I3 | Acuity write-authority | Safety | Acuity is set only by the automatic settle (gap 0 or 1), a charge nurse at the human gate (acuity choice or safety correction), a re-triage, or the nurse's own value when the classifier is down. | `G(acuity_written → auto_settle ∨ charge_at_gate ∨ retriage ∨ nurse_fallback)` | Datalog (provenance); temporal monitor |
+| I4 | Gap bands | Safety | For every gap between the nurse's and the model's acuity, exactly one outcome applies: 0 keeps the agreed level, 1 takes the nurse's level, 2 or more goes to the charge nurse. | `G(gap_known → ((gap=0 → keep) ∧ (gap=1 → nurse_level) ∧ (gap≥2 → at_gate)))` | Z3 (design time); per-gap tests |
+| I5 | No bypass | Safety | A case enters the queue or treatment only after passing safety validation, and any required approval, in its current triage. Otherwise it waits at the human gate. | `G(enter_queue ∨ enter_treatment → safety_passed_this_triage ∧ approved_this_triage)`; `G(safety_failed ∨ safety_unavailable → (¬enter_queue ∧ ¬enter_treatment) U at_gate)` | OPA; temporal monitor |
+| I6 | Single treatment start | Safety | A case starts treatment at most once. | `G(treatment_started → X G ¬treatment_started)` | guard; temporal monitor |
+| I7 | Correct, then revalidate | Safety | A case that failed safety continues only after its acuity or clinical status is corrected, and it passes safety again. | `G(safety_failed → ¬leaves_gate U (corrected ∧ safety_passed))` | tests; temporal monitor |
+| I8 | Bounded correction loop | Liveness (bounded) | After a set number of failed correction rounds, the case is handed to the next level of authority (per I14) and stops looping. | `G(correction_rounds ≥ N → F handed_up)` | tests; temporal monitor |
+| I9 | Release | Safety + liveness | A release is possible at any point before the case is closed, and only with a valid reason. | `G(closed_by_release → valid_reason)`; `G(release_requested ∧ valid_reason ∧ ¬closed → F closed)` | OPA; tests per pause; temporal monitor |
+| I10 | No dropped case | Safety | A patient's case stops running only when the patient is released. | `G(patient_case ∧ run_ended → released)` | graph wiring tests; temporal monitor |
+| I11 | Identifier storage | Safety | Patient identifiers are stored only in the CRM, and shown only on authorized staff screens. | `G(stored(identifier, x) → x = CRM)`; `G(shown(identifier, s) → authorized_screen(s))` | Datalog (information flow) |
+| I12 | Model input | Safety | The model receives only approved fields, each holding a fixed-choice value or a number. | `G(model_call → ∀f ∈ payload: approved(f) ∧ closed_value(f))` | OPA (closed-type schema) |
+| I13 | Output validity | Safety | An agent output is saved only if it has the right shape and ranges and doesn't contradict itself. | `G(output_saved → well_formed ∧ in_range ∧ ¬self_contradictory)` | schema at creation; Prolog / Z3 (contradiction check) |
+| I14 | Authorization | Safety | Every human action is performed only by a person whose role, according to the server's staff records, permits it. | `G(human_action(p, a) → permits(role(p), a))` | Prolog (roles, permissions, explanation) |
+| I15 | Escalation | Liveness (bounded) | Whenever a case is waiting, in the queue or at the gate, the system escalates it within T, and keeps escalating, widening who is alerted, until someone acts. | `G(waiting ∧ ¬acted → F≤T escalated)` | timers; temporal monitor |
+| I16 | Reassessment | Liveness (bounded) | Within T of entering the queue (T set by acuity), the patient is moved to reassessment required. | `G(enter_queue → F≤T(acuity) (reassessment_required ∨ ¬in_queue))` | timers + sweeper; temporal monitor |
+| I17 | CRM write-back | Liveness (bounded) | Each visit's clinical data reaches the CRM within T of the CRM being reachable. | `G(visit_data_pending ∧ crm_reachable → F≤T crm_updated)` | timers; temporal monitor |
+| I18 | Audit | Safety | Every change to a case, and every refused attempt, is written to its audit log with a reason, in one fixed record structure. | `G(step_ran → audit_record_added)` | checkpoint cross-check: every step adds a record |
 
-> **Wait-liveness is honest about what the system controls.** The system cannot force a swamped nurse to act, so it does not promise the patient is reassessed within T; it promises it **raises an escalation** within T. Under overload the guarantee is escalation, not service.
+All T values live in one table in `triage-app/app/budgets.py`.
+
+> **I15 is honest about what the system controls.** The system cannot force a swamped nurse to act, so it does not promise that a human acts within T; it promises it **raises an escalation** within T, and keeps raising it. Under overload the guarantee is escalation, not service.
 >
 > **The danger-zone vitals check annotates; it never changes an acuity.** ESI v5 treats decision point D as a judgment applied in clinical context, not a mechanical threshold, and its own worked examples prove it: a patient with a heart rate of 102 against a limit of 100, all other vitals normal, is assigned level 3 and explicitly not uptriaged (handbook ch. 6, Example Four); a patient at SpO2 91% *is* uptriaged, but reasoned from an infected wound and steroid-induced immunosuppression rather than from the number (Example Five). Code cannot distinguish those two cases. So the check is computed exactly and attached to the patient card, and two human-or-model judgments — the nurse's at intake and the classifier's — decide the level between them. The system therefore does **not** guarantee `G(danger_zone_vitals -> acuity == emergent)`. This is the same stance the retired red-flag rules carried: rules inform, judgment decides.
 >
@@ -652,25 +664,9 @@ These are the properties enforced by the symbolic layer (Prolog, Datalog, Z3, OP
 
 ## Temporal logic rules
 
-The rubric requires temporal rules listed separately, so they are collected here. Most restate a Safety-invariant property as a temporal-logic rule over the event trace; some are pure liveness or until rules. Each describes what must always hold, what must eventually happen, or what must hold until something else occurs.
+Each invariant's temporal rule is in the **Temporal rule** column of the Safety invariants table above: the same rule, written over the case's event trace (its audit log). Propositions ending in `_this_triage` are enriched state: set when the event happens, reset when a new triage begins.
 
-| Kind          | Rule (LTL)                                              | In words                                                                                | Where it bites                             |
-| ------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------ |
-| Always        | `G(reach_treatment -> safety_passed ∧ approved)`        | never start treatment before safety validation **and** approval                         | `move_authorized` on 1b.y / 19, no-bypass  |
-| Always (next) | `G(¬safety_pass -> X awaiting_human_approval)`          | a safety failure moves straight to the human gate on the next step                      | arrow 10·fail                              |
-| Always (next) | `G(guard_failed -> X blocked_action)`                   | any guarded action whose guard fails is blocked, logged, and explained                  | arrow BLK                                  |
-| Eventually    | `G(awaiting_human_approval -> F resolved)`              | every gated case is eventually resolved by a human                                      | the gate, escalation liveness              |
-| Eventually    | `G(agent_failed -> F resolved)`                         | a halted case is eventually resumed or manually handled, never stuck                    | arrow AF·recover, failure recoverability   |
-| Bounded       | `G(waiting -> F≤T escalation_raised)`                   | within T the system raises an escalation for every waiter (not: a human acts)           | arrows 13 / 14 / 20a / 20b, wait liveness  |
-| Until         | `G(identifiers_present -> ¬model_call U payload_built)` | identifiers must not reach the model until the payload is built without them            | arrows 5, 6, no identifiers in model input |
-| Eventually    | `G(action_executed -> F audit_log_created)`             | every state-changing action is eventually written to the audit log                      | `emit_event_log` on every transition       |
-| Always (next) | `G(injection_detected -> X ¬classifying)`               | an injection input never reaches the classifier                                         | arrow 18, injection rejected               |
-| Always        | `G(¬(queued.order_key < emergent.order_key))`           | an emergent patient is never ordered behind a queued one                                | queue sort, bucket ordering                |
-| Always (next) | `G(agent_failed -> X(degrade ∨ halt))`                  | an agent failure moves to a degraded/manual path or a controlled halt, never to nowhere | the `AF·…` edges, per-agent failure model  |
-
-> `resolved` = a human records a decision at the gate (`apply_human_acuity` on the acuity branch, or the safety-branch outcome, see **Safety-fail branch of the human gate (resolved)**); for `agent_failed`, `resolved` = `AGENT_RECOVERED` (resume) or a manual-handling exit.
->
-> **How they are checked.** Single-step rules (no-bypass, injection-rejected, safety-fail routing, agent-failure routing, blocked-action) are enforced as transition guards. Liveness and bounded rules (eventually / within T) are checked by the runtime governance monitor against the running event trace (the `emit_event_log` stream), which raises a violation if a deadline passes.
+> **How they are checked.** Single-step rules are enforced as guards and policies before a step writes state (OPA, Prolog, the model-input schema). Z3 proves the gap bands (I4) and the output contradiction rules (I13) at design time. Datalog checks provenance (I3) and information flow (I11). The temporal monitor reads each case's audit log in order and flags the exact record where any rule breaks, including the deadlines (I15–I17). No rule uses `X` ("next step") for routing: real paths insert extra steps (for example `safety_fallback`), so ordering rules use `U` or `F≤T` instead.
 
 ---
 
@@ -678,13 +674,13 @@ The rubric requires temporal rules listed separately, so they are collected here
 
 This section puts the neurosymbolic split into practice. The neural component (the Acuity Classifier LLM) only proposes. Before a step writes to `self.state`, proposals and attempted actions pass through the symbolic layers; if any denies, the action is blocked (`BLK`), never silently taken.
 
-**OPA, policy and authorization (runtime).** A code-as-policy layer checked at the human-approval gate (arrows 11/20), treatment moves (`move_authorized` on 1b.y/19), redaction-to-classification (arrow 6, blocked if identifiers remain), and release (REL). It decides whether the actor holds an authorized role, whether a `sign_release` carries a valid `release_reason`, and whether a treatment move is backed by `safety_passed ∧ approved`. Backs **No identifiers in model input**, **No bypass of approval**, and **Release authorization**. On "not allowed," the action is denied via `BLK`.
+**OPA, policy and authorization (runtime).** A code-as-policy layer checked at the human-approval gate (arrows 11/20), treatment moves (`move_authorized` on 1b.y/19), redaction-to-classification (arrow 6, blocked if identifiers remain), and release (REL). It decides whether the actor holds an authorized role, whether a `sign_release` carries a valid `release_reason`, and whether a treatment move is backed by `safety_passed ∧ approved`. Backs **I5 No bypass**, **I9 Release** and **I12 Model input**. On "not allowed," the action is denied via `BLK`.
 
-**Z3, constraint consistency (mainly design-time, plus a runtime guard).** Z3 does exhaustive proof: it shows a property holds for **every** reachable state, which example tests cannot. Design-time, it proves the acuity bands are **total and exclusive** (for every `acuity_gap ≥ 0` exactly one of 9a/9b/9c fires, so no case falls through the gate) and that the transition guards are satisfiable and mutually consistent. It also proves the queue-ordering constraint (no `queued.order_key < emergent.order_key`) is unsatisfiable, i.e. cannot occur. Backs **Bucket ordering** and the integrity of the transition table. Z3 proves the spec sound before deployment; it does not route cases at runtime (that is OPA/Prolog/temporal).
+**Z3, constraint consistency (mainly design-time, plus a runtime guard).** Z3 does exhaustive proof: it shows a property holds for **every** reachable state, which example tests cannot. Design-time, it proves the acuity bands are **total and exclusive** (for every `acuity_gap ≥ 0` exactly one of 9a/9b/9c fires, so no case falls through the gate) and that the transition guards are satisfiable and mutually consistent. It also checks the output contradiction rules (I13): no combination of the classifier's ESI answers and its level may be accepted while contradicting itself. Backs **I4 Gap bands**, **I13 Output validity** and the integrity of the transition table. Z3 proves the spec sound before deployment; it does not route cases at runtime (that is OPA/Prolog/temporal).
 
-**Prolog, inference and explanation (runtime).** Backs `actor_is_charge` and the explainability requirement. Facts (who is on shift, in what role) and rules (which action requires which role, what is blocked outright) let it infer whether a user may act, and produce the **why**: approved because the role has authority, or denied because the role is insufficient. If inference denies at the gate, the case stays in `awaiting_human_approval`; the explanation is what the nurse sees and what is written to the audit log. Prolog also produces the `explain_denial` string on the `BLK` row.
+**Prolog, inference and explanation (runtime).** Backs **I14 Authorization** and the explainability requirement. Facts (who is on shift, in what role) and rules (which action requires which role, what is blocked outright) let it infer whether a user may act, and produce the **why**: approved because the role has authority, or denied because the role is insufficient. If inference denies at the gate, the case stays in `awaiting_human_approval`; the explanation is what the nurse sees and what is written to the audit log. Prolog also produces the `explain_denial` string on the `BLK` row.
 
-**Datalog, relations, information flow, provenance (runtime).** Transitive-relation analysis, two uses. First, information flow: whether a sensitive field (name, ID) can reach an external tool through the node chain without passing through payload construction; a query returning such a path exposes a leak. Second, provenance of the acuity value: only gate resolution, reassessment with new evidence, or an authorized human override are permitted writers; a timer alone is not, and neither is the vitals rule, which writes only the classifier's proposal. Backs **No identifiers in model input** and **Acuity write-authority**.
+**Datalog, relations, information flow, provenance (runtime).** Transitive-relation analysis, two uses. First, information flow: whether a sensitive field (name, ID) can reach an external tool through the node chain without passing through payload construction; a query returning such a path exposes a leak. Second, provenance of the acuity value: only gate resolution, reassessment with new evidence, or an authorized human override are permitted writers; a timer alone is not, and neither is the vitals rule, which writes only the classifier's proposal. Backs **I11 Identifier storage** and **I3 Acuity write-authority**.
 
 **How the roles divide.** OPA governs permissions and boundaries at runtime; Z3 proves at design time that no reachable state violates the numeric/logical constraints; Prolog infers and explains individual decisions at runtime; Datalog traces relations and flows at runtime. Together they cover the four symbolic requirements and stop a neural proposal from ever becoming an unchecked state write.
 
@@ -698,7 +694,7 @@ Items still needing a decision before the spec is final. The OCR question is set
 1b. ~~ESI decision point D thresholds~~ - **resolved 2026-09-13**, transcribed from the ESI v5 handbook (`docs/Emergency_Severity_Index_Handbook.pdf`, Figure 6-1) into the design doc.
 2. `confidence_ok`: **wire in** (low confidence, then gate) **or delete** (see Guards).
 3. Per-agent retry budgets `N` (see Per-agent failure model).
-4. Formalisms for the **no-approval-bypass**, **sole-writer**, and **injection-rejected** rules.
+4. ~~Formalisms for the no-approval-bypass, sole-writer, and injection-rejected rules~~ - **resolved 2026-09-19**: invariants reviewed and restated as I1–I18 with temporal rules (see Safety invariants).
 5. `parsed_fields` schema (see Context / State variables). Intake is **structured only** as of 2026-09-13 — roughly ten dropdown / tick-box fields plus vitals; the free-text field is removed. The exact field list needs a pass with a clinician. Two fields are required by ESI decision point D and are not currently collected: **respiratory rate**, and **age band** (`<1mo`, `1-12mo`, `1-3y`, `3-5y`, `5-12y`, `12-18y`, `>18y`). The age band comes from the CRM record; pass the band rather than the date of birth, which is a direct identifier.
 6. ~~Safety-fail branch of the human gate~~ - **resolved** (see the resolved section below; modeled in the "Safety-Fail Branch" section of SYSTEM_MODELING.md).
 
@@ -736,7 +732,7 @@ different question. Both are now resolved. The safety-fail resolution is modeled
 
 **Constraints honored:**
 
-- **No-approval-bypass:** correct-and-revalidate always re-runs safety on the corrected
+- **No bypass (I5):** correct-and-revalidate always re-runs safety on the corrected
   version, so there is no path to `treatment_started` that skips safety/approval.
 - **No silent return:** a resolution must change `acuity`, `clinical_status`, or
   `safety_verdict`; an unchanged case cannot go back to `waiting`.
