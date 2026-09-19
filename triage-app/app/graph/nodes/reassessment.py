@@ -18,7 +18,7 @@ from typing import Any
 from langgraph.types import interrupt
 
 from app.budgets import REASSESSMENT_REMINDER_DELAY_MINUTES
-from app.deterministic import audit
+from app.deterministic import assign_order_key, audit
 from app.graph.state import TriageState
 from app.labels import Arrow
 from app.monitor import timers
@@ -88,6 +88,10 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
         "approved": False,
         "correction_rounds": 0,
         "senior_required": False,
+        # Until the new acuity settles, the case queues by the nurse's new value,
+        # as on first intake. Their acuity really changed, so I2 allows it.
+        "order_key": assign_order_key(submitted.get("nurse_proposed_acuity"), state.arrival_time)
+        if submitted.get("nurse_proposed_acuity") is not None else state.order_key,
         "audit_log": [
             audit(state.case_id, State.REASSESSMENT_REQUIRED, "emit_event_log",
                   "nurse re-filed with fresh observations", Arrow.FRONT_DOOR_RERUN),

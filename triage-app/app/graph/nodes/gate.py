@@ -28,9 +28,14 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
     `timer_id` (a repeat call with the same id is a no-op), so a replay just
     re-schedules the same two reminder timers instead of duplicating them.
     """
-    for cycle, delay in GATE_REMINDER_DELAY_MINUTES.items():
+    # A timer id is case:kind:cycle and scheduling an existing id is a no-op,
+    # so each gate visit needs its own cycles or a second visit gets no
+    # reminders (I15). The audit log's length is fixed while this node replays
+    # on resume and grows between visits, so it numbers the visit.
+    visit = len(state.audit_log) * len(GATE_REMINDER_DELAY_MINUTES)
+    for rung, delay in GATE_REMINDER_DELAY_MINUTES.items():
         timers.schedule(timers.connection(), case_id=state.case_id, kind="gate_reminder",
-                         cycle=cycle, due_at=timers.due_in(delay))
+                         cycle=visit + rung, due_at=timers.due_in(delay))
 
     reason = state.escalation_reason or human_bridge.SAFETY_FAIL
 
@@ -99,7 +104,7 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
             "audit_log": [recorded,
                           audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
                                 "escalate_further", f"{resolver} escalated to a senior",
-                                Arrow.GATE_SAFETY_CORRECTED)],
+                                Arrow.SENIOR_ESCALATION)],
         }
 
     # Safety-fail branch: correct and revalidate. No override path exists.
@@ -121,9 +126,9 @@ def escalate_to_senior(state: TriageState) -> dict[str, Any]:
     goes to any shift lead (I15).
     """
     timers.schedule(timers.connection(), case_id=state.case_id, kind="senior_reminder",
-                     cycle=state.correction_rounds, due_at=timers.due_in(SENIOR_REMINDER_DELAY_MINUTES))
+                     cycle=len(state.audit_log), due_at=timers.due_in(SENIOR_REMINDER_DELAY_MINUTES))
     return {
         "senior_required": True,
         "audit_log": [audit(state.case_id, State.AWAITING_HUMAN_APPROVAL, "escalate_to_senior",
-                            "correction loop handed to a shift lead", Arrow.GATE_SAFETY_CORRECTED)],
+                            "correction loop handed to a shift lead", Arrow.SENIOR_ESCALATION)],
     }

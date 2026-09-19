@@ -173,7 +173,7 @@ def notify(conn, timer: dict[str, Any], *, graph) -> str:
         return "CANCELLED"
 
     recipient_class = (
-        _GATE_RUNG_RECIPIENTS.get(timer["cycle"], "any_charge_nurse")
+        _GATE_RUNG_RECIPIENTS[timer["cycle"] % len(_GATE_RUNG_RECIPIENTS)]
         if timer["kind"] == "gate_reminder"
         else "any_shift_lead" if timer["kind"] == "senior_reminder"
         else "any_charge_nurse"

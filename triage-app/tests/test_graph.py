@@ -122,3 +122,25 @@ def test_missing_fields_pause_and_the_same_case_continues(graph, run):
     assert result["arrival_time"] == first["arrival_time"]
     assert "1b.x" in arrows(result)
     assert graph.get_state(config_for(thread)).next == ("awaiting_reassessment",)  # queued
+
+
+def test_completing_intake_cannot_overwrite_the_patient_id(graph, run):
+    """Review fix 1: /fields fills only empty fields. An attempt to change an
+    existing identity is ignored and recorded, never applied.
+    """
+    from langgraph.types import Command
+
+    from app.runner import config_for, hydrate
+
+    first, _, thread = run(DEMO_CASES["missing"])
+    original_id = first["raw_payload"]["stable_patient_id"]
+
+    result = hydrate(graph.invoke(
+        Command(resume={"stable_patient_id": "SOMEONE-ELSE", "nurse_proposed_acuity": 3,
+                        "vitals": {"hr": 90, "bp": "120/80", "spo2": 98, "temp_c": 36.8}}),
+        config_for(thread),
+    ))
+
+    assert result["raw_payload"]["stable_patient_id"] == original_id
+    fix = next(r for r in result["audit_log"] if r["action"] == "fields_submitted")
+    assert fix["ignored_fields"] == ["stable_patient_id"]

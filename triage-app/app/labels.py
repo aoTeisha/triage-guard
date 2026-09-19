@@ -90,6 +90,7 @@ class Arrow(str, Enum):
     AF_SAFETY = "AF·safety"
     AF_HUMAN_BRIDGE = "AF·human_bridge"
     AF_RECOVER = "AF·recover"
+    SENIOR_ESCALATION = "1b.z·senior"   # correction loop handed to a shift lead (I8)
 
     # ---- output verification (§ On output verification) ----------------------
     V_PASS = "V·pass"

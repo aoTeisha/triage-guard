@@ -181,3 +181,22 @@ def test_a_refile_starts_a_new_triage_with_no_old_approval(graph, run):
     assert result["approved"] is False
     assert result["safety_passed"] is False
     assert result["acuity"] is None  # the old triage's acuity must not skip the gate
+    assert result["order_key"][0] == 4  # queues by the nurse's new acuity (review fix 2)
+
+
+def test_a_second_gate_visit_gets_its_own_reminders(conn, graph, run):
+    """Review fix 3 (I15): reminder ids are unique per gate visit, so a case
+    that reaches the gate again after a re-file is reminded again.
+    """
+    from tests.test_gates import CHARGE, GAP_CASE
+
+    _, _, thread = run(GAP_CASE)
+    graph.invoke(Command(resume=CHARGE), config_for(thread))   # resolved -> queued
+    _fire_the_timer(graph, thread)
+    graph.invoke(Command(resume={**REFILE, "nurse_proposed_acuity": 4}), config_for(thread))
+
+    count = conn.execute(
+        "SELECT COUNT(*) FROM timers WHERE case_id=%s AND kind='gate_reminder'",
+        (GAP_CASE["case_id"],),
+    ).fetchone()[0]
+    assert count == 4   # two rungs per visit, two visits

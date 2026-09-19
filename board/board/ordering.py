@@ -29,6 +29,8 @@ QUEUEING_STATUSES = frozenset(
 )
 
 # Real keys are (acuity 1-5, arrival_time); (6, "") sorts after all of them.
+# A case with no nurse acuity yet has no order_key, so it shows at the bottom
+# rather than pretending to a position.
 _UNKEYED = (6, "")
 
 

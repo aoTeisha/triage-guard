@@ -35,6 +35,7 @@ from pydantic import BaseModel
 import app.runner as runner
 from app.observability import agent_span, flush
 from app.runner import config_for, resume_case, snapshot, start_case
+from app.guards import NURSE_SUPPLIED_FIELDS
 from app.states import State
 from app.views import case_view as _view
 
@@ -200,6 +201,9 @@ def fields(case_id: str, body: dict[str, Any]):
     """Completes an incomplete intake (arrows 1b.x / 1a·resubmit). The same
     case continues, so the patient keeps their arrival time (I2, I10).
     """
+    unknown = sorted(set(body) - NURSE_SUPPLIED_FIELDS)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"not intake form fields: {unknown}")
     _require_pause(case_id, "awaiting_intake_fix")
     return _answer_pause(case_id, body)
 

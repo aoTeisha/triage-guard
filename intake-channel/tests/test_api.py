@@ -395,3 +395,9 @@ def test_each_pause_accepts_only_its_own_answer():
     assert client.post(f"/fields/{at_gate['case_id']}", json={}).status_code == 409
     assert client.post(f"/recover/{at_gate['case_id']}").status_code == 409
     assert client.post("/recover/no-such-case").status_code == 404
+
+
+def test_fields_rejects_anything_that_is_not_an_intake_field():
+    response = client.post("/fields/any-case", json={"case_id": "x", "bogus": 1})
+
+    assert response.status_code == 422

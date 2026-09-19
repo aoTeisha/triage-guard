@@ -168,6 +168,7 @@ def test_escalate_further_hands_the_case_to_a_shift_lead_at_once(graph, run, mon
 
     assert snap.values["senior_required"] is True
     assert hydrate(snap.values)["correction_rounds"] == 0
+    assert "1b.z·senior" in arrows(hydrate(snap.values))  # review fix 5
     assert conn.execute(
         "SELECT COUNT(*) FROM timers WHERE case_id=%s AND kind='senior_reminder'",
         (DEMO_CASES["clean"]["case_id"],),

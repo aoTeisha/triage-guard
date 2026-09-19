@@ -18,6 +18,10 @@ REQUIRED_FIELDS = (
     "free_text",
 )
 
+# What a nurse may supply when completing an incomplete intake. Routing
+# metadata is fixed by the original submission and never re-supplied.
+NURSE_SUPPLIED_FIELDS = frozenset(REQUIRED_FIELDS) - {"case_id", "channel"}
+
 # The subset that carries clinical content. case_id and channel are routing
 # metadata — a payload holding only those two carried nothing usable, which is
 # demo case 3 (SUBMISSION_FAILED), not a missing-fields round trip.
