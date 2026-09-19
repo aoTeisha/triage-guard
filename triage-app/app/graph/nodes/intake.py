@@ -29,7 +29,7 @@ def intake_received(state: TriageState) -> dict[str, Any]:
         ],
     }
 
-    # order_key needs a bucket, and the bucket needs an acuity. The only acuity
+    # order_key needs an acuity. The only acuity
     # available at entry is the nurse's, which guards/fields.py states is mandatory
     # and "never inferred: absent means arrow 16, never a guessed value". So when it
     # is absent the case gets no queue position — it is heading for

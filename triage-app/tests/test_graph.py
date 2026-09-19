@@ -76,7 +76,7 @@ def test_injection_is_rejected_before_anything_is_classified(run):
 
 def test_missing_fields_case_gets_no_invented_queue_position(run):
     """`nurse_proposed_acuity` is mandatory and never inferred, so a case without
-    one cannot be bucketed — and must not be given a guessed acuity to fake it.
+    one cannot be given an order_key — and must not be given a guessed acuity to fake it.
     """
     state, _, _ = run(DEMO_CASES["missing"])
     assert state["order_key"] is None

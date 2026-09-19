@@ -21,11 +21,15 @@ REFILE = {
 
 def _fire_the_timer(graph, thread: str):
     """Deliver a reassessment timeout the way `fire.dispatch` does."""
-    graph.invoke(Command(resume={"event": "REASSESSMENT_TIMEOUT", "fire_id": "f1"}),
-                 config_for(thread))
+    graph.invoke(
+        Command(resume={"event": "REASSESSMENT_TIMEOUT", "fire_id": "f1"}),
+        config_for(thread),
+    )
 
 
-def test_reassessment_timeout_pauses_for_a_nurse_refile_instead_of_replaying(graph, run):
+def test_reassessment_timeout_pauses_for_a_nurse_refile_instead_of_replaying(
+    graph, run
+):
     case = DEMO_CASES["clean"]
     _, pending, thread = run(case)
     assert pending == {"case_id": case["case_id"], "waiting_room": True}
@@ -41,7 +45,9 @@ def test_reassessment_timeout_pauses_for_a_nurse_refile_instead_of_replaying(gra
     assert result["nurse_proposed_acuity"] == 3
 
 
-def test_nurse_refile_with_changed_acuity_moves_the_case_and_updates_its_bucket(graph, run):
+def test_nurse_refile_with_changed_acuity_moves_the_case_and_updates_its_order_key(
+    graph, run
+):
     case = DEMO_CASES["clean"]
     _, _, thread = run(case)
     _fire_the_timer(graph, thread)
@@ -52,7 +58,7 @@ def test_nurse_refile_with_changed_acuity_moves_the_case_and_updates_its_bucket(
     # resolve_acuity's 9b band settles to the nurse's number. So acuity really
     # did change because the nurse re-filed, not because the clock ticked.
     assert result["acuity"] == 1
-    assert result["order_key"][0] == 0  # emergent bucket; was 1 (queued) before
+    assert result["order_key"][0] == 1  # acuity is the first part of the key
     assert any(
         rec.get("explanation") == "nurse re-filed with fresh observations"
         for rec in result["audit_log"]
@@ -90,7 +96,9 @@ def test_entering_the_refile_pause_schedules_a_reminder(conn, graph, run):
     assert row == ("reassessment_reminder", "SCHEDULED")
 
 
-def test_the_reminder_notifies_a_charge_nurse_while_the_case_still_waits(conn, graph, run):
+def test_the_reminder_notifies_a_charge_nurse_while_the_case_still_waits(
+    conn, graph, run
+):
     from app.monitor import fire
 
     case = DEMO_CASES["clean"]
@@ -99,8 +107,13 @@ def test_the_reminder_notifies_a_charge_nurse_while_the_case_still_waits(conn, g
     # cycle 0 -> _GATE_RUNG_RECIPIENTS[0] is "assigned_nurse", so only the
     # kind-aware branch in fire.notify (not a gate-only fallback) can produce
     # "any_charge_nurse" here; cycle 1 wouldn't discriminate the bug.
-    timer = {"timer_id": "r1", "case_id": thread, "kind": "reassessment_reminder",
-             "cycle": 0, "due_at": "2000-01-01T00:00:00Z"}
+    timer = {
+        "timer_id": "r1",
+        "case_id": thread,
+        "kind": "reassessment_reminder",
+        "cycle": 0,
+        "due_at": "2000-01-01T00:00:00Z",
+    }
 
     outcome = fire.notify(conn, timer, graph=graph)
 
@@ -117,12 +130,20 @@ def test_the_reminder_is_cancelled_once_the_nurse_has_refiled(conn, graph, run):
     _, _, thread = run(case)
     _fire_the_timer(graph, thread)
     graph.invoke(Command(resume=REFILE), config_for(thread))
-    timer = {"timer_id": "r2", "case_id": thread, "kind": "reassessment_reminder",
-             "cycle": 1, "due_at": "2000-01-01T00:00:00Z"}
+    timer = {
+        "timer_id": "r2",
+        "case_id": thread,
+        "kind": "reassessment_reminder",
+        "cycle": 1,
+        "due_at": "2000-01-01T00:00:00Z",
+    }
 
     outcome = fire.notify(conn, timer, graph=graph)
 
     assert outcome == "CANCELLED"
-    assert conn.execute(
-        "SELECT COUNT(*) FROM notifications WHERE case_id=%s", (thread,)
-    ).fetchone()[0] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM notifications WHERE case_id=%s", (thread,)
+        ).fetchone()[0]
+        == 0
+    )

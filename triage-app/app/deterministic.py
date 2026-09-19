@@ -17,23 +17,21 @@ from typing import Any
 from app.labels import Arrow
 from app.states import AcuityBucket, AcuitySource, State
 
-# ---- order_key / bucket (§ Queue ordering rule) -----------------------------
+# ---- order_key and the display bucket (§ Queue ordering rule) ---------------
 
 
 def bucket_for(acuity: int) -> AcuityBucket:
-    """emergent = ESI 1-2, queued = ESI 3-5. The primary sort key."""
+    """emergent = ESI 1-2, queued = ESI 3-5. A display label; order_key sorts."""
     return AcuityBucket.EMERGENT if acuity <= 2 else AcuityBucket.QUEUED
 
 
 def assign_order_key(acuity: int, arrival_time: str) -> tuple[int, str]:
-    """The single writer of order_key: (bucket_rank, arrival_time).
+    """The single writer of order_key: (acuity, arrival_time).
 
-    bucket_rank 0 (emergent) always sorts ahead of 1 (queued); arrival_time breaks
-    ties within a bucket. Re-keyed whenever acuity changes and never by the timer
-    alone, so "only a real acuity change reorders you" holds.
+    Lower ESI sorts first, so a more acute patient is always ahead;
+    arrival_time breaks ties. Re-keyed whenever acuity changes, never by the timer.
     """
-    rank = 0 if bucket_for(acuity) is AcuityBucket.EMERGENT else 1
-    return (rank, arrival_time)
+    return (acuity, arrival_time)
 
 
 # ---- acuity-gap resolution at the gate (arrows 9a / 9b / 9c) ----------------
@@ -43,7 +41,9 @@ def compute_acuity_gap(nurse: int, system: int) -> int:
     return abs(nurse - system)
 
 
-def resolve_acuity(nurse: int, system: int) -> tuple[int | None, AcuitySource | None, Arrow]:
+def resolve_acuity(
+    nurse: int, system: int
+) -> tuple[int | None, AcuitySource | None, Arrow]:
     """Return (final_acuity, acuity_source, arrow) per the Z3-proven bands.
 
         gap 0   -> agree, keep it              (9a, human_confirmed)
@@ -103,8 +103,14 @@ def audit_denial(case_id: str, control_state: State, why: str) -> dict[str, Any]
     gate's unauthorized-resolver branch and the waiting-room pause's
     move/release refusals, so the denial-record shape is defined once.
     """
-    return audit(case_id, control_state, "explain_denial", why, Arrow.BLK,
-                 denying_layer="Prolog (authorization)")
+    return audit(
+        case_id,
+        control_state,
+        "explain_denial",
+        why,
+        Arrow.BLK,
+        denying_layer="Prolog (authorization)",
+    )
 
 
 # ---- symbolic-layer predicates (SKELETON — swap for real engines) -----------

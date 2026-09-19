@@ -15,27 +15,29 @@ def cards(*states):
     return [card_from_state(s) for s in states]
 
 
-def test_emergent_never_behind_queued():
-    """G(¬(queued.order_key < emergent.order_key)) — stated as an invariant, so
-    it is asserted over the ordering the board actually renders.
+def test_more_acute_never_behind_less_acute():
+    """No patient is ordered ahead of a more acute one (SPECIFICATION.md:47),
+    asserted over the ordering the board actually renders.
     """
-    board = sort_cards(cards(
-        make_state("early-queued", 4, EARLY),
-        make_state("late-emergent", 1, LATE),
-    ))
+    board = sort_cards(
+        cards(
+            make_state("early-esi2", 2, EARLY),
+            make_state("late-esi1", 1, LATE),
+            make_state("early-esi4", 4, EARLY),
+        )
+    )
 
-    assert [c.case_id for c in board] == ["late-emergent", "early-queued"]
-
-    emergent = [c for c in board if c.bucket == "emergent"]
-    queued = [c for c in board if c.bucket == "queued"]
-    assert all(e.order_key < q.order_key for e in emergent for q in queued)
+    assert [c.case_id for c in board] == ["late-esi1", "early-esi2", "early-esi4"]
+    assert all(a.acuity <= b.acuity for a, b in zip(board, board[1:]))
 
 
-def test_arrival_breaks_ties_inside_a_bucket():
-    board = sort_cards(cards(
-        make_state("second", 3, LATE),
-        make_state("first", 5, EARLY),
-    ))
+def test_arrival_breaks_ties_for_same_acuity():
+    board = sort_cards(
+        cards(
+            make_state("second", 3, LATE),
+            make_state("first", 3, EARLY),
+        )
+    )
     assert [c.case_id for c in board] == ["first", "second"]
 
 
@@ -52,9 +54,11 @@ def test_unkeyed_cards_sort_last():
 
 
 def test_positions_are_one_based_over_the_global_ordering():
-    place = positions(cards(
-        make_state("c", 5, LATE),
-        make_state("a", 1, EARLY),
-        make_state("b", 3, EARLY),
-    ))
+    place = positions(
+        cards(
+            make_state("c", 5, LATE),
+            make_state("a", 1, EARLY),
+            make_state("b", 3, EARLY),
+        )
+    )
     assert place == {"a": 1, "b": 2, "c": 3}

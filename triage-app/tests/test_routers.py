@@ -18,6 +18,10 @@ from app.labels import Route
 from app.states import AcuityBucket, AcuitySource, ClinicalStatus
 
 
+EARLY = "2026-09-19T10:00:00+00:00"
+LATE = "2026-09-19T10:05:00+00:00"
+
+
 def s(**kw) -> TriageState:
     return TriageState(case_id="t", **kw)
 
@@ -25,9 +29,16 @@ def s(**kw) -> TriageState:
 # ---- intake fan-out (arrows 4 / 16 / 17 / 18) -------------------------------
 
 
-@pytest.mark.parametrize("outcome", [e.value for e in Event][:0] or [
-    "DATA_PARSED", "MISSING_FIELDS_DETECTED", "SUBMISSION_FAILED", "INVALID_INPUT_DETECTED",
-])
+@pytest.mark.parametrize(
+    "outcome",
+    [e.value for e in Event][:0]
+    or [
+        "DATA_PARSED",
+        "MISSING_FIELDS_DETECTED",
+        "SUBMISSION_FAILED",
+        "INVALID_INPUT_DETECTED",
+    ],
+)
 def test_each_intake_outcome_routes_to_its_own_branch(outcome):
     assert routers.route_intake(s(intake_outcome=outcome)) == Event(outcome)
 
@@ -81,7 +92,10 @@ def test_a_case_with_no_system_acuity_escalates_rather_than_guessing():
 
 
 def test_classifier_retries_while_budget_remains():
-    assert routers.route_after_classify(s(retry_count={"acuity_classifier": 0})) is Route.RETRY
+    assert (
+        routers.route_after_classify(s(retry_count={"acuity_classifier": 0}))
+        is Route.RETRY
+    )
 
 
 def test_classifier_exhaustion_degrades_rather_than_halting():
@@ -146,23 +160,23 @@ def test_the_correction_loop_is_bounded():
 # ---- queue ordering ------------------------------------------------------------
 
 
-@pytest.mark.parametrize("acuity,expected", [
-    (1, AcuityBucket.EMERGENT), (2, AcuityBucket.EMERGENT),
-    (3, AcuityBucket.QUEUED), (4, AcuityBucket.QUEUED), (5, AcuityBucket.QUEUED),
-])
+@pytest.mark.parametrize(
+    "acuity,expected",
+    [
+        (1, AcuityBucket.EMERGENT),
+        (2, AcuityBucket.EMERGENT),
+        (3, AcuityBucket.QUEUED),
+        (4, AcuityBucket.QUEUED),
+        (5, AcuityBucket.QUEUED),
+    ],
+)
 def test_bucket_boundary_is_between_two_and_three(acuity, expected):
     assert bucket_for(acuity) is expected
 
 
-def test_emergent_always_sorts_ahead_of_queued():
-    early_queued = assign_order_key(4, "2026-01-01T00:00:00+00:00")
-    late_emergent = assign_order_key(1, "2026-12-31T23:59:59+00:00")
-    assert late_emergent < early_queued
-
-
-def test_arrival_breaks_ties_inside_a_bucket():
-    first = assign_order_key(3, "2026-01-01T00:00:00+00:00")
-    second = assign_order_key(5, "2026-01-01T00:00:01+00:00")
+def test_arrival_breaks_ties_same_acuity():
+    first = assign_order_key(3, EARLY)
+    second = assign_order_key(3, LATE)
     assert first < second
 
 
@@ -189,13 +203,22 @@ def test_route_wait_resume_sends_a_case_already_in_treatment_back_to_moved():
     both look identical to this router: clinical_status is treatment_started
     and the arrow is neither BLK nor REL.
     """
-    assert routers.route_wait_resume(
-        _state(arrow="19", clinical_status=ClinicalStatus.TREATMENT_STARTED.value)
-    ) == Route.MOVED
-    assert routers.route_wait_resume(
-        _state(arrow="14", clinical_status=ClinicalStatus.TREATMENT_STARTED.value)
-    ) == Route.MOVED
+    assert (
+        routers.route_wait_resume(
+            _state(arrow="19", clinical_status=ClinicalStatus.TREATMENT_STARTED.value)
+        )
+        == Route.MOVED
+    )
+    assert (
+        routers.route_wait_resume(
+            _state(arrow="14", clinical_status=ClinicalStatus.TREATMENT_STARTED.value)
+        )
+        == Route.MOVED
+    )
 
 
 def test_route_wait_resume_defaults_to_proceed_for_a_normal_reassessment():
-    assert routers.route_wait_resume(_state(arrow="14", clinical_status="waiting")) == Route.PROCEED
+    assert (
+        routers.route_wait_resume(_state(arrow="14", clinical_status="waiting"))
+        == Route.PROCEED
+    )

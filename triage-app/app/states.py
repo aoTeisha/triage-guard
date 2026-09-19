@@ -66,7 +66,7 @@ class AcuitySource(str, Enum):
 
 
 class AcuityBucket(str, Enum):
-    """Primary queue sort key (§ Queue ordering rule)."""
+    """Display label for the board. Not a sort key: order_key sorts by acuity."""
 
     EMERGENT = "emergent"   # ESI 1-2
     QUEUED = "queued"       # ESI 3-5

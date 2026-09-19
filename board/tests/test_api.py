@@ -52,12 +52,14 @@ def test_board_lists_seeded_cases_with_positions(seeded):
     by_id = {c["case_id"]: c for c in data["cards"]}
 
     assert set(seeded) <= set(by_id)
-    assert [c["position"] for c in data["cards"]] == list(range(1, len(data["cards"]) + 1))
+    assert [c["position"] for c in data["cards"]] == list(
+        range(1, len(data["cards"]) + 1)
+    )
     assert data["counters"]["waiting"] == len(data["cards"])
-    # The invariant, over whatever the mocked classifier settled on: no queued
-    # card sits above an emergent one.
-    buckets = [c["bucket"] for c in data["cards"]]
-    assert buckets == sorted(buckets, key=lambda b: 0 if b == "emergent" else 1)
+    # The invariant, over whatever the mocked classifier settled on: no card
+    # sits above a more acute one. Unkeyed cards (no acuity yet) sort last.
+    acuities = [c["acuity"] for c in data["cards"] if c["acuity"] is not None]
+    assert acuities == sorted(acuities)
 
 
 def test_board_renders_with_no_crm(seeded):
@@ -89,7 +91,7 @@ def test_a_case_suspended_at_the_gate_is_on_the_board(checkpoint_db):
 
     case = dict(DEMO_CASES["clean"])
     case["case_id"] = f"gated-{uuid4().hex[:6]}"
-    case["nurse_proposed_acuity"] = 5   # gap >= 2 against the mock: goes to the gate
+    case["nurse_proposed_acuity"] = 5  # gap >= 2 against the mock: goes to the gate
     _, pending = start_case(case, thread_id=case["case_id"])
     assert pending, "the fixture must actually suspend, or this proves nothing"
 
@@ -122,8 +124,15 @@ def test_a_notification_names_the_complaint_even_with_no_redacted_payload():
     state = {
         "case_id": "c-1",
         "raw_payload": {"chief_complaint": "ankle pain", "stable_patient_id": "P-1"},
-        "audit_log": [{"case_id": "c-1", "arrow": "16", "action": "notify_user",
-                       "explanation": "request fields", "at": "2026-01-01T00:00:00+00:00"}],
+        "audit_log": [
+            {
+                "case_id": "c-1",
+                "arrow": "16",
+                "action": "notify_user",
+                "explanation": "request fields",
+                "at": "2026-01-01T00:00:00+00:00",
+            }
+        ],
     }
     note = api_module.notifications([state])[0]
     assert note["complaint"] == "ankle pain"
@@ -170,13 +179,15 @@ def test_the_board_issues_writes_only_through_named_exceptions(seeded):
 
 
 def test_move_to_treatment_endpoint_updates_the_card(seeded):
-    resp = client.post(f"/api/case/{seeded[0]}/move-to-treatment",
-                        json={"actor_role": "nurse"})
+    resp = client.post(
+        f"/api/case/{seeded[0]}/move-to-treatment", json={"actor_role": "nurse"}
+    )
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
 
-    card = next(c for c in client.get("/api/board").json()["cards"]
-                if c["case_id"] == seeded[0])
+    card = next(
+        c for c in client.get("/api/board").json()["cards"] if c["case_id"] == seeded[0]
+    )
     assert card["status"] == "treatment_started"
 
 
@@ -186,12 +197,15 @@ def test_release_endpoint_marks_the_card_released(seeded):
     built, board.js `DRAWER_COLUMN`) is what visually separates it from the
     main columns.
     """
-    resp = client.post(f"/api/case/{seeded[0]}/release",
-                        json={"reason": "discharge", "actor_role": "charge_nurse"})
+    resp = client.post(
+        f"/api/case/{seeded[0]}/release",
+        json={"reason": "discharge", "actor_role": "charge_nurse"},
+    )
     assert resp.status_code == 200
 
-    card = next(c for c in client.get("/api/board").json()["cards"]
-                if c["case_id"] == seeded[0])
+    card = next(
+        c for c in client.get("/api/board").json()["cards"] if c["case_id"] == seeded[0]
+    )
     assert card["status"] == "patient_released"
 
     detail = client.get(f"/api/case/{seeded[0]}").json()
@@ -220,38 +234,53 @@ def test_racing_release_requests_each_report_their_own_outcome(seeded):
 
     def call(role, key):
         barrier.wait()
-        resp = client.post(f"/api/case/{seeded[0]}/release",
-                            json={"reason": "discharge", "actor_role": role})
+        resp = client.post(
+            f"/api/case/{seeded[0]}/release",
+            json={"reason": "discharge", "actor_role": role},
+        )
         results[key] = resp.json()
 
     t1 = threading.Thread(target=call, args=("nurse", "nurse"))
     t2 = threading.Thread(target=call, args=("charge_nurse", "charge"))
-    t1.start(); t2.start()
-    t1.join(); t2.join()
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
 
     assert results["nurse"]["status"] == "denied"
     assert results["charge"]["status"] == "ok"
 
 
 def test_release_endpoint_refuses_a_plain_nurse(seeded):
-    resp = client.post(f"/api/case/{seeded[0]}/release",
-                        json={"reason": "discharge", "actor_role": "nurse"})
-    assert resp.status_code == 200   # accepted, but denied inside the graph — see docstring
+    resp = client.post(
+        f"/api/case/{seeded[0]}/release",
+        json={"reason": "discharge", "actor_role": "nurse"},
+    )
+    assert (
+        resp.status_code == 200
+    )  # accepted, but denied inside the graph — see docstring
     assert resp.json()["status"] == "denied"
     assert "nurse" in resp.json()["detail"]
 
-    card = next(c for c in client.get("/api/board").json()["cards"]
-                if c["case_id"] == seeded[0])
-    assert card["status"] == "waiting", "a denied release must not change clinical status"
+    card = next(
+        c for c in client.get("/api/board").json()["cards"] if c["case_id"] == seeded[0]
+    )
+    assert (
+        card["status"] == "waiting"
+    ), "a denied release must not change clinical status"
 
     # And the case must still be retriable — not permanently ended by the denial.
-    retry = client.post(f"/api/case/{seeded[0]}/release",
-                         json={"reason": "discharge", "actor_role": "charge_nurse"})
+    retry = client.post(
+        f"/api/case/{seeded[0]}/release",
+        json={"reason": "discharge", "actor_role": "charge_nurse"},
+    )
     assert retry.json() == {"status": "ok"}
 
 
 def test_move_to_treatment_404s_for_an_unknown_case(checkpoint_db):
-    resp = client.post("/api/case/does-not-exist/move-to-treatment", json={"actor_role": "nurse"})
+    resp = client.post(
+        "/api/case/does-not-exist/move-to-treatment", json={"actor_role": "nurse"}
+    )
     assert resp.status_code == 404
 
 
@@ -264,8 +293,9 @@ def test_move_to_treatment_refuses_a_case_at_the_human_gate(checkpoint_db):
     _, pending = start_case(case, thread_id=case["case_id"])
     assert pending and pending.get("gate")
 
-    resp = client.post(f"/api/case/{case['case_id']}/move-to-treatment",
-                        json={"actor_role": "nurse"})
+    resp = client.post(
+        f"/api/case/{case['case_id']}/move-to-treatment", json={"actor_role": "nurse"}
+    )
     assert resp.status_code == 409
 
 
@@ -290,7 +320,9 @@ def test_deteriorated_endpoint_re_enters_the_graph_while_waiting(checkpoint_db):
     # pause; intake-channel's POST /reassess/{case_id} is what answers it.
     assert detail["view"]["control_state"] == "reassessment_required"
     assert any(
-        rec.get("explanation", "").startswith("reassessment timer fired: DETERIORATION_DETECTED")
+        rec.get("explanation", "").startswith(
+            "reassessment timer fired: DETERIORATION_DETECTED"
+        )
         for rec in detail["view"]["audit_log"]
     )
 
@@ -300,9 +332,9 @@ def test_deteriorated_endpoint_refuses_a_case_sitting_at_the_human_gate(checkpoi
 
     case = dict(DEMO_CASES["clean"])
     case["case_id"] = f"gated-{uuid4().hex[:6]}"
-    case["nurse_proposed_acuity"] = 5   # forces the discrepancy gate, not the queue
+    case["nurse_proposed_acuity"] = 5  # forces the discrepancy gate, not the queue
     _, pending = start_case(case, thread_id=case["case_id"])
-    assert pending and pending.get("gate")   # paused at the human gate, not monitoring
+    assert pending and pending.get("gate")  # paused at the human gate, not monitoring
 
     resp = client.post(
         f"/api/case/{case['case_id']}/deteriorated",
@@ -333,10 +365,16 @@ def test_a_refused_resolution_leaves_the_gate_open_on_the_board(checkpoint_db):
     _, pending = start_case(case, thread_id=case["case_id"])
     assert pending
 
-    resume_case(case["case_id"], {"decision": "use_system_acuity", "resolver_role": "nurse"})
+    resume_case(
+        case["case_id"], {"decision": "use_system_acuity", "resolver_role": "nurse"}
+    )
 
     detail = client.get(f"/api/case/{case['case_id']}").json()
     assert detail["view"]["status"] == "awaiting_human_approval"
     assert any(r["arrow"] == "BLK" for r in detail["view"]["audit_log"])
-    card = next(c for c in client.get("/api/board").json()["cards"] if c["case_id"] == case["case_id"])
+    card = next(
+        c
+        for c in client.get("/api/board").json()["cards"]
+        if c["case_id"] == case["case_id"]
+    )
     assert card["gate_pending"] is True
