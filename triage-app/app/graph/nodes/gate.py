@@ -17,6 +17,11 @@ from app.labels import Arrow
 from app.monitor import timers
 from app.states import AcuitySource, ClinicalStatus, State
 
+# Fields a safety correction may change (I7). Acuity only for now: I3 already
+# lets a charge nurse set it at the gate. Extend once Safety Validation's checks
+# are defined and it is known what else a correction can fix.
+CORRECTABLE_FIELDS = frozenset({"acuity"})
+
 
 def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
     """The human gate. A real pause: the run suspends here until someone
@@ -112,15 +117,34 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
         }
 
     # Safety-fail branch: correct and revalidate. No override path exists.
-    return base | {
+    # A correction must change something the case holds, or the same input
+    # fails the same way (I7); refusing it uses up no round.
+    changes = {k: v for k, v in ((response or {}).get("corrections") or {}).items()
+               if k in CORRECTABLE_FIELDS and v != getattr(state, k)}
+    if "acuity" in changes and not (type(changes["acuity"]) is int and 1 <= changes["acuity"] <= 5):
+        del changes["acuity"]
+    if not changes:
+        why = f"correction required: change at least one of {sorted(CORRECTABLE_FIELDS)}"
+        return base | {"audit_log": [recorded, audit_denial(state.case_id, State.AWAITING_HUMAN_APPROVAL, why)]}
+
+    update: dict[str, Any] = {
         "correction_rounds": state.correction_rounds + 1,
         "safety_passed": False,
         "audit_log": [recorded,
                       audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
                             "apply_correction",
-                            f"correction round {state.correction_rounds + 1}, re-running safety",
+                            f"correction round {state.correction_rounds + 1}: {changes}; re-running safety",
                             Arrow.GATE_SAFETY_CORRECTED)],
     }
+    if "acuity" in changes:
+        new = changes["acuity"]
+        update |= {
+            "acuity": new,
+            "acuity_source": AcuitySource.HUMAN_CONFIRMED.value,
+            "acuity_bucket": bucket_for(new).value,
+            "order_key": assign_order_key(new, state.arrival_time),   # a real acuity change (I2)
+        }
+    return base | update
 
 
 def escalate_to_senior(state: TriageState) -> dict[str, Any]:

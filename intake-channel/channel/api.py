@@ -74,6 +74,8 @@ class ResumeRequest(BaseModel):
 
     decision: str
     resolver_role: str  # required: a missing role must not default to charge nurse (I14)
+    # For a safety failure: the corrected values (I7), e.g. {"acuity": 2}.
+    corrections: dict[str, Any] | None = None
 
 
 @app.get("/")

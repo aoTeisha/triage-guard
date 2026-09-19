@@ -128,9 +128,12 @@ def _failing_safety(monkeypatch):
                         lambda case: SafetyVerdict(verdict="fail", reasons=["unsafe"]))
 
 
-def _answer(graph, thread, decision, role):
+def _answer(graph, thread, decision, role, corrections=None):
     cfg = {"configurable": {"thread_id": thread}}
-    graph.invoke(Command(resume={"decision": decision, "resolver_role": role}), cfg)
+    answer = {"decision": decision, "resolver_role": role}
+    if corrections is not None:
+        answer["corrections"] = corrections
+    graph.invoke(Command(resume=answer), cfg)
     return graph.get_state(cfg)
 
 
@@ -141,20 +144,20 @@ def test_an_exhausted_correction_loop_waits_for_a_shift_lead(graph, run, monkeyp
     _, pending, thread = run(DEMO_CASES["clean"])
     assert pending["gate"] == "safety_fail"
 
-    for _ in range(6):
-        snap = _answer(graph, thread, "corrected", "charge_nurse")
+    for i in range(6):   # alternate 1 and 2 so every round is a real change (I7)
+        snap = _answer(graph, thread, "corrected", "charge_nurse", {"acuity": 1 + i % 2})
         if snap.values.get("senior_required"):
             break
 
     assert snap.values["senior_required"] is True
     assert snap.next == (State.AWAITING_HUMAN_APPROVAL.value,)  # still open, not ended
 
-    refused = _answer(graph, thread, "corrected", "charge_nurse")
+    refused = _answer(graph, thread, "corrected", "charge_nurse", {"acuity": 4})
     assert "BLK" in arrows(hydrate(refused.values))
     assert refused.next == (State.AWAITING_HUMAN_APPROVAL.value,)
 
     monkeypatch.undo()  # the shift lead's correction now passes safety
-    done = _answer(graph, thread, "corrected", "shift_lead")
+    done = _answer(graph, thread, "corrected", "shift_lead", {"acuity": 4})
     assert done.next == ("awaiting_reassessment",)  # queued
 
 
@@ -190,3 +193,43 @@ def test_the_senior_reminder_goes_to_a_shift_lead(graph, run, monkeypatch, conn)
     assert conn.execute(
         "SELECT recipient_class FROM notifications WHERE case_id=%s", (thread,)
     ).fetchone() == ("any_shift_lead",)
+
+
+# ---- I7: a correction must change something ------------------------------------
+
+
+@pytest.mark.parametrize("corrections", [None, {}, {"acuity": 3}, {"acuity": 9}, {"acuity": True}],
+                         ids=["none", "empty", "same-acuity", "out-of-range", "not-an-int"])
+def test_a_correction_that_changes_nothing_is_refused(graph, run, monkeypatch, corrections):
+    """The clean case settles at ESI 3, so 3 is no change. A refusal keeps the
+    case at the gate and uses up no correction round.
+    """
+    from app.mock_cases import DEMO_CASES
+
+    _failing_safety(monkeypatch)
+    _, _, thread = run(DEMO_CASES["clean"])
+
+    snap = _answer(graph, thread, "corrected", "charge_nurse", corrections)
+
+    result = hydrate(snap.values)
+    assert snap.next == (State.AWAITING_HUMAN_APPROVAL.value,)
+    assert arrows(result)[-1] == "BLK"
+    assert result["correction_rounds"] == 0
+    assert result["acuity"] == 3
+
+
+def test_a_real_correction_is_applied_and_revalidated(graph, run, monkeypatch):
+    from app.mock_cases import DEMO_CASES
+
+    _failing_safety(monkeypatch)
+    _, _, thread = run(DEMO_CASES["clean"])
+    monkeypatch.undo()   # the corrected case passes safety
+
+    snap = _answer(graph, thread, "corrected", "charge_nurse", {"acuity": 2})
+
+    result = hydrate(snap.values)
+    assert result["acuity"] == 2
+    assert result["order_key"][0] == 2          # re-keyed by the real acuity change (I2)
+    assert result["correction_rounds"] == 1
+    assert "1b.z·safety" in arrows(result)
+    assert snap.next == ("awaiting_reassessment",)  # revalidated and queued
