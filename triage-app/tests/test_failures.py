@@ -133,3 +133,25 @@ def test_a_degraded_case_carries_no_history_into_the_payload(run):
     assert "history" not in state["redacted_payload"]
 
 
+
+
+def test_a_halted_case_waits_for_recovery_then_resumes_at_redaction(graph, run, monkeypatch):
+    """I10: agent_failed no longer ends the run. AGENT_RECOVERED re-runs the
+    stage that halted; with the fault fixed, the case continues.
+    """
+    from langgraph.types import Command
+
+    from app.runner import config_for, hydrate
+
+    real_drop = normalizer.drop_identifiers
+    monkeypatch.setattr(normalizer, "drop_identifiers", lambda fields: dict(fields))
+    _, pending, thread = run(DEMO_CASES["clean"])
+    assert pending["recovery_pending"] is True
+
+    monkeypatch.setattr(normalizer, "drop_identifiers", real_drop)  # the technician's fix
+    result = hydrate(graph.invoke(Command(resume={"event": "AGENT_RECOVERED"}),
+                                  config_for(thread)))
+
+    assert "AF·recover" in arrows(result)
+    assert result["redacted_payload"]
+    assert graph.get_state(config_for(thread)).next == ("awaiting_reassessment",)

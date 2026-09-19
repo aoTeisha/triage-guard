@@ -1,10 +1,13 @@
-"""intake_received, parsing, and the three non-happy intake terminals
-(arrows 1a, 2, 3, 16, 17, 18) plus the data_parsed pass-through (arrow 4).
+"""intake_received, parsing, the three non-happy intake outcomes (arrows 1a,
+2, 3, 16, 17, 18), the pause that completes an incomplete intake (1b.x,
+1a·resubmit), and the data_parsed pass-through (arrow 4).
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from langgraph.types import interrupt
 
 from app.actors import intake
 from app.deterministic import assign_order_key, audit, now_iso
@@ -83,6 +86,21 @@ def submission_failed(state: TriageState) -> dict[str, Any]:
         "control_state": State.SUBMISSION_FAILED.value,
         "audit_log": [audit(state.case_id, State.SUBMISSION_FAILED, "notify_user",
                             "resubmit or manual", Arrow.SUBMISSION_UNUSABLE)],
+    }
+
+
+def awaiting_intake_fix(state: TriageState) -> dict[str, Any]:
+    """Pause until the nurse supplies what intake lacked (arrows 1b.x and
+    1a·resubmit), then re-parse the same case. Continuing the same case keeps
+    its arrival time, so the patient keeps their place in line (I2, I10).
+    """
+    submitted = interrupt({"case_id": state.case_id, "intake_fix_pending": True,
+                           "missing_fields": state.missing_fields})
+    return {
+        "raw_payload": {**state.raw_payload, **submitted},
+        "audit_log": [audit(state.case_id, state.control_state, "fields_submitted",
+                            "nurse supplied the missing intake fields",
+                            Arrow.FIELDS_RESUBMITTED)],
     }
 
 

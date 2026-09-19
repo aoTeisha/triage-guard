@@ -154,3 +154,8 @@ def route_wait_resume(state: TriageState) -> Route:
     if state.clinical_status == ClinicalStatus.TREATMENT_STARTED.value:
         return Route.MOVED
     return Route.PROCEED
+
+
+def route_after_recovery(state: TriageState) -> State:
+    """arrow AF·recover: re-enter at the stage that halted."""
+    return state.failed_stage

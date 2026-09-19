@@ -100,3 +100,25 @@ def test_every_audit_record_carries_case_and_state(run):
         assert row["case_id"] == "case-0001"
         assert row["control_state"]
         assert row["at"]
+
+
+def test_missing_fields_pause_and_the_same_case_continues(graph, run):
+    """I10 + I2: the case waits for the fields instead of ending, then continues
+    as the same case with its original arrival time.
+    """
+    from langgraph.types import Command
+
+    from app.runner import config_for, hydrate
+
+    first, pending, thread = run(DEMO_CASES["missing"])
+    assert pending["intake_fix_pending"] is True
+
+    result = hydrate(graph.invoke(
+        Command(resume={"nurse_proposed_acuity": 3,
+                        "vitals": {"hr": 90, "bp": "120/80", "spo2": 98, "temp_c": 36.8}}),
+        config_for(thread),
+    ))
+
+    assert result["arrival_time"] == first["arrival_time"]
+    assert "1b.x" in arrows(result)
+    assert graph.get_state(config_for(thread)).next == ("awaiting_reassessment",)  # queued

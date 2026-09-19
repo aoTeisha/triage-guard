@@ -21,6 +21,7 @@ from app.graph.nodes.classify import acuity_proposed, classifier_fallback, class
 from app.graph.nodes.gate import awaiting_human_approval
 from app.graph.nodes.identity import crm_fallback, resolving_identity
 from app.graph.nodes.intake import (
+    awaiting_intake_fix,
     data_parsed,
     input_rejected,
     intake_received,
@@ -31,7 +32,7 @@ from app.graph.nodes.intake import (
 from app.graph.nodes.reassessment import awaiting_reassessment_submission, reassessment_required
 from app.graph.nodes.redaction import redacting_routing
 from app.graph.nodes.safety import safety_fallback, safety_validating, verdict_proposed
-from app.graph.nodes.terminal import agent_failed, awaiting_reassessment, monitoring
+from app.graph.nodes.terminal import agent_failed, awaiting_reassessment, awaiting_recovery, monitoring
 
 __all__ = [
     "audit",
@@ -56,4 +57,6 @@ __all__ = [
     "reassessment_required",
     "awaiting_reassessment_submission",
     "agent_failed",
+    "awaiting_intake_fix",
+    "awaiting_recovery",
 ]

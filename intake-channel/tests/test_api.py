@@ -367,3 +367,31 @@ def test_a_gate_answer_without_a_role_is_rejected():
     response = client.post("/resume/any-case", json={"decision": "use_system_acuity"})
 
     assert response.status_code == 422
+
+
+@respx.mock
+def test_missing_fields_can_be_completed_through_the_api():
+    """I10: /fields continues the same case, which then reaches the queue."""
+    _crm()
+    paused = _submit("missing")
+    assert paused["status"] == "awaiting_intake_fix"
+
+    done = client.post(
+        f"/fields/{paused['case_id']}",
+        json={"nurse_proposed_acuity": 3,
+              "vitals": {"hr": 90, "bp": "120/80", "spo2": 98, "temp_c": 36.8}},
+    ).json()
+
+    assert done["case_id"] == paused["case_id"]
+    assert done["status"] == "settled"
+
+
+@respx.mock
+def test_each_pause_accepts_only_its_own_answer():
+    """/fields and /recover refuse a case paused somewhere else."""
+    _crm()
+    at_gate = _submit("gap")
+
+    assert client.post(f"/fields/{at_gate['case_id']}", json={}).status_code == 409
+    assert client.post(f"/recover/{at_gate['case_id']}").status_code == 409
+    assert client.post("/recover/no-such-case").status_code == 404

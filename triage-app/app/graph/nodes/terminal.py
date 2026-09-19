@@ -2,7 +2,8 @@
 
 `monitoring` and its follow-up `awaiting_reassessment` are the waiting-room
 pause: a case sits here until a reassessment timer fires or a nurse reports
-a change. `agent_failed` is the terminal state that ends the run outright.
+a change. `agent_failed` halts a case; `awaiting_recovery` holds it until the
+technician reports AGENT_RECOVERED.
 """
 
 from __future__ import annotations
@@ -142,12 +143,26 @@ def awaiting_reassessment(state: TriageState) -> dict[str, Any]:
 
 
 def agent_failed(state: TriageState) -> dict[str, Any]:
-    """Halts the run. The only way out is an AGENT_RECOVERED event, which
-    re-enters the graph at whichever stage originally failed.
+    """Halts the case and alerts the technician. `awaiting_recovery` then
+    holds it until AGENT_RECOVERED, instead of ending the run (I10).
     """
     return {
         "control_state": State.AGENT_FAILED.value,
         "audit_log": [audit(state.case_id, State.AGENT_FAILED, "alert_technician",
                             f"halted at {state.failed_stage or 'unknown stage'}; "
                             "awaiting AGENT_RECOVERED", Arrow.AF_RECOVER)],
+    }
+
+
+def awaiting_recovery(state: TriageState) -> dict[str, Any]:
+    """Wait for the technician's AGENT_RECOVERED, then re-enter at the stage
+    that failed (arrow AF·recover). A case that is still broken there halts
+    again; a critical step gets no retries.
+    """
+    interrupt({"case_id": state.case_id, "recovery_pending": True,
+               "halted_at": state.failed_stage})
+    return {
+        "audit_log": [audit(state.case_id, State.AGENT_FAILED, "resume_at_failed_stage",
+                            f"recovered; resuming at {state.failed_stage}",
+                            Arrow.AF_RECOVER)],
     }

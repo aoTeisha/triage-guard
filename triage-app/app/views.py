@@ -35,11 +35,30 @@ PATIENT_LABELS = {
 }
 
 
+# Each pause's interrupt payload carries one marker key. A triaged case waiting
+# in the queue counts as settled: intake's work on it is done.
+_PAUSE_STATUS = {
+    "gate": "awaiting_human_approval",
+    "reassessment_pending": "awaiting_reassessment",
+    "intake_fix_pending": "awaiting_intake_fix",
+    "recovery_pending": "awaiting_recovery",
+    "waiting_room": "settled",
+}
+
+
+def pause_status(pending: dict[str, Any] | None) -> str:
+    """Name the pause a case is in, instead of calling every pause a gate."""
+    for marker, status in _PAUSE_STATUS.items():
+        if (pending or {}).get(marker):
+            return status
+    return "settled"
+
+
 def case_view(state: dict[str, Any], pending: dict[str, Any] | None) -> dict[str, Any]:
     """What the browser needs: the outcome, the gate if any, and the trail."""
     return {
         "case_id": state.get("case_id"),
-        "status": "awaiting_human_approval" if pending else "settled",
+        "status": pause_status(pending),
         "control_state": state.get("control_state"),
         "outcome": state.get("intake_outcome"),
         "missing_fields": state.get("missing_fields", []),

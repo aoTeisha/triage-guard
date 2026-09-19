@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -180,6 +182,35 @@ def reassess(case_id: str, body: ReassessmentSubmission):
         raise HTTPException(status_code=409, detail="case is not awaiting a reassessment re-file")
 
     return _answer_pause(case_id, body.model_dump())
+
+
+def _require_pause(case_id: str, node: str) -> None:
+    """404 for an unknown case; 409 unless the case is paused at `node`. Each
+    pause accepts only its own kind of answer.
+    """
+    state_snapshot = runner.graph().get_state(config_for(case_id))
+    if not state_snapshot.values:
+        raise HTTPException(status_code=404, detail=f"no case {case_id}")
+    if node not in [getattr(n, "value", n) for n in state_snapshot.next]:
+        raise HTTPException(status_code=409, detail=f"case is not paused at {node}")
+
+
+@app.post("/fields/{case_id}")
+def fields(case_id: str, body: dict[str, Any]):
+    """Completes an incomplete intake (arrows 1b.x / 1a·resubmit). The same
+    case continues, so the patient keeps their arrival time (I2, I10).
+    """
+    _require_pause(case_id, "awaiting_intake_fix")
+    return _answer_pause(case_id, body)
+
+
+@app.post("/recover/{case_id}")
+def recover(case_id: str):
+    """The technician reports AGENT_RECOVERED; the case re-enters at the
+    stage that halted (arrow AF·recover).
+    """
+    _require_pause(case_id, "awaiting_recovery")
+    return _answer_pause(case_id, {"event": "AGENT_RECOVERED"})
 
 
 @app.get("/case/{case_id}")

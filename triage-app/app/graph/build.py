@@ -169,6 +169,8 @@ def build_graph(checkpointer=None):
     b.add_node(State.REASSESSMENT_REQUIRED, nodes.reassessment_required)
     b.add_node("awaiting_reassessment_submission", nodes.awaiting_reassessment_submission)
     b.add_node(State.AGENT_FAILED, nodes.agent_failed)
+    b.add_node("awaiting_intake_fix", nodes.awaiting_intake_fix)
+    b.add_node("awaiting_recovery", nodes.awaiting_recovery)
     # Degrade handlers, as separate nodes rather than branches folded inside
     # their step, so a crash-triggered fallback shows up as its own box in
     # the rendered graph instead of being buried inside an if-statement.
@@ -191,12 +193,11 @@ def build_graph(checkpointer=None):
         },
     )
 
-    # The three non-happy outcomes (missing fields, unusable submission,
-    # invalid input) all end this run here. Whatever happens next — the
-    # patient resubmitting, fixing missing fields, etc. — is a brand new
-    # call into this graph, not an edge inside the current run.
-    b.add_edge(State.MISSING_FIELDS_REQUESTED, END)
-    b.add_edge(State.SUBMISSION_FAILED, END)
+    # Missing fields and an unusable submission pause for the nurse and
+    # continue the same case (I10). Rejected input is not a patient, so it ends.
+    b.add_edge(State.MISSING_FIELDS_REQUESTED, "awaiting_intake_fix")
+    b.add_edge(State.SUBMISSION_FAILED, "awaiting_intake_fix")
+    b.add_edge("awaiting_intake_fix", State.PARSING)
     b.add_edge(State.INPUT_REJECTED, END)
 
     # ---- once data is parsed, look up the patient's identity in the CRM --------
@@ -313,6 +314,11 @@ def build_graph(checkpointer=None):
     b.add_edge("awaiting_reassessment_submission", State.PARSING)
 
     # ---- terminals --------------------------------------------------------------
-    b.add_edge(State.AGENT_FAILED, END)
+    b.add_edge(State.AGENT_FAILED, "awaiting_recovery")
+    b.add_conditional_edges(
+        "awaiting_recovery",
+        routers.route_after_recovery,
+        {State.REDACTING_ROUTING: State.REDACTING_ROUTING},  # the only stage that halts today
+    )
 
     return b.compile(checkpointer=checkpointer)
