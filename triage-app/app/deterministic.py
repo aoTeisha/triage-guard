@@ -30,7 +30,12 @@ def assign_order_key(acuity: int, arrival_time: str) -> tuple[int, str]:
 
     Lower ESI sorts first, so a more acute patient is always ahead;
     arrival_time breaks ties. Re-keyed whenever acuity changes, never by the timer.
+
+    Refuses a missing arrival time: substituting "now" would silently send the
+    patient to the back of their level (I2).
     """
+    if not arrival_time:
+        raise ValueError("order_key needs the arrival time stamped at intake")
     return (acuity, arrival_time)
 
 
@@ -44,16 +49,16 @@ def compute_acuity_gap(nurse: int, system: int) -> int:
 def resolve_acuity(
     nurse: int, system: int
 ) -> tuple[int | None, AcuitySource | None, Arrow]:
-    """Return (final_acuity, acuity_source, arrow) per the Z3-proven bands.
+    """Return (final_acuity, acuity_source, arrow) per the gap bands (I4).
 
         gap 0   -> agree, keep it              (9a, human_confirmed)
         gap 1   -> take the NURSE's value      (9b, auto_resolved)
         gap >=2 -> charge nurse decides        (9c, unresolved)
 
-    The bands are total and exclusive (Z3, band totality), so exactly one arm fires
-    for every gap >= 0. The 9c arm returns None rather than a sentinel number: there
-    is no final acuity yet, and a placeholder integer here would be indistinguishable
-    from a real ESI level downstream.
+    The bands must be total and exclusive, so exactly one arm fires for every
+    gap >= 0 (I4; to be proven with Z3). The 9c arm returns None rather than a
+    sentinel number: there is no final acuity yet, and a placeholder integer here
+    would be indistinguishable from a real ESI level downstream.
     """
     gap = compute_acuity_gap(nurse, system)
     if gap == 0:

@@ -360,3 +360,10 @@ def test_resume_endpoint_refuses_a_case_parked_at_the_refile_pause():
 
     fetched = client.get(f"/case/{case['case_id']}").json()
     assert fetched["control_state"] == "reassessment_required"
+
+
+def test_a_gate_answer_without_a_role_is_rejected():
+    """I14: no role must never default to charge nurse."""
+    response = client.post("/resume/any-case", json={"decision": "use_system_acuity"})
+
+    assert response.status_code == 422

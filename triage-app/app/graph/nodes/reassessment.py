@@ -76,6 +76,17 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
     return {
         "control_state": State.REASSESSMENT_REQUIRED.value,
         "raw_payload": fresh_payload,
+        # A re-file starts a new triage. Values from the last one must not count:
+        # a stale `acuity` skipped the gate on a big gap, and a stale `approved`
+        # would let a move through (I4, I5). `order_key` is kept on purpose (I2).
+        "acuity": None,
+        "acuity_source": None,
+        "human_decision": None,
+        "escalation_reason": None,
+        "safety_verdict": None,
+        "safety_passed": False,
+        "approved": False,
+        "correction_rounds": 0,
         "audit_log": [
             audit(state.case_id, State.REASSESSMENT_REQUIRED, "emit_event_log",
                   "nurse re-filed with fresh observations", Arrow.FRONT_DOOR_RERUN),

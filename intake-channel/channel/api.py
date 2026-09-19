@@ -70,7 +70,7 @@ class ResumeRequest(BaseModel):
     """
 
     decision: str
-    resolver_role: str = "charge_nurse"
+    resolver_role: str  # required: a missing role must not default to charge nurse (I14)
 
 
 @app.get("/")

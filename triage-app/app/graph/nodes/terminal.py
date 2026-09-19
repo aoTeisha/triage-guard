@@ -31,8 +31,10 @@ def monitoring(state: TriageState) -> dict[str, Any]:
     `awaiting_reassessment` doesn't finish until it's resumed — potentially
     much later.
     """
-    band = state.acuity or 5
-    due_at = timers.due_in(REASSESSMENT_INTERVAL_MINUTES.get(band, REASSESSMENT_INTERVAL_MINUTES[5]))
+    # A queued case with no acuity is broken; re-look now rather than on the
+    # least urgent interval (I16).
+    minutes = REASSESSMENT_INTERVAL_MINUTES[state.acuity] if state.acuity else 0
+    due_at = timers.due_in(minutes)
     timers.schedule(timers.connection(), case_id=state.case_id, kind="reassessment",
                      cycle=state.reassessment_cycle, due_at=due_at)
 

@@ -10,7 +10,7 @@ from typing import Any
 
 from app.actors import human_bridge
 from app.budgets import GATE_REMINDER_DELAY_MINUTES
-from app.deterministic import actor_is_charge, assign_order_key, audit, audit_denial, bucket_for, now_iso
+from app.deterministic import actor_is_charge, assign_order_key, audit, audit_denial, bucket_for
 from app.graph.state import TriageState
 from app.labels import Arrow
 from app.monitor import timers
@@ -75,7 +75,7 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
             state.nurse_proposed_acuity if decision == "use_nurse_acuity"
             else state.system_proposed_acuity
         )
-        arrival = state.arrival_time or now_iso()
+        arrival = state.arrival_time
         return base | {
             "acuity": chosen,
             "acuity_source": AcuitySource.HUMAN_CONFIRMED.value,

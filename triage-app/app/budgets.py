@@ -152,3 +152,11 @@ HEARTBEAT_STALE_MULTIPLIER: int = 3
 # budget exhausted" event, so it's never a silent drop.
 NOTIFICATION_BUDGET_PER_WINDOW: int = 5
 NOTIFICATION_WINDOW_MINUTES: int = 60
+
+# Minutes a case can wait before its board card turns red, by display bucket.
+# Placeholders until real wait-time data exists to set them from. Lives here so
+# every waiting-time threshold (I15) is in one table.
+BOARD_RED_AFTER_MINUTES: dict[str, int] = {
+    "emergent": 15,
+    "queued": 60,
+}

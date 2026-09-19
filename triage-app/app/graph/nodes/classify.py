@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.actors import acuity_classifier, human_bridge
-from app.deterministic import assign_order_key, audit, bucket_for, compute_acuity_gap, now_iso, resolve_acuity
+from app.deterministic import assign_order_key, audit, bucket_for, compute_acuity_gap, resolve_acuity
 from app.graph.nodes._shared import _bump
 from app.graph.state import TriageState
 from app.labels import Arrow
@@ -53,7 +53,7 @@ def classifier_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
     for the outage, and flag the case for later review.
     """
     nurse = state.nurse_proposed_acuity
-    arrival = state.arrival_time or now_iso()
+    arrival = state.arrival_time
     update: dict[str, Any] = {
         "control_state": State.CLASSIFYING.value,
         "system_proposed_acuity": None,
@@ -76,10 +76,10 @@ def classifier_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
 
 
 def acuity_proposed(state: TriageState) -> dict[str, Any]:
-    """Deterministic gap resolution over the Z3-proven bands."""
+    """Deterministic gap resolution over the gap bands (I4)."""
     nurse = state.nurse_proposed_acuity
     system = state.system_proposed_acuity
-    arrival = state.arrival_time or now_iso()
+    arrival = state.arrival_time
 
     gap = compute_acuity_gap(nurse, system)
     final, source, arrow = resolve_acuity(nurse, system)

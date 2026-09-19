@@ -147,3 +147,37 @@ def test_the_reminder_is_cancelled_once_the_nurse_has_refiled(conn, graph, run):
         ).fetchone()[0]
         == 0
     )
+
+
+def test_a_queued_case_with_no_acuity_is_reassessed_now_not_last(monkeypatch):
+    """I16: a missing acuity fails safe (0 minutes), not as ESI 5 (120)."""
+    from app.graph import TriageState
+    from app.graph.nodes import terminal
+
+    asked = []
+    real_due_in = terminal.timers.due_in
+    monkeypatch.setattr(terminal.timers, "due_in",
+                        lambda minutes: asked.append(minutes) or real_due_in(minutes))
+
+    terminal.monitoring(TriageState(case_id="c-no-acuity", acuity=None))
+
+    assert asked == [0]
+
+
+def test_a_refile_starts_a_new_triage_with_no_old_approval(graph, run):
+    """I5: approval counts only for the current triage. The first triage
+    approved the case; a re-file that lands at the gate must not inherit it.
+    """
+    case = DEMO_CASES["clean"]
+    _, _, thread = run(case)
+    _fire_the_timer(graph, thread)
+
+    refile_to_gate = {**REFILE, "nurse_proposed_acuity": 4}  # gap 2 vs the mock's 2
+    graph.invoke(Command(resume=refile_to_gate), config_for(thread))
+
+    snapshot = graph.get_state(config_for(thread))
+    result = hydrate(snapshot.values)
+    assert snapshot.next == (State.AWAITING_HUMAN_APPROVAL.value,)  # paused at the gate
+    assert result["approved"] is False
+    assert result["safety_passed"] is False
+    assert result["acuity"] is None  # the old triage's acuity must not skip the gate

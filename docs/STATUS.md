@@ -46,9 +46,10 @@ Those five:
 is now implemented, not just agreed: durable per-case timers, the sweeper that fires
 them, and the failure/reconciliation model it was designed around
 (`triage-app/app/monitor/`). It runs as its own process (`uv run sweeper`), separate
-from any one `triage-guard` run or the other services — nothing starts it
-automatically, so a case that reaches `monitoring` and never gets a sweeper running
-alongside it will schedule a reassessment timer that never fires.
+from any one `triage-guard` run or the other services. The VS Code "All services"
+launch starts it (`.vscode/launch.json`); run separately, a case that reaches
+`monitoring` with no sweeper running schedules a reassessment timer that never fires.
+A dead sweeper shows as "monitor degraded" on the board (heartbeat, `board/api.py`).
 
 - [x] **Reassessment now genuinely waits for the nurse.** Was: a fired reassessment
       timer replayed the same stale `raw_payload` straight through parsing, so nobody

@@ -43,7 +43,7 @@ def test_each_intake_outcome_routes_to_its_own_branch(outcome):
     assert routers.route_intake(s(intake_outcome=outcome)) == Event(outcome)
 
 
-# ---- acuity bands (9a / 9b / 9c), Z3 band totality --------------------------
+# ---- acuity bands (9a / 9b / 9c), I4 -----------------------------------------
 
 
 @pytest.mark.parametrize("nurse,system", [(1, 1), (3, 3), (5, 5)])
@@ -77,11 +77,12 @@ def test_gap_two_or_more_settles_nothing(nurse, system):
     assert arrow.value == "9c"
 
 
-def test_the_bands_are_total():
-    """Exactly one arm fires for every reachable pair."""
-    for nurse in range(1, 6):
-        for system in range(1, 6):
-            assert resolve_acuity(nurse, system)[2].value in {"9a", "9b", "9c"}
+@pytest.mark.parametrize("gap,band", [(0, "9a"), (1, "9b"), (2, "9c"), (3, "9c"), (4, "9c")])
+def test_each_gap_lands_in_its_band(gap, band):
+    """I4: checks the right band per gap. The old version only checked that some
+    band was returned, which every code path does, so it could not fail.
+    """
+    assert resolve_acuity(1, 1 + gap)[2].value == band
 
 
 def test_a_case_with_no_system_acuity_escalates_rather_than_guessing():

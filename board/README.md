@@ -109,5 +109,5 @@ runs on one box; SSE is a later swap behind the same payload.
   server-side. Fine to ~100 cases. Past that, write a `board_cards` projection row
   at the end of `start_case`/`resume_case` and implement `BoardRepo` over it —
   that is why the Protocol exists.
-- `RED_AFTER_MIN` in `api.py` is a placeholder: no wait-time threshold is defined
+- `BOARD_RED_AFTER_MINUTES` in `triage-app/app/budgets.py` is a placeholder: no wait-time threshold is defined
   anywhere in the spec yet.

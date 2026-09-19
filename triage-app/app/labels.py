@@ -57,7 +57,7 @@ class Arrow(str, Enum):
     RUN_CLASSIFIER = "7"
     ACUITY_PROPOSED = "8"
 
-    # ---- acuity gate (Z3 band totality) -------------------------------------
+    # ---- acuity gate (gap bands, I4) -----------------------------------------
     ACUITY_AGREE = "9a"
     ACUITY_GAP_MINOR = "9b"
     ACUITY_GAP_MAJOR = "9c"

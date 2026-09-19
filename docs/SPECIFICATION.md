@@ -20,7 +20,7 @@
 - [Conventions & scope](#conventions--scope)
 - [Document intake & demo data](#document-intake--demo-data)
 - [Identity resolution & patient data](#identity-resolution--patient-data)
-- [Local CRM stub (SQLite)](#local-crm-stub-sqlite)
+- [Local CRM stub (Postgres)](#local-crm-stub-postgres)
 - [Actors / Agents](#actors--agents)
 - [States](#states)
 - [Events](#events)
@@ -140,27 +140,27 @@ The Intake Parser validates the submitted webform and produces one of four possi
 **Write-back.** This visit's new clinical data is persisted to the CRM (`patch_patient_data`, by `stable_patient_id`) so the record stays current; when the DB was unreachable, the write-back is deferred and reconciled once it returns (I17). Not yet implemented: `patch_patient` exists but is never called.
 
 > **Implementation note.** There is no external CRM in this project. The CRM is a **local
-> SQLite database** with mock patient records, behind the same contract the rest of the
+> Postgres database** with mock patient records, behind the same contract the rest of the
 > system uses (`fetch_patient_data`, `patch_patient_data`, with `found` / `not-found` /
 > `db-error` outcomes). Because the contract is identical, the local stub can later be
 > swapped for a real CRM without changing the architecture. Schema and interface are in
-> **[Local CRM stub (SQLite)](#local-crm-stub-sqlite)**.
+> **[Local CRM stub (Postgres)](#local-crm-stub-postgres)**.
 
 ---
 
-## Local CRM stub (SQLite)
+## Local CRM stub (Postgres)
 
 _The CRM is the one external dependency the system reads patient history from. In this
-project it is not a real external system - it is a local SQLite database with mock records,
+project it is not a real external system - it is a local Postgres database (`crm`, on the shared server in `db/docker-compose.yml`) with mock records,
 implemented behind the exact contract described above so it can be replaced by a real CRM
 without touching the rest of the architecture. This section defines that stub's schema,
 interface, and failure behavior._
 
-**Why SQLite (not an in-memory mock).** A local SQLite file gives real persistence
+**Why a real database (not an in-memory mock).** It gives real persistence
 (write-backs survive restarts), a real query surface, and a way to simulate a `db-error`
-(close or lock the connection) so the CRM's fail-open path can be exercised, not just
-described - none of which a plain in-memory dict provides. It needs no server and no
-container, and ships as a single file in the repo.
+so the CRM's fail-open path can be exercised, not just described - none of which a
+plain in-memory dict provides. It shares the Postgres server that also holds the
+triage checkpoints and timers (moved from SQLite on 2026-09-18).
 
 ### Schema
 
@@ -229,7 +229,7 @@ This section lists all participants in a case: each proposing agent, the humans,
 | Output Verification Agent                         | Validator (deterministic)                         | agent output + expected schema + prior state   | `VERIFICATION_PASSED` / `VERIFICATION_FAILED` + violation list                                            | Schema validation + Datalog + OPA          |
 | Channel Router                                    | Ingress                                           | raw input                                      | route website submission                                                                                  |                                            |
 | Input Normalizer + PII filter                     | Pre-processor                                     | routed input                                   | model-facing payload (identifiers excluded)                                                               | Schema-drop (identifiers)                  |
-| CRM / Patient DB                                  | Data store (local SQLite stub)                    | stable patient ID                              | patient record (history)                                                                                  | CRM (non-critical, fail-open)              |
+| CRM / Patient DB                                  | Data store (local Postgres stub)                  | stable patient ID                              | patient record (history)                                                                                  | CRM (non-critical, fail-open)              |
 | Triage Nurse / Charge Nurse                       | Human                                             | board + detail panel                           | status changes, approvals, acuity, missing fields, release sign-off                                       |                                            |
 | Technician                                        | Human (ops)                                       | agent-failure alerts                           | fixes / acknowledges                                                                                      |                                            |
 
@@ -295,6 +295,8 @@ This section shows what the nurse actually sees: the kanban column for each pati
 >
 > **Manual-edit rule:** nurses manually set status only for `treatment_started` (from `waiting`) and for release (any state, with reason). All other statuses are system-set.
 
+> **Future design, not a current requirement.** This describes an external ward system that this project will never have (decided 2026-09-19; the single-execution-writer invariant was dropped for the same reason). Today a move into treatment is a board column change, guarded by I5 and I6.
+>
 > **Execution vs. status (treatment move).** The World-plane status above is the board
 > column. When the move into `treatment_started` is _executed_ through a downstream system
 > (not a pure manual column change), that execution is an irreversible side effect with its
@@ -408,6 +410,8 @@ These actions are the side effects a transition can trigger.
 | `resume_at_failed_stage(agent)`          | Flow step                   | yes                    | yes                                  |                                        | on `AGENT_RECOVERED`, re-enter the pipeline at the stage that failed                                                                                              |
 | `execute_treatment_move`                 | Flow step, Tool Gateway     | yes (**irreversible**) | yes (dedupe by `idempotency_key`)    | ActionRequest -> ToolReceipt / timeout | the one irreversible external action; the Gateway is the single execution point. See execution contract below.                                                    |
 
+> **Future design, not a current requirement.** This describes an external ward system that this project will never have (decided 2026-09-19; the single-execution-writer invariant was dropped for the same reason). Today a move into treatment is a board column change, guarded by I5 and I6.
+>
 > **Execution contract (treatment move).** `move_authorized` decides _that_ the move is
 > allowed; this defines _what_ is sent to the executor and _what makes a retry safe_. The
 > outgoing request is

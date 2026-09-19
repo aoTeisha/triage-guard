@@ -314,6 +314,8 @@ never arrive - the origin of the UNKNOWN problem modeled next.
 
 ## 4. Execution State Machine
 
+> **Future design, not a current requirement.** This describes an external ward system that this project will never have (decided 2026-09-19; the single-execution-writer invariant was dropped for the same reason). Today a move into treatment is a board column change, guarded by I5 and I6.
+
 _This section models the **treatment-move execution**, the only irreversible
 side effect in the system. The aim is to make the UNKNOWN explicit. A timeout is not a
 failure, and treating it as one would let a blind retry start treatment twice. The
@@ -412,6 +414,8 @@ Gateway can recognize it as the same action and refuse to start treatment twice.
 ---
 
 ## 5. Interface Contract & Failure Handling
+
+> **Future design, not a current requirement.** This describes an external ward system that this project will never have (decided 2026-09-19; the single-execution-writer invariant was dropped for the same reason). Today a move into treatment is a board column change, guarded by I5 and I6.
 
 _This section defines what may cross the interface for the irreversible treatment-move,
 and what the system does when it cannot tell whether the move happened. The contract and

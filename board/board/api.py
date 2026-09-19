@@ -57,6 +57,7 @@ from app.labels import Arrow
 from app.monitor import timers
 from app.monitor.sweeper import SWEEP_INTERVAL_SECONDS
 from app.runner import config_for, history
+from app.budgets import BOARD_RED_AFTER_MINUTES
 from app.states import AcuityBucket, ClinicalStatus, State
 from app.views import BOARD_COLUMNS, CaseCard, card_from_state, case_view
 
@@ -67,12 +68,6 @@ load_dotenv()
 
 STATIC_DIR = Path(__file__).with_name("static")
 
-# Minutes a case can wait before its card turns red in the UI. No SLA
-# threshold has been defined yet, so these are placeholders kept in one spot
-# instead of scattered as magic numbers in the frontend JS.
-# ponytail: replace with real SLA numbers (and per-acuity-band ones, if the
-# data supports it) once real wait-time data exists to set them from.
-RED_AFTER_MIN = {AcuityBucket.EMERGENT.value: 15, AcuityBucket.QUEUED.value: 60}
 
 # Which case events show up in the notification strip along the top of the
 # board. Every transition a case makes gets logged with an "arrow" — a short
@@ -177,7 +172,7 @@ def board_payload() -> dict:
     return {
         "columns": BOARD_COLUMNS,
         "counters": counters(cards),
-        "red_after_min": RED_AFTER_MIN,
+        "red_after_min": BOARD_RED_AFTER_MINUTES,
         "notifications": notifications(states),
         "cards": [c.model_dump() | {"position": place.get(c.case_id)} for c in cards],
     }
