@@ -11,7 +11,7 @@ from langgraph.types import interrupt
 
 from app.actors import intake
 from app.deterministic import assign_order_key, audit, now_iso
-from app.graph.nodes._shared import _bump
+from app.graph.nodes._shared import _bump, is_release, release_case
 from app.guards import NURSE_SUPPLIED_FIELDS
 from app.graph.state import TriageState
 from app.labels import Arrow
@@ -97,6 +97,8 @@ def awaiting_intake_fix(state: TriageState) -> dict[str, Any]:
     """
     submitted = interrupt({"case_id": state.case_id, "intake_fix_pending": True,
                            "missing_fields": state.missing_fields})
+    if is_release(submitted):
+        return release_case(state, submitted, state.control_state)
     # Only empty form fields may be filled. Overwriting one that already has a
     # value could swap the patient's identity (`stable_patient_id`) mid-case.
     accepted = {k: v for k, v in (submitted or {}).items()

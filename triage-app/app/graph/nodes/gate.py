@@ -11,6 +11,7 @@ from typing import Any
 from app.actors import human_bridge
 from app.budgets import GATE_REMINDER_DELAY_MINUTES, SENIOR_REMINDER_DELAY_MINUTES
 from app.deterministic import actor_is_charge, assign_order_key, audit, audit_denial, bucket_for
+from app.graph.nodes._shared import is_release, release_case
 from app.graph.state import TriageState
 from app.labels import Arrow
 from app.monitor import timers
@@ -49,6 +50,9 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
             "safety_verdict": state.safety_verdict.model_dump() if state.safety_verdict else None,
         },
     )
+
+    if is_release(response):
+        return release_case(state, response, State.AWAITING_HUMAN_APPROVAL)
 
     resolver = (response or {}).get("resolver_role", "")
     decision = (response or {}).get("decision")

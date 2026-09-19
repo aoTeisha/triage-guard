@@ -215,8 +215,8 @@ def _waiting_snapshot(case_id: str):
     """Fetch a case's graph handle + config, refusing (404/409) unless it's
     genuinely parked in the waiting-room pause (`control_state == monitoring`
     — the same fact `app.monitor.fire.dispatch` checks before firing a
-    reassessment timer). Shared by `deteriorated`, `move_to_treatment`, and
-    `release` — the only three endpoints that resume a paused run.
+    reassessment timer). Shared by `deteriorated` and `move_to_treatment`;
+    `release` uses `_paused_snapshot`, since a release may come from any pause.
     """
     g = runner.graph()
     config = config_for(case_id)
@@ -255,7 +255,21 @@ class ReleaseReport(BaseModel):
     actor_role: str = "nurse"
 
 
-def _resume_waiting_case(case_id: str, resume: dict) -> dict:
+def _paused_snapshot(case_id: str):
+    """Like `_waiting_snapshot`, but for release (I9): any pause of a case that
+    is not already closed qualifies, not just the waiting room.
+    """
+    g = runner.graph()
+    config = config_for(case_id)
+    snapshot = g.get_state(config)
+    if not snapshot.values:
+        raise HTTPException(status_code=404, detail=f"no case {case_id}")
+    if snapshot.values.get("control_state") == State.CASE_CLOSED.value or not snapshot.next:
+        raise HTTPException(status_code=409, detail="case is closed or not paused")
+    return g, config, snapshot
+
+
+def _resume_waiting_case(case_id: str, resume: dict, any_pause: bool = False) -> dict:
     """Shared by `/move-to-treatment` and `/release`: re-enter a case's
     waiting-room pause with `Command(resume=...)`, refusing (404/409) unless
     it's genuinely parked there, then report whether the in-graph guard
@@ -278,14 +292,14 @@ def _resume_waiting_case(case_id: str, resume: dict) -> dict:
     `invoke()` — so it's reported the same way as "case not currently
     waiting" rather than a false "ok".
     """
-    g, config, snapshot = _waiting_snapshot(case_id)
+    g, config, snapshot = (_paused_snapshot if any_pause else _waiting_snapshot)(case_id)
     before = len(snapshot.values.get("audit_log") or [])
 
     result = g.invoke(Command(resume=resume), config)
 
     after_log = result.get("audit_log") or []
     if len(after_log) <= before:
-        raise HTTPException(status_code=409, detail="case already left the waiting-room pause")
+        raise HTTPException(status_code=409, detail="case already left the pause")
 
     last = after_log[-1]
     if last.get("arrow") == Arrow.BLK.value:
@@ -308,14 +322,15 @@ def move_to_treatment(case_id: str, report: MoveToTreatmentReport):
 
 @app.post("/api/case/{case_id}/release")
 def release(case_id: str, report: ReleaseReport):
-    """Nurse-initiated release. Same shape as `/deteriorated` and
-    `/move-to-treatment` above. The real authorization check
+    """Nurse-initiated release, from any pause of an open case (I9). Same
+    shape as `/deteriorated` and `/move-to-treatment` above. The real authorization check
     (`release_authorized`, charge-role + valid reason) runs inside the
     graph node, not here.
     """
     return _resume_waiting_case(
         case_id,
         {"event": "RELEASE_REQUESTED", "reason": report.reason, "actor_role": report.actor_role},
+        any_pause=True,
     )
 
 

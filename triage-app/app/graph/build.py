@@ -198,7 +198,11 @@ def build_graph(checkpointer=None):
     # continue the same case (I10). Rejected input is not a patient, so it ends.
     b.add_edge(State.MISSING_FIELDS_REQUESTED, "awaiting_intake_fix")
     b.add_edge(State.SUBMISSION_FAILED, "awaiting_intake_fix")
-    b.add_edge("awaiting_intake_fix", State.PARSING)
+    b.add_conditional_edges(
+        "awaiting_intake_fix",
+        routers.route_pause_exit,
+        {Route.PROCEED: State.PARSING, Route.RELEASED: END, Route.DENIED: "awaiting_intake_fix"},
+    )
     b.add_edge(State.INPUT_REJECTED, END)
 
     # ---- once data is parsed, look up the patient's identity in the CRM --------
@@ -290,6 +294,7 @@ def build_graph(checkpointer=None):
             # Correction rounds spent, or "Escalate further": a shift lead
             # decides, and the case stays at the gate rather than ending (I8, I10).
             Route.EXHAUSTED: "escalate_to_senior",
+            Route.RELEASED: END,
         },
     )
     b.add_edge("escalate_to_senior", State.AWAITING_HUMAN_APPROVAL)
@@ -312,14 +317,23 @@ def build_graph(checkpointer=None):
         },
     )
     b.add_edge(State.REASSESSMENT_REQUIRED, "awaiting_reassessment_submission")
-    b.add_edge("awaiting_reassessment_submission", State.PARSING)
+    b.add_conditional_edges(
+        "awaiting_reassessment_submission",
+        routers.route_pause_exit,
+        {Route.PROCEED: State.PARSING, Route.RELEASED: END,
+         Route.DENIED: "awaiting_reassessment_submission"},
+    )
 
     # ---- terminals --------------------------------------------------------------
     b.add_edge(State.AGENT_FAILED, "awaiting_recovery")
     b.add_conditional_edges(
         "awaiting_recovery",
         routers.route_after_recovery,
-        {State.REDACTING_ROUTING: State.REDACTING_ROUTING},  # the only stage that halts today
+        {
+            State.REDACTING_ROUTING: State.REDACTING_ROUTING,  # the only stage that halts today
+            Route.RELEASED: END,
+            Route.DENIED: "awaiting_recovery",
+        },
     )
 
     return b.compile(checkpointer=checkpointer)

@@ -19,6 +19,7 @@ from langgraph.types import interrupt
 
 from app.budgets import REASSESSMENT_REMINDER_DELAY_MINUTES
 from app.deterministic import assign_order_key, audit
+from app.graph.nodes._shared import is_release, release_case
 from app.graph.state import TriageState
 from app.labels import Arrow
 from app.monitor import timers
@@ -65,6 +66,8 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
     end the run for a patient who is physically still in the waiting room.
     """
     submitted = interrupt({"case_id": state.case_id, "reassessment_pending": True})
+    if is_release(submitted):
+        return release_case(state, submitted, State.REASSESSMENT_REQUIRED)
 
     fresh_payload = {
         **state.raw_payload,

@@ -123,6 +123,9 @@ def route_gate(state: TriageState) -> Route:
     a newly settled acuity must be validated, the safety branch because the spec
     allows correct-and-revalidate but never override.
     """
+    released_or_refused = release_route(state)
+    if released_or_refused:
+        return released_or_refused
     allowed = {"shift_lead"} if state.senior_required else {"charge_nurse", "shift_lead"}
     if state.resolver_role not in allowed:
         return Route.DENIED
@@ -149,16 +152,31 @@ def route_wait_resume(state: TriageState) -> Route:
     instead of falling through to `REASSESSMENT_REQUIRED`, which would wrongly
     revert `clinical_status` for a patient who is already in treatment.
     """
-    last_arrow = state.audit_log[-1].get("arrow") if state.audit_log else None
-    if last_arrow == Arrow.BLK.value:
-        return Route.DENIED
-    if last_arrow == Arrow.RELEASE.value:
-        return Route.RELEASED
+    released_or_refused = release_route(state)
+    if released_or_refused:
+        return released_or_refused
     if state.clinical_status == ClinicalStatus.TREATMENT_STARTED.value:
         return Route.MOVED
     return Route.PROCEED
 
 
-def route_after_recovery(state: TriageState) -> State:
-    """arrow AF·recover: re-enter at the stage that halted."""
-    return state.failed_stage
+def release_route(state: TriageState) -> Route | None:
+    """What a pause just did, read from the last audit row (the node already
+    decided): RELEASED ends the run, DENIED re-pauses, None means its own answer.
+    """
+    last_arrow = state.audit_log[-1].get("arrow") if state.audit_log else None
+    if last_arrow == Arrow.RELEASE.value:
+        return Route.RELEASED
+    if last_arrow == Arrow.BLK.value:
+        return Route.DENIED
+    return None
+
+
+def route_pause_exit(state: TriageState) -> Route:
+    """Exit of the intake-fix and re-file pauses: released, refused, or on to parsing."""
+    return release_route(state) or Route.PROCEED
+
+
+def route_after_recovery(state: TriageState) -> Route | State:
+    """arrow AF·recover: re-enter at the stage that halted, unless released."""
+    return release_route(state) or state.failed_stage

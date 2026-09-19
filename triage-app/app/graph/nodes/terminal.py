@@ -13,7 +13,8 @@ from typing import Any
 from langgraph.types import interrupt
 
 from app.budgets import REASSESSMENT_INTERVAL_MINUTES
-from app.deterministic import audit, audit_denial, move_authorized, now_iso, release_authorized
+from app.deterministic import audit, audit_denial, move_authorized, now_iso
+from app.graph.nodes._shared import is_release, release_case
 from app.events import Event
 from app.graph.state import TriageState
 from app.labels import Arrow
@@ -110,20 +111,8 @@ def awaiting_reassessment(state: TriageState) -> dict[str, Any]:
                                  "move to treatment confirmed", Arrow.MOVE_CONFIRMED)],
         }
 
-    if event == Event.RELEASE_REQUESTED.value:
-        reason = fired.get("reason", "")
-        authorized, why = release_authorized(reason, actor_role)
-        if not authorized:
-            return denied(why)
-        return {
-            "actor_role": actor_role,
-            "control_state": State.CASE_CLOSED.value,
-            "clinical_status": ClinicalStatus.PATIENT_RELEASED.value,
-            "released_at": now_iso(),
-            "release_reason": reason,
-            "audit_log": [audit(state.case_id, State.CASE_CLOSED, "sign_release",
-                                 f"release signed: {reason}", Arrow.RELEASE)],
-        }
+    if is_release(fired):
+        return release_case(state, fired, State.MONITORING)
 
     update: dict[str, Any] = {
         "control_state": State.MONITORING.value,
@@ -159,8 +148,10 @@ def awaiting_recovery(state: TriageState) -> dict[str, Any]:
     that failed (arrow AF·recover). A case that is still broken there halts
     again; a critical step gets no retries.
     """
-    interrupt({"case_id": state.case_id, "recovery_pending": True,
-               "halted_at": state.failed_stage})
+    answer = interrupt({"case_id": state.case_id, "recovery_pending": True,
+                        "halted_at": state.failed_stage})
+    if is_release(answer):
+        return release_case(state, answer, State.AGENT_FAILED)
     return {
         "audit_log": [audit(state.case_id, State.AGENT_FAILED, "resume_at_failed_stage",
                             f"recovered; resuming at {state.failed_stage}",

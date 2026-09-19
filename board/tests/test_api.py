@@ -378,3 +378,33 @@ def test_a_refused_resolution_leaves_the_gate_open_on_the_board(checkpoint_db):
         if c["case_id"] == case["case_id"]
     )
     assert card["gate_pending"] is True
+
+
+def test_release_works_for_a_case_waiting_at_the_gate(checkpoint_db):
+    """I9: release is not limited to the waiting room. A case paused at the
+    charge-nurse gate can be released from the board.
+    """
+    from app.runner import start_case
+
+    case = dict(DEMO_CASES["clean"])
+    case["case_id"] = f"case-gate-{uuid4().hex[:6]}"
+    case["nurse_proposed_acuity"] = 5            # gap 3 against the mock's 2 -> gate
+    _, pending = start_case(case, thread_id=case["case_id"])
+    assert pending and pending["gate"] == "discrepancy"
+
+    resp = client.post(f"/api/case/{case['case_id']}/release",
+                       json={"reason": "ama", "actor_role": "charge_nurse"})
+
+    assert resp.json() == {"status": "ok"}
+    detail = client.get(f"/api/case/{case['case_id']}").json()
+    assert detail["view"]["release_reason"] == "ama"
+
+
+def test_a_closed_case_cannot_be_released_again(seeded):
+    client.post(f"/api/case/{seeded[0]}/release",
+                json={"reason": "discharge", "actor_role": "charge_nurse"})
+
+    again = client.post(f"/api/case/{seeded[0]}/release",
+                        json={"reason": "discharge", "actor_role": "charge_nurse"})
+
+    assert again.status_code == 409
