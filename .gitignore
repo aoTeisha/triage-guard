@@ -10,3 +10,4 @@ output/
 # LangGraph checkpoint store (SQLite writes -wal/-shm sidecars alongside it)
 .triage_state.db*
 *.db-journal
+.vscode/settings.json

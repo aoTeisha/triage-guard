@@ -1,4 +1,4 @@
-name: triage-guard
+name: triage-guard-db
 
 services:
   postgres:
