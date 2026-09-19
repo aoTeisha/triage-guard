@@ -47,6 +47,7 @@ class TriageState(BaseModel):
     retry_count: Annotated[dict[str, int],
                            merge_counts] = Field(default_factory=dict)
     correction_rounds: int = 0
+    senior_required: bool = False   # correction loop exhausted: a shift lead must decide (I8)
 
     # ---- Data plane: the raw and parsed intake submission ---------------------
     raw_payload: dict[str, Any] = Field(default_factory=dict)

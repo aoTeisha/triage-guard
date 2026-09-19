@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from app.deterministic import audit
 from app.graph.nodes.classify import acuity_proposed, classifier_fallback, classifying
-from app.graph.nodes.gate import awaiting_human_approval
+from app.graph.nodes.gate import awaiting_human_approval, escalate_to_senior
 from app.graph.nodes.identity import crm_fallback, resolving_identity
 from app.graph.nodes.intake import (
     awaiting_intake_fix,
@@ -59,4 +59,5 @@ __all__ = [
     "agent_failed",
     "awaiting_intake_fix",
     "awaiting_recovery",
+    "escalate_to_senior",
 ]

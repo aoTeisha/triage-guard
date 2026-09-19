@@ -87,6 +87,7 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
         "safety_passed": False,
         "approved": False,
         "correction_rounds": 0,
+        "senior_required": False,
         "audit_log": [
             audit(state.case_id, State.REASSESSMENT_REQUIRED, "emit_event_log",
                   "nurse re-filed with fresh observations", Arrow.FRONT_DOOR_RERUN),

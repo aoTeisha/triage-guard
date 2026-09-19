@@ -171,6 +171,7 @@ def build_graph(checkpointer=None):
     b.add_node(State.AGENT_FAILED, nodes.agent_failed)
     b.add_node("awaiting_intake_fix", nodes.awaiting_intake_fix)
     b.add_node("awaiting_recovery", nodes.awaiting_recovery)
+    b.add_node("escalate_to_senior", nodes.escalate_to_senior)
     # Degrade handlers, as separate nodes rather than branches folded inside
     # their step, so a crash-triggered fallback shows up as its own box in
     # the rendered graph instead of being buried inside an if-statement.
@@ -286,12 +287,12 @@ def build_graph(checkpointer=None):
             # DENIED edge below. Ending the run here cleared the interrupt,
             # hid the resolve form, and cancelled both reminders.
             Route.DENIED:    State.AWAITING_HUMAN_APPROVAL,
-            # correction rounds spent. Ends the run (does NOT keep the case
-            # resolvable) — same class of bug as DENIED above, flagged but
-            # not fixed here: see findings.md's "Flagged, not fixed" section.
-            Route.EXHAUSTED: END,
+            # Correction rounds spent, or "Escalate further": a shift lead
+            # decides, and the case stays at the gate rather than ending (I8, I10).
+            Route.EXHAUSTED: "escalate_to_senior",
         },
     )
+    b.add_edge("escalate_to_senior", State.AWAITING_HUMAN_APPROVAL)
 
     # ---- when a reassessment timer fires, the case re-enters intake from scratch --
     b.add_edge(State.MONITORING, "awaiting_reassessment")

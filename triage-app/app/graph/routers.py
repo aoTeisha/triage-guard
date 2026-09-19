@@ -123,13 +123,16 @@ def route_gate(state: TriageState) -> Route:
     a newly settled acuity must be validated, the safety branch because the spec
     allows correct-and-revalidate but never override.
     """
-    if state.resolver_role not in {"charge_nurse", "shift_lead"}:
+    allowed = {"shift_lead"} if state.senior_required else {"charge_nurse", "shift_lead"}
+    if state.resolver_role not in allowed:
         return Route.DENIED
-    if state.escalation_reason == "safety_fail" and not correction_rounds_left(
-        state.correction_rounds - 1
+    # Handed to a senior when the rounds run out or a charge nurse escalates.
+    # Once a senior holds the case, rounds no longer count, so it can't loop
+    # past them (I8).
+    if state.escalation_reason == "safety_fail" and not state.senior_required and (
+        state.human_decision == "escalate_further"
+        or not correction_rounds_left(state.correction_rounds - 1)
     ):
-        # Loop guard exhausted. The case stays at the gate, escalated; the spec
-        # does not name who it escalates to, so it is not routed onward here.
         return Route.EXHAUSTED
     return Route.PROCEED
 

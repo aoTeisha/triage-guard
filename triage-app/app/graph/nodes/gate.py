@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.actors import human_bridge
-from app.budgets import GATE_REMINDER_DELAY_MINUTES
+from app.budgets import GATE_REMINDER_DELAY_MINUTES, SENIOR_REMINDER_DELAY_MINUTES
 from app.deterministic import actor_is_charge, assign_order_key, audit, audit_denial, bucket_for
 from app.graph.state import TriageState
 from app.labels import Arrow
@@ -47,7 +47,11 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
 
     resolver = (response or {}).get("resolver_role", "")
     decision = (response or {}).get("decision")
-    authorized, why = actor_is_charge(resolver)
+    if state.senior_required:
+        authorized = resolver == "shift_lead"
+        why = "a shift lead must decide" if authorized else f"gate refused: role {resolver!r}; a shift lead must decide"
+    else:
+        authorized, why = actor_is_charge(resolver)
 
     # Record that a decision came back, before checking whether it's
     # authorized or applying it — so even a refused response leaves evidence
@@ -89,6 +93,15 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
                                 Arrow.GATE_ACUITY_RESOLVED)],
         }
 
+    if decision == "escalate_further" and not state.senior_required:
+        # Handed up by choice rather than by running out of rounds (I8).
+        return base | {
+            "audit_log": [recorded,
+                          audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
+                                "escalate_further", f"{resolver} escalated to a senior",
+                                Arrow.GATE_SAFETY_CORRECTED)],
+        }
+
     # Safety-fail branch: correct and revalidate. No override path exists.
     return base | {
         "correction_rounds": state.correction_rounds + 1,
@@ -98,4 +111,19 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
                             "apply_correction",
                             f"correction round {state.correction_rounds + 1}, re-running safety",
                             Arrow.GATE_SAFETY_CORRECTED)],
+    }
+
+
+def escalate_to_senior(state: TriageState) -> dict[str, Any]:
+    """The correction loop ran out, or a charge nurse chose "Escalate further":
+    a shift lead must now decide, and the case stops counting rounds (I8). It
+    returns to the gate pause, so it stays open and releasable, and one reminder
+    goes to any shift lead (I15).
+    """
+    timers.schedule(timers.connection(), case_id=state.case_id, kind="senior_reminder",
+                     cycle=state.correction_rounds, due_at=timers.due_in(SENIOR_REMINDER_DELAY_MINUTES))
+    return {
+        "senior_required": True,
+        "audit_log": [audit(state.case_id, State.AWAITING_HUMAN_APPROVAL, "escalate_to_senior",
+                            "correction loop handed to a shift lead", Arrow.GATE_SAFETY_CORRECTED)],
     }

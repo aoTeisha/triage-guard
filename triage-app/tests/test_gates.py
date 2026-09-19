@@ -115,3 +115,77 @@ def test_nurse_choice_is_honoured_when_that_is_what_the_charge_nurse_picks(graph
 
     assert resumed["acuity"] == 5
     assert resumed["acuity_source"] == "human_confirmed"
+
+
+# ---- I8: an exhausted correction loop goes to a senior, not END -------------
+
+
+def _failing_safety(monkeypatch):
+    from app.actors import safety
+    from app.schemas import SafetyVerdict
+
+    monkeypatch.setattr(safety, "validate",
+                        lambda case: SafetyVerdict(verdict="fail", reasons=["unsafe"]))
+
+
+def _answer(graph, thread, decision, role):
+    cfg = {"configurable": {"thread_id": thread}}
+    graph.invoke(Command(resume={"decision": decision, "resolver_role": role}), cfg)
+    return graph.get_state(cfg)
+
+
+def test_an_exhausted_correction_loop_waits_for_a_shift_lead(graph, run, monkeypatch):
+    from app.mock_cases import DEMO_CASES
+
+    _failing_safety(monkeypatch)
+    _, pending, thread = run(DEMO_CASES["clean"])
+    assert pending["gate"] == "safety_fail"
+
+    for _ in range(6):
+        snap = _answer(graph, thread, "corrected", "charge_nurse")
+        if snap.values.get("senior_required"):
+            break
+
+    assert snap.values["senior_required"] is True
+    assert snap.next == (State.AWAITING_HUMAN_APPROVAL.value,)  # still open, not ended
+
+    refused = _answer(graph, thread, "corrected", "charge_nurse")
+    assert "BLK" in arrows(hydrate(refused.values))
+    assert refused.next == (State.AWAITING_HUMAN_APPROVAL.value,)
+
+    monkeypatch.undo()  # the shift lead's correction now passes safety
+    done = _answer(graph, thread, "corrected", "shift_lead")
+    assert done.next == ("awaiting_reassessment",)  # queued
+
+
+def test_escalate_further_hands_the_case_to_a_shift_lead_at_once(graph, run, monkeypatch, conn):
+    from app.mock_cases import DEMO_CASES
+
+    _failing_safety(monkeypatch)
+    _, _, thread = run(DEMO_CASES["clean"])
+
+    snap = _answer(graph, thread, "escalate_further", "charge_nurse")
+
+    assert snap.values["senior_required"] is True
+    assert hydrate(snap.values)["correction_rounds"] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM timers WHERE case_id=%s AND kind='senior_reminder'",
+        (DEMO_CASES["clean"]["case_id"],),
+    ).fetchone()[0] == 1
+
+
+def test_the_senior_reminder_goes_to_a_shift_lead(graph, run, monkeypatch, conn):
+    """I15: a case waiting for a senior still escalates, to the right people."""
+    from app.mock_cases import DEMO_CASES
+    from app.monitor import fire
+
+    _failing_safety(monkeypatch)
+    _, _, thread = run(DEMO_CASES["clean"])
+    _answer(graph, thread, "escalate_further", "charge_nurse")
+
+    timer = {"timer_id": "s1", "case_id": thread, "kind": "senior_reminder",
+             "cycle": 0, "due_at": "2000-01-01T00:00:00Z"}
+    assert fire.notify(conn, timer, graph=graph) == "DELIVERED"
+    assert conn.execute(
+        "SELECT recipient_class FROM notifications WHERE case_id=%s", (thread,)
+    ).fetchone() == ("any_shift_lead",)

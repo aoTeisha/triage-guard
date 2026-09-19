@@ -36,6 +36,7 @@ _GATE_RUNG_RECIPIENTS = {0: "assigned_nurse", 1: "any_charge_nurse"}
 _REMINDER_PAUSES = {
     "gate_reminder": State.AWAITING_HUMAN_APPROVAL.value,
     "reassessment_reminder": "awaiting_reassessment_submission",
+    "senior_reminder": State.AWAITING_HUMAN_APPROVAL.value,
 }
 
 
@@ -174,6 +175,7 @@ def notify(conn, timer: dict[str, Any], *, graph) -> str:
     recipient_class = (
         _GATE_RUNG_RECIPIENTS.get(timer["cycle"], "any_charge_nurse")
         if timer["kind"] == "gate_reminder"
+        else "any_shift_lead" if timer["kind"] == "senior_reminder"
         else "any_charge_nurse"
     )
     if timers.notification_count_in_window(

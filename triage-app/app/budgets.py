@@ -73,6 +73,12 @@ def confidence_ok(confidence: float | None, gate_disabled: bool = False) -> bool
 MAX_CORRECTION_ROUNDS: int = 3
 
 
+# How long a case handed to a senior (exhausted correction loop, I8) waits
+# before any shift lead is reminded. One rung for now; a placeholder like the
+# other reminder delays.
+SENIOR_REMINDER_DELAY_MINUTES: int = 10
+
+
 def retry_budget_left(retry_count: dict[str, int], agent: str) -> bool:
     """True if `agent` still has retries left, i.e. `retry_count[agent] < RETRY_BUDGET[agent]`.
 
