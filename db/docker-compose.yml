@@ -25,4 +25,5 @@ services:
 
 volumes:
   triage_postgres_data:
+    name: triage-guard_triage_postgres_data
     driver: local

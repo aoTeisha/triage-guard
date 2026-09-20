@@ -4,6 +4,8 @@ transitions, and escalation records.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from app.monitor import timers
 
 
@@ -11,7 +13,7 @@ def test_schedule_inserts_a_scheduled_row(conn):
     timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2026-01-01T00:00:00Z")
 
     row = conn.execute("SELECT case_id, kind, cycle, due_at, fire_state FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
-    assert row == ("c1", "reassessment", 0, "2026-01-01T00:00:00Z", "SCHEDULED")
+    assert row == ("c1", "reassessment", 0, datetime(2026, 1, 1, tzinfo=timezone.utc), "SCHEDULED")
 
 
 def test_claim_due_claims_a_past_due_timer(conn):
@@ -77,7 +79,7 @@ def test_schedule_is_idempotent_on_the_same_case_kind_cycle(conn):
 
     assert first == second
     rows = conn.execute("SELECT due_at FROM timers WHERE timer_id=%s", (first,)).fetchall()
-    assert rows == [("2026-01-01T00:00:00Z",)]
+    assert rows == [(datetime(2026, 1, 1, tzinfo=timezone.utc),)]
 
 
 def test_set_state_updates_fire_state_and_fields(conn):

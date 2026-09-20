@@ -1,45 +1,23 @@
-# The waiting-room monitor - how it works
+# The waiting-room monitor
 
-This explains the code in `app/monitor/` plus the two graph nodes it talks to
-(`app/graph/nodes/terminal.py` and `app/graph/nodes/gate.py`).
+How `app/monitor/` works, plus the graph nodes it talks to
+(`app/graph/nodes/terminal.py`, `gate.py`, `reassessment.py`).
 
-## What problem this solves
+## The problem
 
-Once a patient is triaged and put in the queue, someone has to make sure they
-get looked at again after a while (a "reassessment"). Nobody is sitting there
-watching a clock for every patient - a background process has to do it.
-
-That background process is the **monitor**. It's really just three things:
-
-1. A **timer store** - a database table of "check on patient X again at time Y."
-2. A **sweeper** - a loop that wakes up every few seconds and asks "which timers
-   are due right now?"
-3. A **fire state machine** - the logic that decides what "due" actually means:
-   did the timer's event really reach the patient's case, or did something go
-   wrong and it needs to be retried?
+A triaged patient waiting in the queue must be looked at again after a while
+(a "reassessment"). Nobody watches a clock per patient, so a background
+process does: the **monitor**.
 
 ## The three files
 
 ```
-app/monitor/timers.py    the database table + basic reads/writes
+app/monitor/timers.py    the table + reads/writes; claims rows without two processes taking the same one
 app/monitor/fire.py      "a timer is due - now what?" logic
-app/monitor/sweeper.py   the loop that ties the two together
+app/monitor/sweeper.py   the loop: every 5s ask timers.py what's due, hand it to fire.py (`uv run sweeper`)
 ```
 
-`timers.py` doesn't know anything about patients, graphs, or reassessment.
-It just knows how to store rows like `{case_id, kind, due_at, fire_state}` and
-how to safely say "give me every row that's overdue" without two different
-processes grabbing the same row at once.
-
-`fire.py` is where the actual decisions live: "this timer fired, but is the
-case still waiting? did the event actually get delivered? should we try again?"
-
-`sweeper.py` is the dumb loop: every few seconds, ask `timers.py` what's
-due, hand each one to `fire.py`, repeat forever. `uv run sweeper` runs this as
-its own process, separate from the main app.
-
-Tests for all three live in `tests/monitor/` (`test_timers.py`, `test_fire.py`,
-`test_sweeper.py`), same split as the code.
+Tests mirror the split in `tests/monitor/`.
 
 ```mermaid
 flowchart LR
@@ -55,18 +33,13 @@ flowchart LR
   FI -- "graph.invoke(Command(resume=...))<br/>wakes the paused case" --> GR
 ```
 
-## The key idea: the case is "paused," not "finished"
+## Key idea: the case is paused, not finished
 
-When a case reaches the queue, it doesn't just sit there passively - it
-**pauses and waits**. Its exact state is saved, and it stays paused until
-something wakes it back up: either the sweeper saying "your reassessment
-timer went off," or a nurse saying "this patient got worse."
+A queued case saves its exact state and **pauses**. It wakes when the sweeper
+says "your timer went off" or a nurse says "this patient got worse", and
+continues from where it stopped with that new input.
 
-Waking a paused case up means picking up exactly where it left off, with
-whatever new information arrived (the timeout, or the nurse's report) as the
-answer to what it was waiting for.
-
-## Walking through one reassessment, start to finish
+## One reassessment, start to finish
 
 ```mermaid
 sequenceDiagram
@@ -89,11 +62,9 @@ sequenceDiagram
   Case->>Clock: "Check on me again" (next cycle)
 ```
 
-1. A case gets triaged and clears to the queue. The `monitoring` node runs:
-   it writes "cleared to queue" to the audit trail, and calls
-   `timers.schedule(...)` to insert a row saying "check this case again in
-   30 minutes" (the exact number depends on how urgent the patient is - see
-   `REASSESSMENT_INTERVAL_MINUTES` in `app/budgets.py`):
+1. Case clears to the queue. `monitoring` calls `timers.schedule(...)`: "check
+   again in N minutes", N by acuity (`REASSESSMENT_INTERVAL_MINUTES` in
+   `app/budgets.py`):
 
    | ESI acuity       | recheck interval |
    | ---------------- | ---------------- |
@@ -103,67 +74,39 @@ sequenceDiagram
    | 4                | 60 min           |
    | 5 (least urgent) | 120 min          |
 
-2. The very next node, `awaiting_reassessment`, calls `interrupt()`. The run
-   freezes. The case just sits in the queue, "paused," for however long.
-3. Meanwhile, `uv run sweeper` is looping in the background. Every 5 seconds
-   it asks the timers table: "anything due?" Once 30 minutes pass, that row
-   shows up.
-4. The sweeper claims the row - marks it as "taken" in the database so that
-   if two sweeper processes are running, only one of them handles this timer -
-   and hands it to `fire.dispatch()`, the function that decides what to do
-   with a due timer.
-5. `fire.dispatch()` resumes the case's paused run. The case's run is a
-   LangGraph graph that was frozen mid-execution at `awaiting_reassessment`
-   (step 2); resuming it is what actually restarts it. Concretely,
-   `fire.dispatch()` calls `graph.invoke(Command(resume={"event":
- "REASSESSMENT_TIMEOUT", ...}), config)` - `Command(resume=...)` is
-   LangGraph's API for "wake the paused run for this case back up, and give
-   it this value as the answer to what it was waiting for." The frozen
-   `awaiting_reassessment` node receives `{"event": "REASSESSMENT_TIMEOUT"}`
-   and continues from exactly where it left off.
-6. `reassessment_required` commits, starts a reminder timer of its own (see
-   below), and the case pauses again - this time at `awaiting_reassessment_submission`,
-   waiting for a nurse to actually re-file it. Nothing re-enters intake until
-   that happens: `intake-channel`'s `POST /reassess/{case_id}` (surfaced as a
-   form on the board's case panel, once a case reaches this pause) is what
-   answers it, with fresh vitals and chief complaint. The case's own routing
-   fields (`case_id`, `free_text`, etc.) are carried over unchanged - only what
-   a nurse can actually observe gets overwritten.
-7. Once the nurse submits, the whole pipeline re-runs on the fresh data -
-   classification, the gate, safety - exactly like a brand new case, because a
-   changed acuity has to go through the same checks a first triage would.
-8. If the patient is still fine, the case clears to the queue again, and a
-   brand new timer gets scheduled for the _next_ reassessment. This loops for
-   as long as the patient is waiting.
+2. `awaiting_reassessment` calls `interrupt()`. The run freezes.
+3. `uv run sweeper` polls every 5s. When the row is due, it claims it (marks it
+   taken, so a second sweeper skips it) and hands it to `fire.dispatch()`.
+4. `fire.dispatch()` calls `graph.invoke(Command(resume={"event":
+   "REASSESSMENT_TIMEOUT", ...}), config)` - LangGraph's "wake this paused
+   run with this answer". The frozen node continues.
+5. `reassessment_required` schedules a reminder timer and pauses again at
+   `awaiting_reassessment_submission`. `intake-channel`'s `POST /reassess/{case_id}`
+   (a form on the board's case panel) answers it with fresh vitals; routing
+   fields (`case_id`, `free_text`, ...) carry over unchanged.
+6. The whole pipeline re-runs on the fresh data - classification, gate,
+   safety - like a new case, because a changed acuity needs the same checks.
+7. Still fine? Back to the queue with a new timer for the next cycle.
 
-## What can go wrong, and the fire states
+## Fire states
 
-"Fire" here means a timer going off, the way an alarm "fires" - not
-combustion. When a timer's due time arrives and the sweeper picks it up,
-the timer is said to "fire," and `fire.py` is the module that handles what
-happens next: delivering the event to the case, noticing if delivery
-failed, and deciding whether to retry.
+"Fire" = a timer going off, like an alarm. `fire.py` handles what happens
+next. Every timer has a `fire_state`; these are all of them:
 
-A "fire state machine" is just a fancy way of saying: every timer has a
-status, and there are rules for which status can become which other status.
+| Status (`fire_state`) | Meaning                                                                    |
+| --------------------- | -------------------------------------------------------------------------- |
+| `SCHEDULED`           | Waiting for its time.                                                      |
+| `DUE`                 | Time came; sweeper picked it up.                                           |
+| `DISPATCHING`         | Delivering the event right now.                                            |
+| `DELIVERED`           | Worked. Done.                                                              |
+| `FAILED`              | Clear "no" - case closed or missing. Safe to retry or give up.             |
+| `UNKNOWN`             | Not sure it worked (process died mid-attempt).                             |
+| `ESCALATED_TO_HUMAN`  | Checked enough times, still unsure - page a human.                         |
+| `CANCELLED`           | Reminder no longer matters (notify-only reminders, see below).             |
 
-| Status (`fire_state`) | Plain meaning                                                                                |
-| --------------------- | -------------------------------------------------------------------------------------------- |
-| `SCHEDULED`           | Waiting for its time to come.                                                                |
-| `DUE`                 | Its time came; the sweeper picked it up.                                                     |
-| `DISPATCHING`         | The sweeper is actively trying to deliver the event right now.                               |
-| `DELIVERED`           | It worked. Done.                                                                             |
-| `FAILED`              | We got a clear "no" - the case is closed, or doesn't exist. Safe to retry later, or give up. |
-| `UNKNOWN`             | We don't know if it worked. The connection could have died mid-attempt.                      |
-| `ESCALATED_TO_HUMAN`  | We tried and checked enough times and still don't know - page a human.                       |
-| `CANCELLED`           | The reminder doesn't matter anymore (only used for notify-only reminders, see below).        |
-
-These eight are every value the `fire_state` column actually takes - there's no
-stored "reconciling" status. Reconciling is something `fire.reconcile()` _does_
-to an `UNKNOWN` row, synchronously, in one call: it resolves straight to
-`DELIVERED`, `FAILED`, back to `UNKNOWN` (try again next tick), or
-`ESCALATED_TO_HUMAN` (budget spent) - never leaves a row sitting in a
-"currently reconciling" state in between.
+No stored "reconciling" state: `fire.reconcile()` takes an `UNKNOWN` row and
+resolves it in one call to `DELIVERED`, `FAILED`, `UNKNOWN` again, or
+`ESCALATED_TO_HUMAN`.
 
 ```mermaid
 stateDiagram-v2
@@ -186,73 +129,42 @@ stateDiagram-v2
   ESCALATED_TO_HUMAN --> [*]
 ```
 
-The one rule that matters most: `UNKNOWN` **never jumps straight back to**
-`DISPATCHING`**.** If we're not sure whether something happened, we don't just try
-again blindly - a second, unnecessary delivery could re-notify a nurse twice,
-or worse. Instead `reconcile()` runs first: read the case's own audit
-trail and check "does it already show this exact event landed?" Only if the
-answer is a clear "no" do we retry.
+The rule that matters: `UNKNOWN` **never jumps straight back to `DISPATCHING`**.
+A blind retry could deliver twice. `reconcile()` first checks the case's audit
+trail for this exact fire; only a clear "no" leads to a retry.
 
-This is why every event carries a `fire_id` - a fingerprint made from
-`(case_id, timer kind, cycle, due_at)`. It's how reconciliation can search the
-audit trail for "did _this specific_ fire already happen" instead of just
-"did _a_ reassessment happen."
+That is what `fire_id` is for: a fingerprint of `(case_id, kind, cycle, due_at)`,
+so reconciliation asks "did _this_ fire land?" not "did _a_ reassessment happen?"
 
-## Notify-only reminders (a simpler, different case)
+## Notify-only reminders
 
-There's a second kind of timer, in two flavors: reminders. When a case is
-sitting at the human-approval gate waiting for a charge nurse to decide
-something, two `gate_reminder` timers get scheduled at the same time: one
-that pings the assigned nurse after 10 minutes, another that widens to _any_
-charge nurse after 20.
+A second kind of timer. At the human-approval gate, two `gate_reminder` timers
+are scheduled at once: ping the assigned nurse after 10 min, widen to any
+charge nurse after 20. The re-filing pause schedules one
+`reassessment_reminder`, straight to any charge nurse.
 
-The reassessment re-filing pause (above) works the same way with one rung
-instead of two: entering `reassessment_required` schedules a single
-`reassessment_reminder` timer, straight to any charge nurse, in case a nurse
-never gets around to re-filing the case.
-
-Both are simpler than reassessment _delivery_ timers because **they don't
-change anything about the case** - they just send a notification. So they
-skip the whole `DISPATCHING`/`UNKNOWN`/reconcile dance entirely.
-`fire.notify()` looks up which pause a reminder's kind belongs to
-(`_REMINDER_PAUSES`) and checks "is the case still sitting there?" - if yes,
-send the notification (once per reason, and only if we haven't already sent
-too many to this recipient recently); if no - the gate was answered, or the
-nurse already re-filed - mark it `CANCELLED`, since a late reminder would be
-pointless. An unrecognized timer kind has no pause to check, so it's
-cancelled the same way rather than delivered blind.
+They **don't change the case** - just send a notification - so they skip
+`DISPATCHING`/`UNKNOWN`/reconcile. `fire.notify()` checks the case is still at
+the pause the reminder is about (`_REMINDER_PAUSES`): yes → send once per
+reason, within the recipient's budget; no (or unknown kind) → `CANCELLED`.
 
 ## The heartbeat: watching the watcher
 
-If the sweeper process itself crashes, nothing calls it to tell it something's
-wrong - it just silently stops working, and every patient's reassessment
-timer quietly stops firing. That's the scariest failure mode here, because
-nothing _looks_ broken.
+A crashed sweeper fails silently: timers just stop firing. So every tick the
+sweeper writes a heartbeat row, and the board (`/api/heartbeat`) checks its
+age from the outside. Too old → "monitor degraded" banner. A dead process
+can't self-report, so the check must live elsewhere.
 
-The fix: every tick, the sweeper writes a "heartbeat" row - basically a
-timestamp saying "I'm alive as of right now." Something _else_ (the board,
-via `/api/heartbeat`) watches that timestamp from the outside. If it gets too
-old (older than a few sweep intervals), the board shows a "monitor degraded"
-banner. A monitor that could report its own death wouldn't actually be dead,
-so this has to be checked from outside, not by the monitor itself.
+## Two bugs we hit
 
-## Two bugs we actually hit while building this (worth knowing about)
+**The cycle number.** Timer id is `case_id:kind:cycle`. With `cycle` always 0,
+the next reassessment reused the same id and due time forever. Fix:
+`reassessment_cycle` lives on the case and increments each fire.
 
-**The cycle number.** Every timer's ID is built from
-`case_id:kind:cycle`. The first version of this code always used `cycle=0`,
-which meant after the _first_ reassessment fired, scheduling the _next_ one
-reused the exact same ID and the exact same due-time forever - the timer
-would never actually move forward. Fix: `reassessment_cycle` is a number
-stored on the case itself, incremented every time a reassessment fires.
+**Matching on "no fingerprint".** Dedupe was `rec.get("fire_id") == fire_id`.
+A nurse's deterioration report has no `fire_id`, and neither do many unrelated
+audit rows, so `None == None` dropped real reports as duplicates. Fix: only
+compare when there is a fingerprint (`if fire_id and ...`).
 
-**Matching on "no fingerprint."** The duplicate-detection check was
-`rec.get("fire_id") == fire_id`. A nurse-reported "patient got worse" event
-has no `fire_id` (a human isn't a timer). But plenty of _other_, unrelated
-audit rows also have no `fire_id` - so `None == None` made the code think a
-brand new deterioration report was a duplicate of some random earlier row,
-and silently dropped it. Fix: only compare fingerprints when there actually
-is one to compare (`if fire_id and ...`).
-
-Both are the kind of bug that only shows up once you actually run the cycle
-more than once - a good reminder that "it worked in the first test" and "it
-works" are different claims.
+Both only show up after the cycle runs more than once - "worked in the first
+test" and "works" are different claims.

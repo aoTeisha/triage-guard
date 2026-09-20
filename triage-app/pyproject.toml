@@ -31,6 +31,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"app/monitor/schema.sql" = "app/monitor/schema.sql"
+
 # A uv dependency group, not an extra: uv installs it on `uv sync` by default,
 # so `uv run pytest` works with no flags. Matches crm-stub/ and intake-channel/.
 [dependency-groups]

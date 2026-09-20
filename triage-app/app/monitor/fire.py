@@ -1,17 +1,13 @@
-"""The fire state machine: attempting to deliver a timer's event into its
-case (dispatch), confirming whether a delivery that lost its acknowledgment
-actually landed (reconcile), sending notify-only reminders (notify), and
-de-duplicating and escalating repeated failures.
+"""Fire state machine: dispatch, reconcile, and notify for claimed timers.
 
-`dispatch` and `reconcile` take an explicit `graph` argument so the sweeper,
-in production, can pass the real, process-cached `app.runner.graph()`, while
-tests pass in an isolated one instead. This module is the only code that
-writes a timer's `fire_state` column — everything else only ever reads it.
+`dispatch`/`reconcile`/`notify` take `graph` so the sweeper passes the real
+cached graph and tests pass an isolated one. Only this module writes `fire_state`.
 """
 
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 from typing import Any
 
 from langgraph.types import Command
@@ -25,14 +21,7 @@ from app.monitor import timers
 from app.runner import config_for
 from app.states import State
 
-# Which recipient to remind at each reminder step: step 0 notifies just the
-# nurse assigned to the case, step 1 widens the reminder to any charge nurse.
-_GATE_RUNG_RECIPIENTS = {0: "assigned_nurse", 1: "any_charge_nurse"}
-
-# Each notify-only timer kind, and the node the case must still be paused at
-# for its reminder to be worth sending. A case that has moved on has resolved
-# whatever the reminder was about, so the timer is cancelled rather than
-# nudging staff about something already handled.
+# Reminder kind -> node the case must still be paused at. Moved on = cancel.
 _REMINDER_PAUSES = {
     "gate_reminder": State.AWAITING_HUMAN_APPROVAL.value,
     "reassessment_reminder": "awaiting_reassessment_submission",
@@ -40,35 +29,17 @@ _REMINDER_PAUSES = {
 }
 
 
-def fire_id(case_id: str, kind: str, cycle: int, due_at: str) -> str:
-    """A deterministic id for one timer firing, stable across re-dispatches
-    of the same cycle. Used as a de-dupe key both here (before dispatching
-    again) and inside the graph itself (`awaiting_reassessment` checks its
-    own audit log for this id) — a second line of defense in case the same
-    fire ever gets dispatched twice.
-    """
+def fire_id(case_id: str, kind: str, cycle: int, due_at: datetime | str) -> str:
+    """Stable id for one firing. De-dupe key here and in the graph's audit log."""
     raw = f"{case_id}:{kind}:{cycle}:{due_at}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
 def dispatch(conn, timer: dict[str, Any], *, graph) -> str:
-    """Attempts to deliver a due timer's event into its case. Moves the
-    timer's state from DUE to DISPATCHING, then to either DELIVERED or
-    FAILED depending on what happens.
+    """Deliver a due timer into its case. DUE -> DISPATCHING -> DELIVERED | FAILED.
 
-    If the case isn't currently paused in `monitoring` when this runs,
-    either it already accepted this same fire on an earlier attempt (a
-    reassessment timer only ever gets created because the case reached
-    `monitoring` once), or the case doesn't exist at all — both cases return
-    without attempting a resume, which is what makes calling this function
-    twice for the same timer safe.
-
-    There's no dispatch timeout here: `graph.invoke` is a local, synchronous,
-    in-process call, so there's no network round-trip that could hang. A
-    timer can still end up `UNKNOWN` though — if the *process itself* dies
-    mid-call, `claim_retryable` later picks up the row once its lease
-    expires, and `reconcile` (below) figures out what actually happened,
-    treating that case the same as a lost acknowledgment.
+    Safe to call twice: a case not paused in `monitoring` already took this
+    fire (or does not exist), so no resume is attempted.
     """
     case_id = timer["case_id"]
     fid = fire_id(case_id, timer["kind"], timer["cycle"], timer["due_at"])
@@ -85,27 +56,26 @@ def dispatch(conn, timer: dict[str, Any], *, graph) -> str:
 
     resume = {"event": "REASSESSMENT_TIMEOUT", "fire_id": fid}
     if timer.get("timer_gap"):
-        resume["timer_gap"] = True  # flags an honest record of an unwatched window
+        resume["timer_gap"] = True  # records that nobody was watching for a while
 
+    # No timeout: `graph.invoke` is in-process. If the process dies mid-call the
+    # lease expires, `claim_retryable` picks the row up, and `reconcile` sorts it out.
     try:
         graph.invoke(Command(resume=resume), config)
-    except Exception as exc:  # noqa: BLE001 — any exception here is a real, actionable failure to record, not something to let crash the sweeper
+    except Exception as exc:  # noqa: BLE001 — record the failure, never crash the sweeper
         timers.set_state(conn, timer["timer_id"], "FAILED", last_error=str(exc))
         return "FAILED"
 
-    timers.set_state(conn, timer["timer_id"], "DELIVERED", fire_id=fid)
+    timers.set_state(conn, timer["timer_id"], "DELIVERED")
     return "DELIVERED"
 
 
 def reconcile(conn, timer: dict[str, Any], *, graph) -> str:
-    """Figures out what actually happened to a timer stuck in UNKNOWN state
-    (whose acknowledgment was lost) — resolving it to DELIVERED, FAILED,
-    keeping it UNKNOWN for another attempt, or ESCALATED_TO_HUMAN if the
-    retry budget for reconciling is spent.
+    """Work out what happened to an UNKNOWN timer (its ack was lost).
 
-    Checks the case's own audit log for this `fire_id` first, before drawing
-    any other conclusion — that's the most reliable evidence of whether the
-    fire actually landed.
+    Audit log has this `fire_id` -> DELIVERED. Case still in `monitoring` ->
+    FAILED (safe to redispatch). Otherwise UNKNOWN again, or
+    ESCALATED_TO_HUMAN once `RECONCILE_BUDGET` is spent.
     """
     case_id = timer["case_id"]
     fid = timer.get("fire_id") or fire_id(case_id, timer["kind"], timer["cycle"], timer["due_at"])
@@ -115,7 +85,7 @@ def reconcile(conn, timer: dict[str, Any], *, graph) -> str:
     try:
         history = list(graph.get_state_history(config))
         current = graph.get_state(config)
-    except Exception as exc:  # noqa: BLE001 — the store or graph is unreachable; treat as an infrastructure failure, not a clinical one
+    except Exception as exc:  # noqa: BLE001 — store unreachable: infra problem, page a technician
         return _inconclusive(conn, timer, fid, attempts, recipient_class="technician",
                               reason="store_unreachable", last_error=str(exc))
 
@@ -129,49 +99,33 @@ def reconcile(conn, timer: dict[str, Any], *, graph) -> str:
         return "DELIVERED"
 
     if current.values.get("control_state") == State.MONITORING.value:
-        # The case is still sitting at the same pause it was at before this
-        # fire — proof the fire never applied, so it's safe to redispatch it
-        # again with the same fire_id.
+        # Still at the same pause: the fire never applied, safe to redispatch.
         timers.set_state(conn, timer["timer_id"], "FAILED", fire_id=fid)
         return "FAILED"
 
-    # Neither proof that the fire landed nor proof that it didn't — the case
-    # has moved on to something else, so it's ambiguous whether this fire
-    # caused that or something unrelated did.
+    # Case moved on, but no audit proof this fire did it. Ambiguous.
     return _inconclusive(conn, timer, fid, attempts, recipient_class="charge_nurse",
                           reason="reassessment_overdue")
 
 
 def notify(conn, timer: dict[str, Any], *, graph) -> str:
-    """Sends a gate reminder (nudging staff about an unanswered approval
-    request) or a re-filing reminder (nudging staff about a case still
-    waiting on a nurse to re-file it). Notify-only: it doesn't change any
-    case state and there's no acknowledgment to wait for, so it never passes
-    through the `DISPATCHING`/`UNKNOWN` states `dispatch`/`reconcile` use.
+    """Send a gate or re-filing reminder. Notify-only: no case state change, no ack.
 
-    Returns `CANCELLED` if the pause this reminder was about has already been
-    resolved by the time this runs (including an unknown timer kind, which
-    has no pause to check and so is never worth delivering), rather than
-    sending a now-stale reminder; `FAILED` if the recipient has already hit
-    their notification budget for this time window — that's always recorded
-    as a `FAILED` state, never a silent drop.
+    CANCELLED if the pause it was about is already over (or unknown kind).
+    FAILED if the recipient's notification budget for this window is spent.
     """
     case_id = timer["case_id"]
     snapshot = graph.get_state(config_for(case_id))
 
-    # `monitoring` (used for reassessment) is split across two nodes so its
-    # `control_state` field commits to storage before the actual pause
-    # happens. `awaiting_human_approval` isn't split that way — it pauses
-    # (via `interrupt()`) before it finishes running, so while paused,
-    # `snapshot.values["control_state"]` still reflects whatever the
-    # *previous* node set, not this one. Only `snapshot.next` (which node is
-    # queued up to run next) reliably shows that the case is actually paused
-    # here.
+    # `awaiting_human_approval` pauses via `interrupt()` before it finishes, so
+    # `values["control_state"]` still shows the previous node. `snapshot.next`
+    # is the only reliable "paused here" signal.
     pause = _REMINDER_PAUSES.get(timer["kind"])
     if pause is None or pause not in snapshot.next:
         timers.set_state(conn, timer["timer_id"], "CANCELLED")
         return "CANCELLED"
 
+    # Gate step 0 nudges the assigned nurse; every later step widens to any charge nurse.
     recipient_class = (
         _GATE_RUNG_RECIPIENTS[timer["cycle"] % len(_GATE_RUNG_RECIPIENTS)]
         if timer["kind"] == "gate_reminder"
@@ -193,13 +147,14 @@ def notify(conn, timer: dict[str, Any], *, graph) -> str:
 
 def _inconclusive(conn, timer: dict[str, Any], fid: str, attempts: int, *,
                    recipient_class: str, reason: str, last_error: str | None = None) -> str:
+    """Could not tell if the fire landed. Stay UNKNOWN, or escalate once the budget is spent."""
     if attempts >= RECONCILE_BUDGET:
         timers.set_state(conn, timer["timer_id"], "ESCALATED_TO_HUMAN", fire_id=fid, attempts=attempts)
         timers.record_escalation(conn, case_id=timer["case_id"], fire_id=fid, channel="notification_strip",
                                   recipient_class=recipient_class, reason=reason)
         return "ESCALATED_TO_HUMAN"
     fields: dict[str, Any] = {"fire_id": fid, "attempts": attempts}
-    if last_error:
+    if last_error:  # only overwrite last_error when this attempt produced one
         fields["last_error"] = last_error
     timers.set_state(conn, timer["timer_id"], "UNKNOWN", **fields)
     return "UNKNOWN"

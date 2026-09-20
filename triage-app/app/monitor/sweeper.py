@@ -1,13 +1,8 @@
-"""The sweeper: `uv run sweeper`, a separate background process (run
-alongside `uv run triage-guard`) that polls the timer store on an interval,
-rather than a long-running service that reacts to events immediately.
+"""The sweeper: `uv run sweeper`, a background process that polls the timer store.
 
-Each tick it: records a heartbeat, claims whatever timers are newly due and
-dispatches them, then claims whatever is left outstanding from a previous
-tick (`FAILED` timers get redispatched, `UNKNOWN` ones get reconciled) and
-drives those forward too. `graph` is only ever left as `None` in `main()`'s
-real production loop, where it falls back to the real graph; every test
-passes its own isolated graph explicitly instead.
+Each tick: heartbeat, claim newly due timers and fire them, then claim leftovers
+from earlier ticks (FAILED -> redispatch, UNKNOWN -> reconcile).
+`graph=None` only in `main()`; tests always pass their own.
 """
 
 from __future__ import annotations
@@ -21,22 +16,17 @@ import psycopg
 from app.budgets import TIMER_GAP_GRACE_MINUTES
 from app.monitor import fire, timers
 from app.runner import config_for
+from app.runner import graph as real_graph
 
 SWEEP_INTERVAL_SECONDS = 5
 LEASE_SECONDS = 30
 
 
 def _is_timer_gap(graph, timer: dict) -> bool:
-    """Whether this timer is overdue by more than its acuity-scaled grace
-    window — a delay that's negligible for a low-urgency patient is a real
-    "nobody was watching" gap for a high-urgency one. Only applies to
-    reassessment timers; gate and safety-park reminders aren't reassessment
-    timers, so this concept doesn't apply to them.
-    """
+    """Overdue past the acuity-scaled grace window? Reassessment timers only."""
     if timer["kind"] != "reassessment":
         return False
-    due_at = datetime.fromisoformat(timer["due_at"].replace("Z", "+00:00"))
-    overdue_minutes = (datetime.now(timezone.utc) - due_at).total_seconds() / 60
+    overdue_minutes = (datetime.now(timezone.utc) - timer["due_at"]).total_seconds() / 60
     band = graph.get_state(config_for(timer["case_id"])).values.get("acuity") or 5
     return overdue_minutes > TIMER_GAP_GRACE_MINUTES.get(band, TIMER_GAP_GRACE_MINUTES[5])
 
@@ -63,10 +53,7 @@ def _handle_retry(conn: psycopg.Connection, timer: dict, graph) -> None:
 
 def run_once(conn: psycopg.Connection, *, worker_id: str, graph=None) -> list[dict]:
     """One tick. Returns the newly claimed (`DUE`) rows."""
-    from app.runner import graph as real_graph
-
     g = graph or real_graph()
-
     timers.heartbeat(conn, worker_id=worker_id)
 
     claimed = timers.claim_due(conn, worker_id=worker_id, lease_seconds=LEASE_SECONDS)
@@ -81,11 +68,8 @@ def run_once(conn: psycopg.Connection, *, worker_id: str, graph=None) -> list[di
 
 def main() -> None:
     worker_id = os.environ.get("SWEEPER_WORKER_ID", f"sweeper-{os.getpid()}")
-    # `timers.connection()` rather than a connection of its own: that function
-    # is the one place that decides this store's connection settings (notably
-    # autocommit), and a second `psycopg.connect` here silently drifted from it
-    # once those settings changed — leaving the sweeper's claims uncommitted
-    # and its transaction holding locks on `timers` indefinitely.
+    # Reuse `timers.connection()`: it owns the connection settings (autocommit).
+    # A second `psycopg.connect` here once drifted and left claims uncommitted.
     conn = timers.connection()
     while True:
         run_once(conn, worker_id=worker_id)
