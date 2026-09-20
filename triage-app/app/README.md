@@ -4,9 +4,11 @@ The system runs as a **LangGraph `StateGraph`**: a deterministic workflow whose
 allowed transitions are declared as data, with exactly one LLM call in the whole
 decision path.
 
-Everything is a skeleton — mock actors, no symbolic engines, no real model unless
-you ask for one — but nothing is faked away to make it run. The gates really
-pause, the retries really count, the refusals really refuse.
+Most of this is a skeleton — mock actors, no real model unless you ask for one —
+but nothing is faked away to make it run. The gates really pause, the retries
+really count, the refusals really refuse. One slice is no longer a skeleton:
+the waiting-room monitor's decisions run on real symbolic engines (Prolog,
+Datalog, BPpy, OPA) — see `app/monitor/README.md` § "The symbolic layers".
 
 ## Run it
 

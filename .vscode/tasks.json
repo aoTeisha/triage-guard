@@ -8,6 +8,50 @@
       "options": { "cwd": "${workspaceFolder}" },
       "presentation": { "reveal": "silent", "panel": "shared" },
       "problemMatcher": []
+    },
+    {
+      "label": "uv sync: crm-stub",
+      "type": "shell",
+      "command": "uv sync",
+      "options": { "cwd": "${workspaceFolder}/crm-stub" },
+      "presentation": { "reveal": "silent", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "uv sync: intake-channel",
+      "type": "shell",
+      "command": "uv sync",
+      "options": { "cwd": "${workspaceFolder}/intake-channel" },
+      "presentation": { "reveal": "silent", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "uv sync: board",
+      "type": "shell",
+      "command": "uv sync",
+      "options": { "cwd": "${workspaceFolder}/board" },
+      "presentation": { "reveal": "silent", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "uv sync: triage-app",
+      "type": "shell",
+      "command": "uv sync",
+      "options": { "cwd": "${workspaceFolder}/triage-app" },
+      "presentation": { "reveal": "silent", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "uv sync: all",
+      "dependsOn": ["uv sync: crm-stub", "uv sync: intake-channel", "uv sync: board", "uv sync: triage-app"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+    {
+      "label": "prelaunch: sync + postgres",
+      "dependsOn": ["uv sync: all", "postgres: up"],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
     }
   ]
 }

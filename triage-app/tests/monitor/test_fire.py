@@ -239,3 +239,103 @@ def test_reconcile_escalation_holds_even_when_the_graph_is_totally_unreachable(c
 
     assert outcome == "ESCALATED_TO_HUMAN"
     assert conn.execute("SELECT COUNT(*) FROM escalations WHERE fire_id='fid-c9'").fetchone()[0] == 1
+
+
+# ---- the symbolic layers on the fire path --------------------------------------
+from app.symbolic import prolog
+
+
+def _gate_timer(conn, graph, run, cycle=0):
+    """A case parked at the human gate, plus a gate reminder row for it."""
+    state, pending, thread = run(GAP_CASE)
+    assert pending is not None and pending.get("gate") is not None
+    timer_id = timers.schedule(conn, case_id=thread, kind="gate_reminder", cycle=cycle,
+                                due_at="2000-01-01T00:00:00Z")
+    return {"timer_id": timer_id, "case_id": thread, "kind": "gate_reminder", "cycle": cycle,
+            "due_at": "2000-01-01T00:00:00Z"}
+
+
+def test_handle_records_the_decision_and_dispatches(conn, graph, run):
+    timer = _reach_monitoring(conn, graph, run)
+
+    assert fire.handle(conn, timer, graph=graph) == "DELIVERED"
+
+    row = conn.execute("SELECT decision FROM timers WHERE timer_id=%s", (timer["timer_id"],)).fetchone()
+    assert row == ("DISPATCH",)
+
+
+def test_handle_reconciles_an_unknown_timer_instead_of_redispatching(conn, graph, run):
+    """I16 has teeth only if a lost ack is proved, not guessed."""
+    timer = _reach_monitoring(conn, graph, run)
+    fid = fire.fire_id(timer["case_id"], "reassessment", 0, timer["due_at"])
+    timers.set_state(conn, timer["timer_id"], "UNKNOWN", fire_id=fid)
+
+    outcome = fire.handle(conn, {**timer, "fire_state": "UNKNOWN", "fire_id": fid, "attempts": 0}, graph=graph)
+
+    # reconcile proves the fire never applied: FAILED, retryable — and the case was NOT resumed
+    assert outcome == "FAILED"
+    assert hydrate(graph.get_state(config_for(timer["case_id"])).values)["reassessment_cycle"] == 0
+    decision = conn.execute("SELECT decision FROM timers WHERE timer_id=%s", (timer["timer_id"],)).fetchone()[0]
+    assert decision == "RECONCILE (proposed DISPATCH: dispatch: blind_redispatch_from_unknown)"
+
+
+def test_handle_refuses_when_prolog_and_bppy_disagree(conn, graph, run, monkeypatch):
+    """Two layers derive the action from the same facts. If they ever differ,
+    nothing executes — that's the point of enforcing a rule twice."""
+    timer = _reach_monitoring(conn, graph, run)
+    monkeypatch.setattr(prolog, "timer_action", lambda ctx: ("cancel", ""))
+
+    assert fire.handle(conn, timer, graph=graph) == "FAILED"
+
+    row = conn.execute("SELECT fire_state, last_error FROM timers WHERE timer_id=%s", (timer["timer_id"],)).fetchone()
+    assert row[0] == "FAILED" and row[1] == "layer_disagreement: bppy=DISPATCH prolog=cancel"
+    assert hydrate(graph.get_state(config_for(timer["case_id"])).values)["reassessment_cycle"] == 0
+
+
+def test_handle_refuses_when_prolog_is_unavailable(conn, graph, run, monkeypatch):
+    timer = _reach_monitoring(conn, graph, run)
+    monkeypatch.setattr(prolog, "timer_action", lambda ctx: ("engine_unavailable", "prolog: boom"))
+
+    assert fire.handle(conn, timer, graph=graph) == "FAILED"
+
+    row = conn.execute("SELECT last_error FROM timers WHERE timer_id=%s", (timer["timer_id"],)).fetchone()
+    assert row == ("engine_unavailable:prolog (prolog: boom)",)
+
+
+def test_dispatch_is_denied_when_opa_is_unavailable(conn, graph, run, monkeypatch):
+    """Fail-closed: no engine, no resume. The case stays exactly where it was."""
+    timer = _reach_monitoring(conn, graph, run)
+    monkeypatch.setenv("OPA_BIN", "/nonexistent/opa")
+
+    assert fire.dispatch(conn, timer, graph=graph) == "FAILED"
+
+    row = conn.execute("SELECT fire_state, last_error FROM timers WHERE timer_id=%s", (timer["timer_id"],)).fetchone()
+    assert row[0] == "FAILED" and row[1].startswith("opa denied dispatch: engine_unavailable:opa")
+    result = hydrate(graph.get_state(config_for(timer["case_id"])).values)
+    assert result["control_state"] == State.MONITORING.value
+    assert result["reassessment_cycle"] == 0
+
+
+def test_notify_is_denied_when_opa_is_unavailable(conn, graph, run, monkeypatch):
+    timer = _gate_timer(conn, graph, run)
+    monkeypatch.setenv("OPA_BIN", "/nonexistent/opa")
+
+    assert fire.notify(conn, timer, graph=graph) == "FAILED"
+
+    assert conn.execute("SELECT COUNT(*) FROM notifications").fetchone() == (0,)
+
+
+def test_handle_treats_an_unreachable_graph_as_store_unreachable(conn):
+    class UnreachableGraph:
+        def get_state(self, config):
+            raise ConnectionError("graph unreachable")
+
+    timers.schedule(conn, case_id="c9", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
+    timer = {"timer_id": "c9:reassessment:0", "case_id": "c9", "kind": "reassessment", "cycle": 0,
+             "due_at": "2000-01-01T00:00:00Z"}
+
+    assert fire.handle(conn, timer, graph=UnreachableGraph()) == "UNKNOWN"
+
+    row = conn.execute("SELECT fire_state, attempts, last_error FROM timers WHERE timer_id=%s",
+                       (timer["timer_id"],)).fetchone()
+    assert row == ("UNKNOWN", 1, "graph unreachable")

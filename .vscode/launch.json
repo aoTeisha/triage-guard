@@ -5,6 +5,7 @@
       "name": "crm-stub (:8000)",
       "type": "debugpy",
       "request": "launch",
+      "preLaunchTask": "uv sync: crm-stub",
       "cwd": "${workspaceFolder}/crm-stub",
       "python": "${workspaceFolder}/crm-stub/.venv/bin/python",
       "windows": {
@@ -19,6 +20,7 @@
       "name": "intake-channel (:8001)",
       "type": "debugpy",
       "request": "launch",
+      "preLaunchTask": "uv sync: intake-channel",
       "cwd": "${workspaceFolder}/intake-channel",
       "python": "${workspaceFolder}/intake-channel/.venv/bin/python",
       "windows": {
@@ -33,6 +35,7 @@
       "name": "board (:8002)",
       "type": "debugpy",
       "request": "launch",
+      "preLaunchTask": "uv sync: board",
       "cwd": "${workspaceFolder}/board",
       "python": "${workspaceFolder}/board/.venv/bin/python",
       "windows": {
@@ -47,6 +50,7 @@
       "name": "sweeper (waiting-room monitor)",
       "type": "debugpy",
       "request": "launch",
+      "preLaunchTask": "uv sync: triage-app",
       "cwd": "${workspaceFolder}/triage-app",
       "python": "${workspaceFolder}/triage-app/.venv/bin/python",
       "windows": {
@@ -61,7 +65,7 @@
     {
       "name": "All services (crm-stub + intake-channel + board + sweeper)",
       "configurations": ["crm-stub (:8000)", "intake-channel (:8001)", "board (:8002)", "sweeper (waiting-room monitor)"],
-      "preLaunchTask": "postgres: up",
+      "preLaunchTask": "prelaunch: sync + postgres",
       "stopAll": true
     }
   ]

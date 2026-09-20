@@ -80,14 +80,14 @@ def awaiting_reassessment(state: TriageState) -> dict[str, Any]:
     if fire_id and any(rec.get("fire_id") == fire_id for rec in state.audit_log):
         return {"control_state": State.MONITORING.value}
 
-    def denied(why: str) -> dict[str, Any]:
+    def denied(why: str, layer: str = "OPA (authorization)") -> dict[str, Any]:
         # Denial stays parked, not ended: a mis-typed actor_role is routine
         # input from a UI button. The case must stay retriable by a
         # legitimate follow-up, not fall out of the reassessment safety net.
         # The approval gate treats its own refusals the same way.
         return {
             "actor_role": actor_role,
-            "audit_log": [audit_denial(state.case_id, State.MONITORING, why)],
+            "audit_log": [audit_denial(state.case_id, State.MONITORING, why, layer=layer)],
         }
 
     event = fired.get("event")
@@ -99,7 +99,7 @@ def awaiting_reassessment(state: TriageState) -> dict[str, Any]:
             # move_authorized has no notion of clinical_status, so without
             # this it would silently re-confirm and append a second
             # MOVE_CONFIRMED row with no error.
-            return denied("move refused: already in treatment")
+            return denied("move refused: already in treatment", layer="monitor (idempotency)")
         authorized, why = move_authorized(state.safety_passed, state.approved, actor_role)
         if not authorized:
             return denied(why)

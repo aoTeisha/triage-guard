@@ -15,6 +15,10 @@ dependencies = [
     "langfuse>=4.14.4",
     "python-dotenv>=1.2.3",
     "langchain>=1.4.0",
+    # Symbolic governance layer for the monitor (docs/superpowers/specs/2026-09-19-monitor-symbolic-engines-design.md).
+    "pyswip>=0.3.3",     # Prolog — needs SWI-Prolog (`swipl`) installed on the host
+    "pyDatalog>=0.22",   # Datalog — pure Python
+    "bppy>=1.0.4",       # Behavioral programming — pure Python
 ]
 
 [project.scripts]

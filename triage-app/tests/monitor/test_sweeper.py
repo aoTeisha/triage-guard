@@ -97,3 +97,98 @@ def test_run_once_reconciles_an_unknown_timer(conn, graph, run):
 
     row = conn.execute("SELECT fire_state FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
     assert row == ("FAILED",)
+
+
+def test_run_once_never_redispatches_an_unknown_timer_blind(conn, graph, run):
+    """A retryable UNKNOWN row must go to reconcile, not dispatch — and the
+    decision column has to show the b-threads made that call (I18)."""
+    case = DEMO_CASES["clean"]
+    state, pending, thread = run(case)
+    fid = fire.fire_id(thread, "reassessment", 0, "2000-01-01T00:00:00Z")
+    timer_id = timers.schedule(conn, case_id=thread, kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
+    timers.set_state(conn, timer_id, "UNKNOWN", fire_id=fid, lease_until=None, worker_id=None)
+
+    sweeper.run_once(conn, worker_id="w1", graph=graph)
+
+    row = conn.execute("SELECT fire_state, decision FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
+    assert row[0] == "FAILED"
+    assert row[1].startswith("RECONCILE (proposed DISPATCH")
+    assert hydrate(graph.get_state(config_for(thread)).values)["reassessment_cycle"] == 0
+
+
+def test_an_orphan_timer_is_escalated_to_a_technician_once(conn, graph):
+    timer_id = timers.schedule(conn, case_id="no-such-case", kind="reassessment", cycle=0,
+                                due_at="2000-01-01T00:00:00Z")
+
+    sweeper.run_once(conn, worker_id="w1", graph=graph)
+    sweeper.run_once(conn, worker_id="w1", graph=graph)
+
+    # The timer itself is left alone (still FAILED, still retryable): this
+    # layer reports, it never mutates.
+    assert conn.execute("SELECT fire_state FROM timers WHERE timer_id=%s", (timer_id,)).fetchone() == ("FAILED",)
+    rows = conn.execute("SELECT recipient_class, reason FROM escalations WHERE case_id='no-such-case'").fetchall()
+    assert rows == [("technician", "orphan_timer")]
+
+
+def test_run_once_survives_a_broken_invariant_pass(conn, graph, monkeypatch):
+    """A DB/store error inside the Datalog invariant pass (timers.all_rows,
+    tick_invariants, or the escalation writes) must not propagate out of
+    run_once — and the rest of that tick's work must already have
+    completed, unaffected."""
+    timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
+
+    def boom(*a, **k):
+        raise RuntimeError("db connection lost")
+
+    monkeypatch.setattr(timers, "all_rows", boom)
+
+    claimed = sweeper.run_once(conn, worker_id="w1", graph=graph)
+
+    assert [t["case_id"] for t in claimed] == ["c1"]  # the claim loop already ran and returned normally
+
+
+def test_handle_degrades_to_technician_escalation_when_graph_is_unreachable_for_an_unknown_reassessment(conn):
+    """Regression: `_is_timer_gap` used to call `graph.get_state` unguarded
+    for every reassessment row before `_handle` decided dispatch vs
+    reconcile, so a store-unreachable fault escaped there before
+    `fire.reconcile`'s own store-unreachable handler ever got a turn. An
+    UNKNOWN reassessment timer must still degrade to the technician
+    escalation, not raise.
+    """
+    timer_id = timers.schedule(conn, case_id="c9", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
+    timers.set_state(conn, timer_id, "UNKNOWN", fire_id="fid-c9",
+                      attempts=fire.RECONCILE_BUDGET - 1, lease_until=None, worker_id=None)
+    timer = {"timer_id": timer_id, "case_id": "c9", "kind": "reassessment", "cycle": 0,
+             "due_at": "2000-01-01T00:00:00Z", "fire_state": "UNKNOWN",
+             "fire_id": "fid-c9", "attempts": fire.RECONCILE_BUDGET - 1}
+
+    class UnreachableGraph:
+        def get_state(self, config):
+            raise ConnectionError("graph unreachable")
+
+        def get_state_history(self, config):
+            raise ConnectionError("graph unreachable")
+
+    sweeper._handle(conn, timer, UnreachableGraph())
+
+    row = conn.execute("SELECT fire_state FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
+    assert row == ("ESCALATED_TO_HUMAN",)
+    esc = conn.execute(
+        "SELECT recipient_class, reason FROM escalations WHERE fire_id='fid-c9'"
+    ).fetchone()
+    assert esc == ("technician", "store_unreachable")
+
+
+def test_a_waiting_case_nobody_is_watching_is_escalated(conn, graph, run):
+    """I16: the queue's deadline disappeared, so somebody has to hear about it."""
+    case = DEMO_CASES["clean"]
+    state, pending, thread = run(case)
+    timer_id = timers.schedule(conn, case_id=thread, kind="reassessment", cycle=0, due_at="2999-01-01T00:00:00Z")
+    sweeper.run_once(conn, worker_id="w1", graph=graph)
+    assert conn.execute("SELECT COUNT(*) FROM escalations WHERE case_id=%s", (thread,)).fetchone() == (0,)
+
+    timers.set_state(conn, timer_id, "CANCELLED")  # the watcher was pulled out from under a waiting patient
+    sweeper.run_once(conn, worker_id="w1", graph=graph)
+
+    rows = conn.execute("SELECT recipient_class, reason FROM escalations WHERE case_id=%s", (thread,)).fetchall()
+    assert rows == [("technician", "unwatched_case")]

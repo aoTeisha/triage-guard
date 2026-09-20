@@ -146,6 +146,14 @@ GATE_REMINDER_DELAY_MINUTES: dict[int, int] = {
 # here: a working placeholder pending clinical sign-off.
 REASSESSMENT_REMINDER_DELAY_MINUTES: int = 15
 
+# How far back the Datalog invariant pass (`sweeper._check_invariants`)
+# looks when it pulls timer rows to scan: any timer still in a non-terminal
+# fire_state is always included regardless of age, but a fully-terminal
+# (DELIVERED/CANCELLED/ESCALATED_TO_HUMAN) timer only counts as "the live
+# ward" while it was touched within this window — bounding the per-tick scan
+# to roughly the live case count instead of the store's all-time history.
+INVARIANT_SCAN_WINDOW_HOURS: int = 24
+
 # A worker's heartbeat is considered stale once it's older than this many
 # sweep intervals (`app.monitor.sweeper.SWEEP_INTERVAL_SECONDS`). The sweep
 # interval itself is a known, measured constant; this multiplier is the only

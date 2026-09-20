@@ -29,7 +29,8 @@ def release_case(state: TriageState, answer: dict[str, Any], at: State) -> dict[
     reason = answer.get("reason", "")
     authorized, why = release_authorized(reason, actor_role)
     if not authorized:
-        return {"actor_role": actor_role, "audit_log": [audit_denial(state.case_id, at, why)]}
+        return {"actor_role": actor_role,
+                "audit_log": [audit_denial(state.case_id, at, why, layer="OPA (authorization)")]}
     return {
         "actor_role": actor_role,
         "control_state": State.CASE_CLOSED.value,

@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS timers (
 );
 CREATE INDEX IF NOT EXISTS timers_due ON timers (fire_state, due_at);
 
+-- What the symbolic layers chose for this timer's latest claim, e.g.
+-- "RECONCILE (proposed DISPATCH: dispatch: blind_redispatch_from_unknown)".
+ALTER TABLE timers ADD COLUMN IF NOT EXISTS decision TEXT;
+
 CREATE TABLE IF NOT EXISTS sweeper_heartbeats (
   worker_id    TEXT PRIMARY KEY,
   beat_at      TIMESTAMPTZ NOT NULL

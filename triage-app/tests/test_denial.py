@@ -146,3 +146,17 @@ def test_a_refused_gate_keeps_its_reminders_deliverable(conn, graph, run):
              "cycle": 0, "due_at": "2000-01-01T00:00:00Z"}
 
     assert fire.notify(conn, timer, graph=graph) == "DELIVERED"
+
+
+def test_a_denial_names_the_layer_that_refused():
+    """I18: a BLK row that says 'denied' without saying who denied it is not
+    an explanation. Move and release are OPA's; the gate is Prolog's."""
+    from app.deterministic import audit_denial
+    from app.states import State
+
+    row = audit_denial("c1", State.MONITORING, "move refused: not approved", layer="OPA (authorization)")
+    assert row["denying_layer"] == "OPA (authorization)"
+    assert audit_denial("c1", State.AWAITING_HUMAN_APPROVAL, "x")["denying_layer"] == "Prolog (authorization)"
+    # The arrow stays BLK whatever the layer — `routers.release_route` routes
+    # off that arrow, so a new kwarg must not change it.
+    assert row["arrow"] == "BLK"

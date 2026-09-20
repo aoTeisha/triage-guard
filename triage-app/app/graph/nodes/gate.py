@@ -10,12 +10,13 @@ from typing import Any
 
 from app.actors import human_bridge
 from app.budgets import GATE_REMINDER_DELAY_MINUTES, SENIOR_REMINDER_DELAY_MINUTES
-from app.deterministic import actor_is_charge, assign_order_key, audit, audit_denial, bucket_for
+from app.deterministic import assign_order_key, audit, audit_denial, bucket_for
 from app.graph.nodes._shared import is_release, release_case
 from app.graph.state import TriageState
 from app.labels import Arrow
 from app.monitor import timers
 from app.states import AcuitySource, ClinicalStatus, State
+from app.symbolic import prolog
 
 # Fields a safety correction may change (I7). Acuity only for now: I3 already
 # lets a charge nurse set it at the gate. Extend once Safety Validation's checks
@@ -61,11 +62,7 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
 
     resolver = (response or {}).get("resolver_role", "")
     decision = (response or {}).get("decision")
-    if state.senior_required:
-        authorized = resolver == "shift_lead"
-        why = "a shift lead must decide" if authorized else f"gate refused: role {resolver!r}; a shift lead must decide"
-    else:
-        authorized, why = actor_is_charge(resolver)
+    authorized, why = prolog.may_resolve_gate(resolver, senior_required=state.senior_required)
 
     # Record that a decision came back, before checking whether it's
     # authorized or applying it — so even a refused response leaves evidence
@@ -125,7 +122,8 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
         del changes["acuity"]
     if not changes:
         why = f"correction required: change at least one of {sorted(CORRECTABLE_FIELDS)}"
-        return base | {"audit_log": [recorded, audit_denial(state.case_id, State.AWAITING_HUMAN_APPROVAL, why)]}
+        return base | {"audit_log": [recorded, audit_denial(state.case_id, State.AWAITING_HUMAN_APPROVAL, why,
+                                                            layer="gate (I7 correction check)")]}
 
     update: dict[str, Any] = {
         "correction_rounds": state.correction_rounds + 1,

@@ -16,6 +16,7 @@ from app.events import Event
 from app.graph.state import TriageState
 from app.labels import Arrow, Route
 from app.states import ClinicalStatus, State
+from app.symbolic import prolog
 
 
 def route_intake(state: TriageState) -> Event:
@@ -126,8 +127,8 @@ def route_gate(state: TriageState) -> Route:
     released_or_refused = release_route(state)
     if released_or_refused:
         return released_or_refused
-    allowed = {"shift_lead"} if state.senior_required else {"charge_nurse", "shift_lead"}
-    if state.resolver_role not in allowed:
+    authorized, _ = prolog.may_resolve_gate(state.resolver_role, senior_required=state.senior_required)
+    if not authorized:
         return Route.DENIED
     # Handed to a senior when the rounds run out or a charge nurse escalates.
     # Once a senior holds the case, rounds no longer count, so it can't loop

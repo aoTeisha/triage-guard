@@ -16,6 +16,7 @@ from typing import Any
 
 from app.labels import Arrow
 from app.states import AcuityBucket, AcuitySource, State
+from app.symbolic import opa, prolog
 
 # ---- order_key and the display bucket (§ Queue ordering rule) ---------------
 
@@ -103,22 +104,19 @@ def audit(
     }
 
 
-def audit_denial(case_id: str, control_state: State, why: str) -> dict[str, Any]:
-    """The BLK row every authorization refusal writes. Shared by the human
-    gate's unauthorized-resolver branch and the waiting-room pause's
-    move/release refusals, so the denial-record shape is defined once.
+def audit_denial(case_id: str, control_state: State, why: str,
+                 layer: str = "Prolog (authorization)") -> dict[str, Any]:
+    """The BLK row every refused attempt writes (I18). `layer` names which
+    engine refused — the gate is Prolog's (I14), move and release are OPA's
+    (I5/I9).
     """
-    return audit(
-        case_id,
-        control_state,
-        "explain_denial",
-        why,
-        Arrow.BLK,
-        denying_layer="Prolog (authorization)",
-    )
+    return audit(case_id, control_state, "explain_denial", why, Arrow.BLK, denying_layer=layer)
 
 
-# ---- symbolic-layer predicates (SKELETON — swap for real engines) -----------
+# ---- symbolic-layer predicates ---------------------------------------------
+# `verify_no_identifiers` is still the Python skeleton (redaction/I11 is
+# outside the monitor's scope); the three guards below it are answered by the
+# real engines in `app.symbolic`.
 
 
 def verify_no_identifiers(payload: dict) -> tuple[bool, str]:
@@ -138,39 +136,28 @@ def verify_no_identifiers(payload: dict) -> tuple[bool, str]:
 def move_authorized(
     safety_passed: bool, approved: bool, actor_role: str
 ) -> tuple[bool, str]:
-    """OPA authorization for the treatment move (§ no-approval-bypass).
-
-    Refused unless the case already passed safety AND holds approval AND the actor
-    holds an authorized role. A refusal is the BLK row: the attempt dies, the case
-    does not move.
+    """OPA authorization for the treatment move (I5 no bypass), evaluated by
+    the real engine over `app/symbolic/policy/monitor.rego`. A refusal is the
+    BLK row: the attempt dies, the case does not move.
     """
-    if not safety_passed:
-        return False, "move refused: safety not passed"
-    if not approved:
-        return False, "move refused: not approved"
-    if actor_role not in {"nurse", "charge_nurse", "shift_lead"}:
-        return False, f"move refused: role {actor_role!r} not authorized"
-    return True, "move authorized"
+    gate = opa.evaluate({"action": "move",
+                         "case": {"safety_passed": bool(safety_passed), "approved": bool(approved)},
+                         "actor_role": actor_role})
+    return gate["allow"], ("move authorized" if gate["allow"] else "; ".join(gate["deny_reasons"]))
 
 
 def release_authorized(reason: str, actor_role: str) -> tuple[bool, str]:
-    """OPA authorization for release (§ release_authorized): a valid reason
-    plus an authorized signer. State-independent — release can happen from
-    any active state, so this takes no source-state argument.
+    """OPA authorization for release (I9): a valid reason plus an authorized
+    signer. State-independent — release can happen from any pause, so this
+    takes no source-state argument.
     """
-    valid_reasons = {"discharge", "ama", "transfer", "admit"}
-    if reason not in valid_reasons:
-        return False, f"release refused: invalid reason {reason!r}"
-    authorized, why = actor_is_charge(actor_role)
-    if not authorized:
-        return False, f"release refused: {why}"
-    return True, "release authorized"
+    gate = opa.evaluate({"action": "release", "reason": reason, "actor_role": actor_role})
+    return gate["allow"], ("release authorized" if gate["allow"] else "; ".join(gate["deny_reasons"]))
 
 
 def actor_is_charge(actor_role: str) -> tuple[bool, str]:
-    """Prolog authorization guard on the human gate: only a charge-role nurse may
-    resolve an acuity discrepancy or sign off a safety correction.
+    """Prolog authorization guard on the human gate (I14): only a charge-role
+    nurse may resolve an acuity discrepancy or sign off a safety correction.
+    Answered by the real engine over `app/symbolic/rules/monitor.pl`.
     """
-    if actor_role in {"charge_nurse", "shift_lead"}:
-        return True, f"{actor_role} holds charge role"
-    return False, f"gate refused: role {actor_role!r} is not a charge role"
+    return prolog.charge_role(actor_role)

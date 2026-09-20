@@ -38,3 +38,16 @@ uv run visualize-graph      # open the graph as a live Mermaid diagram in the br
 
 To drive it from the browser instead, run `intake-channel/` — it submits through
 this graph and can resolve the human gate.
+
+## Symbolic engines (monitor)
+
+The waiting-room monitor's decisions are made by real engines, not Python
+`if`s — see `app/monitor/README.md` § "The symbolic layers". Two host binaries
+are required; without them every guarded action is **denied** (fail-closed),
+the sweeper keeps running and records `engine_unavailable:<engine>`.
+
+```bash
+sudo apt-get install swi-prolog                       # Prolog (pyswip links to it)
+curl -sL -o ~/.local/bin/opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+chmod +x ~/.local/bin/opa                             # OPA; or point OPA_BIN at it
+```

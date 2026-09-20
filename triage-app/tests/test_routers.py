@@ -146,6 +146,12 @@ def test_a_charge_resolver_proceeds(role):
     assert routers.route_gate(s(resolver_role=role)) is Route.PROCEED
 
 
+def test_only_a_shift_lead_routes_on_once_the_case_was_handed_up():
+    """I14, the same rule the gate node applies — one engine, not two literals."""
+    assert routers.route_gate(s(resolver_role="shift_lead", senior_required=True)) is Route.PROCEED
+    assert routers.route_gate(s(resolver_role="charge_nurse", senior_required=True)) is Route.DENIED
+
+
 def test_the_correction_loop_is_bounded():
     """Without a bound, safety_fail -> gate -> safety_fail cycles forever. The spec
     requires a finite number of rounds; the number itself is a documented unknown.

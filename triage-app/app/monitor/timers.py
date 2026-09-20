@@ -17,6 +17,8 @@ from pathlib import Path
 import psycopg
 from psycopg.rows import dict_row
 
+from app.budgets import INVARIANT_SCAN_WINDOW_HOURS
+
 
 @lru_cache(maxsize=1)
 def connection() -> psycopg.Connection:
@@ -56,6 +58,17 @@ def set_state(conn: psycopg.Connection, timer_id: str, fire_state: str, **fields
     conn.execute(
         f"UPDATE timers SET {assignments}, updated_at = now() WHERE timer_id = %s",
         (fire_state, *fields.values(), timer_id),
+    )
+
+
+def record_decision(conn: psycopg.Connection, timer_id: str, decision: str) -> None:
+    """Record what the symbolic layers chose for this claim, and what they
+    overrode. Separate from `set_state`: a decision is written *before*
+    the action it names runs, `fire_state` after.
+    """
+    conn.execute(
+        "UPDATE timers SET decision = %s, updated_at = now() WHERE timer_id = %s",
+        (decision, timer_id),
     )
 
 
@@ -127,6 +140,34 @@ def record_escalation(conn: psycopg.Connection, *, case_id: str, fire_id: str, c
         "INSERT INTO escalations (case_id, fire_id, channel, recipient_class, reason) VALUES (%s, %s, %s, %s, %s)",
         (case_id, fire_id, channel, recipient_class, reason),
     )
+
+
+def escalation_exists(conn: psycopg.Connection, *, case_id: str, reason: str) -> bool:
+    """Whether this case already has an escalation for this reason — so an
+    invariant found on every tick is raised once, not every five seconds.
+    """
+    return conn.execute(
+        "SELECT 1 FROM escalations WHERE case_id = %s AND reason = %s LIMIT 1",
+        (case_id, reason),
+    ).fetchone() is not None
+
+
+def all_rows(conn: psycopg.Connection) -> list[dict]:
+    """Timer rows for the deadline-check pass: every timer still in a
+    non-terminal `fire_state`, plus any terminal one touched within
+    `INVARIANT_SCAN_WINDOW_HOURS` — bounding the scan to roughly the live
+    ward instead of the store's all-time history. `last_error` is included so
+    callers can tell a genuine engine refusal apart from an ordinary FAILED.
+    """
+    return conn.cursor(row_factory=dict_row).execute(
+        """
+        SELECT timer_id, case_id, kind, fire_state, last_error
+          FROM timers
+         WHERE fire_state NOT IN ('DELIVERED', 'CANCELLED', 'ESCALATED_TO_HUMAN')
+            OR updated_at > now() - %s * INTERVAL '1 hour'
+        """,
+        (INVARIANT_SCAN_WINDOW_HOURS,),
+    ).fetchall()
 
 
 def heartbeat_status(conn: psycopg.Connection, *, stale_after_seconds: int) -> dict:
