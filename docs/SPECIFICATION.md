@@ -651,6 +651,9 @@ These are the properties enforced by the symbolic layer (OPA, Z3, Prolog, Datalo
 | I17 | CRM write-back | Liveness (bounded) | Each visit's clinical data reaches the CRM within T of the CRM being reachable. | `G(visit_data_pending ∧ crm_reachable → F≤T crm_updated)` | timers; temporal monitor |
 | I18 | Audit | Safety | Every change to a case, and every refused attempt, is written to its audit log with a reason, in one fixed record structure. | `G(step_ran → audit_record_added)` | checkpoint cross-check: every step adds a record |
 | I19 | No duplicate active case | Safety | A patient with an active (non-released) case cannot have a second, distinct case opened for them via intake. | `G(new_case(p, c) ∧ (∃c' ≠ c: active_case(p, c')) → ¬enter_pipeline(c))` | Datalog (provenance) |
+| I20 | Case immutability after close | Safety | Once a case is closed, none of its fields (acuity, clinical status, control state) change again. | `G(closed(c) → G ¬field_changed(c))` | guard; temporal monitor |
+| I21 | Audit log append-only | Safety | An audit record, once written, is never modified or deleted. | `G(audit_record_added(r) → G(¬modified(r) ∧ ¬deleted(r)))` | Datalog (provenance); DB constraint |
+| I22 | Single active writer per case | Safety | No two staff actions mutate the same case at the same time. | `G(¬(write(p1, c) ∧ write(p2, c) ∧ concurrent ∧ p1 ≠ p2))` | guard/lock; tests |
 
 All T values live in one table in `triage-app/app/budgets.py`.
 
