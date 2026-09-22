@@ -1,215 +1,331 @@
 # The waiting-room monitor
 
-How `app/monitor/` works, plus the graph nodes it talks to
-(`app/graph/nodes/terminal.py`, `gate.py`, `reassessment.py`).
+This explains `app/monitor/` — the background process that watches patients
+waiting in the queue and makes sure nobody gets forgotten.
 
-## The problem
+## The problem it solves
 
-A triaged patient waiting in the queue must be looked at again after a while
-(a "reassessment"). Nobody watches a clock per patient, so a background
-process does: the **monitor**.
+A patient gets triaged and put in the queue. Someone has to check on them
+again after a while — that's called a "reassessment". Nobody sits there
+watching a clock for each patient, so a background process does: the
+**monitor**. It also chases up staff who haven't answered an approval
+request in time.
+
+## How a case "waits"
+
+When a case needs to wait (for a reassessment, or for a nurse's approval),
+it doesn't sit in a loop burning CPU. It saves its exact state to the
+database and **pauses** — this uses LangGraph's `interrupt()`. Later, the
+monitor (or a nurse) sends an event that **resumes** the case from exactly
+where it paused, with new information attached (e.g. "your timer went off"
+or "here's the nurse's answer"). This is why the tables below store so
+little — the actual case state lives in LangGraph's own checkpoint tables;
+the monitor's tables only track the clock.
 
 ## The files
 
-```
-app/monitor/timers.py    the table + reads/writes; claims rows without two processes taking the same one
-app/monitor/fire.py      "a timer is due - now what?": gathers the facts, executes the decision
-app/monitor/bthreads.py  the decision itself: BPpy b-threads pick the one allowed event
-app/monitor/sweeper.py   the loop: every 5s ask timers.py what's due, hand it to fire.py (`uv run sweeper`)
-app/symbolic/            the engines fire.py asks: Prolog rules, OPA policy, Datalog rules
-```
+- **`timers.py`** — owns the database tables. Schedules timers, lets a
+  sweeper safely "claim" one so two sweepers never grab the same row, and
+  records what happened.
+- **`fire.py`** — "a timer just went off — now what happens?" Gathers the
+  facts about the case and timer, asks the decision-making layers what to
+  do, then actually does it (dispatch, reconcile, or send a reminder).
+- **`bthreads.py`** — the decision-making itself, using a library called
+  BPpy (behavioral programming). One thread proposes the obvious action;
+  other threads act as safety rules that can override it.
+- **`sweeper.py`** — the loop that ties it together. Every 5 seconds it asks
+  `timers.py` what's due, hands each one to `fire.py`, and afterwards runs a
+  sanity check across every timer. Run it with `uv run sweeper`.
+- **`app/symbolic/`** — three independent rule engines (`fire.py` asks all
+  of them and requires them to agree): Prolog rules, an OPA policy, and
+  Datalog rules. These aren't part of this folder but `fire.py` and
+  `sweeper.py` depend on them for every real decision — see "the three
+  engines that double-check every decision" below.
 
-Tests mirror the split in `tests/monitor/`.
+## Timers: what they are and why each one exists
 
-```mermaid
-flowchart LR
-  TS["timers.py<br/>schema · schedule · claim/lease · heartbeat · decision"]
-  FI["fire.py<br/>handle · dispatch · reconcile · reminders"]
-  BT["bthreads.py<br/>BPpy: pick the one allowed event"]
-  SY["app/symbolic<br/>Prolog · OPA · Datalog"]
-  SW["sweeper.py<br/>the loop (uv run sweeper)"]
-  GR["graph nodes<br/>monitoring · awaiting_human_approval · reassessment_required"]
+A **timer** is one row in the `timers` table: "at this time, this case needs
+this thing to happen." There are four kinds:
 
-  GR -- "timers.schedule(...)" --> TS
-  SW -- "claim_due / claim_retryable" --> TS
-  SW -- "fire.handle(row)" --> FI
-  FI -- "select_action(ctx)" --> BT
-  FI -- "timer_action(ctx) must agree · opa gate before side effect" --> SY
-  SW -- "tick_invariants → escalations" --> SY
-  FI -- "timers.set_state / record_decision" --> TS
-  FI -- "graph.invoke(Command(resume=...))<br/>wakes the paused case" --> GR
-```
+### 1. `reassessment` — the recheck clock
 
-## The symbolic layers: who decides what
+Created when a case clears into the queue (`monitoring` state calls
+`timers.schedule(...)`). Says: "check on this patient again in N minutes."
+N depends on how urgent the patient is (their ESI acuity score, 1 = most
+urgent, 5 = least urgent):
 
-`fire.py` decides nothing on its own. For every claimed timer it builds one
-bag of facts (`_context`: kind, fire state, is the case still at the pause,
-how many reminders went out this hour) and asks:
+| Acuity | Recheck every |
+| --- | --- |
+| 1 (most urgent) | 10 minutes |
+| 2 | 15 minutes |
+| 3 | 30 minutes |
+| 4 | 60 minutes |
+| 5 (least urgent) | 120 minutes |
 
-| Layer | Question | Where | If it can't answer |
-| --- | --- | --- | --- |
-| **BPpy** `bthreads.py` | Which event is allowed *now*? A `proposer` asks for the naive thing; each rule is a b-thread that blocks it and requests the safe one (`UNKNOWN` → `RECONCILE`, pause resolved → `CANCEL`, budget spent → `FAIL_BUDGET`). | `fire.handle`, before anything runs | n/a — pure Python |
-| **Prolog** `app/symbolic/rules/monitor.pl` | Same question, derived independently, plus *why* anything is refused (`denial/3`). Also I14: may this role resolve this gate? | `fire.handle` (must agree with BPpy or the timer is `FAILED` with `layer_disagreement`); the human gate | timer `FAILED`, `engine_unavailable:prolog` |
-| **OPA** `app/symbolic/policy/monitor.rego` | May this exact side effect happen right now? (I5, I9) | immediately before `graph.invoke` (dispatch), before the notification record (notify), and for move/release | action denied, `engine_unavailable:opa` |
-| **Datalog** `app/symbolic/datalog.py` | Across *all* timers and cases this tick: is a waiting patient unwatched (I16)? Is a live timer pointing at a case that's gone? | end of every sweeper tick | pass skipped, sweeper keeps ticking |
+When it fires, the sweeper wakes the paused case with a `REASSESSMENT_TIMEOUT`
+event. The case then re-runs its full pipeline (classification, gate, safety
+checks) from scratch on fresh vitals — same as a brand new case — because a
+changed condition deserves the same scrutiny a first visit got.
 
-What each decision left behind is on the row: `timers.decision` holds the
-selected event and, when a rule overrode the proposal, which one and why
-(`RECONCILE (proposed DISPATCH: dispatch: blind_redispatch_from_unknown)`);
-`timers.last_error` holds any refusal. Datalog findings land in `escalations`
-(`unwatched_case`, `orphan_timer`), once per case, addressed to a technician;
-that layer never changes a timer.
+These numbers are working placeholders, not settled clinical policy — a
+Medical Director still needs to sign off on the actual minutes.
 
-Two of these are real engines outside Python: SWI-Prolog (`swipl`) and the
-`opa` binary. Without them every guarded action is refused — the sweeper keeps
-ticking and the rows say `engine_unavailable`. Install notes are in the
-top-level README.
+### 2. `gate_reminder` — nudge someone to approve a case
 
-## Key idea: the case is paused, not finished
+When a case is paused waiting for a human to approve it (the
+"human-approval gate"), two of these are scheduled at once — one for each
+"rung" of escalation:
 
-A queued case saves its exact state and **pauses**. It wakes when the sweeper
-says "your timer went off" or a nurse says "this patient got worse", and
-continues from where it stopped with that new input.
+- Rung 0, fires after 10 minutes: pings the nurse who's assigned to the case.
+- Rung 1, fires after 20 minutes: widens to any charge nurse.
 
-## One reassessment, start to finish
+Which rung a `gate_reminder` belongs to is `cycle % 2` (cycle 0 = rung 0,
+cycle 1 = rung 1, cycle 2 = rung 0 again next gate visit, etc). If the case
+has already moved past the gate by the time the reminder fires, nothing is
+sent — it's cancelled instead (see "cancellation" below).
 
-```mermaid
-sequenceDiagram
-  participant Case as Patient's case
-  participant Clock as Timer list
-  participant Watcher as Background watcher (checks every 5s)
-  participant Nurse as Nurse
+### 3. `reassessment_reminder` — nudge someone to re-file a patient
 
-  Case->>Clock: "Check on me again in 30 minutes"
-  Case->>Case: Case pauses, waiting
-  loop every 5 seconds
-    Watcher->>Clock: "Anything due yet?"
-  end
-  Clock-->>Watcher: "Yes, this one"
-  Watcher->>Case: Wake the case up: reassessment time is due
-  Case->>Clock: "Remind a nurse if nobody re-files me in time"
-  Case->>Case: Case pauses again, waiting for the nurse
-  Nurse->>Case: Submits fresh vitals for this patient
-  Case->>Case: Re-checks the patient from scratch, same as the first visit
-  Case->>Clock: "Check on me again" (next cycle)
-```
+After a reassessment fires, the case pauses again waiting for a nurse to
+submit fresh vitals (`awaiting_reassessment_submission`). This timer fires
+15 minutes later and pings any charge nurse if nobody has re-filed yet.
+Without this timer, that particular pause would be the one place in the
+whole system where a waiting patient has no clock running on them at all.
 
-1. Case clears to the queue. `monitoring` calls `timers.schedule(...)`: "check
-   again in N minutes", N by acuity (`REASSESSMENT_INTERVAL_MINUTES` in
-   `app/budgets.py`):
+### 4. `senior_reminder` — nudge a shift lead
 
-   | ESI acuity       | recheck interval |
-   | ---------------- | ---------------- |
-   | 1 (most urgent)  | 10 min           |
-   | 2                | 15 min           |
-   | 3                | 30 min           |
-   | 4                | 60 min           |
-   | 5 (least urgent) | 120 min          |
+When a case has bounced between the approval gate and safety re-validation
+too many times (3 rounds) and gets escalated up to a senior, this timer
+fires 10 minutes later and pings any shift lead if the case is still stuck
+waiting for approval.
 
-2. `awaiting_reassessment` calls `interrupt()`. The run freezes.
-3. `uv run sweeper` polls every 5s. When the row is due, it claims it (marks it
-   taken, so a second sweeper skips it) and hands it to `fire.handle()`, which
-   lets the symbolic layers decide what a due reassessment timer gets — a
-   normal `DUE` row decides `DISPATCH`.
-4. `fire.dispatch()` calls `graph.invoke(Command(resume={"event":
-   "REASSESSMENT_TIMEOUT", ...}), config)` - LangGraph's "wake this paused
-   run with this answer". The frozen node continues.
-5. `reassessment_required` schedules a reminder timer and pauses again at
-   `awaiting_reassessment_submission`. `intake-channel`'s `POST /reassess/{case_id}`
-   (a form on the board's case panel) answers it with fresh vitals; routing
-   fields (`case_id`, `free_text`, ...) carry over unchanged.
-6. The whole pipeline re-runs on the fresh data - classification, gate,
-   safety - like a new case, because a changed acuity needs the same checks.
-7. Still fine? Back to the queue with a new timer for the next cycle.
+### The two families
 
-## Fire states
+`reassessment` timers are the only kind that actually changes the case —
+they wake it up and move it forward. The other three (`gate_reminder`,
+`reassessment_reminder`, `senior_reminder`) only send a notification; they
+never touch the case's state. Because of that, notify-only timers skip
+the "delivering" step entirely and go straight from due to done — see the
+state diagram below.
 
-"Fire" = a timer going off, like an alarm. `fire.py` handles what happens
-next. Every timer has a `fire_state`; these are all of them:
+## The `timers` table
 
-| Status (`fire_state`) | Meaning                                                                    |
-| --------------------- | -------------------------------------------------------------------------- |
-| `SCHEDULED`           | Waiting for its time.                                                      |
-| `DUE`                 | Time came; sweeper picked it up.                                           |
-| `DISPATCHING`         | Delivering the event right now.                                            |
-| `DELIVERED`           | Worked. Done.                                                              |
-| `FAILED`              | Clear "no" - case closed or missing. Safe to retry or give up. Also the bucket for every engine refusal (`engine_unavailable:<engine>`) and cross-layer disagreement (`layer_disagreement: ...`) — same retry/give-up rule, `last_error` says which. |
-| `UNKNOWN`             | Not sure it worked (process died mid-attempt).                             |
-| `ESCALATED_TO_HUMAN`  | Checked enough times, still unsure - page a human.                         |
-| `CANCELLED`           | Reminder no longer matters (notify-only reminders, see below).             |
+One row per timer. Columns:
 
-No stored "reconciling" state: `fire.reconcile()` takes an `UNKNOWN` row and
-resolves it in one call to `DELIVERED`, `FAILED`, `UNKNOWN` again, or
-`ESCALATED_TO_HUMAN`.
+| Column | What it holds |
+| --- | --- |
+| `timer_id` | Unique id, built as `case_id:kind:cycle` (e.g. `case-42:reassessment:3`). Because it includes `cycle`, each new reassessment cycle gets its own row instead of colliding with the previous one. |
+| `case_id` | Which patient case this timer belongs to. |
+| `kind` | One of the four kinds above. |
+| `cycle` | Which round this is for that case+kind. Reassessment cycles increment on the case each fire; gate reminder cycles are `visit + rung` so each gate visit gets fresh ids. |
+| `due_at` | The timestamp this timer should fire at. |
+| `fire_state` | Where this timer is in its lifecycle — see the states table below. |
+| `fire_id` | A fingerprint of `(case_id, kind, cycle, due_at)`, computed once the timer is actually acted on. Used to check "did *this exact* firing land in the case's history", so a retry can tell the difference between "never happened" and "happened but we lost track." |
+| `attempts` | How many times reconciliation has tried to figure out what happened to an unclear (`UNKNOWN`) timer. Once this hits the reconcile budget (3), the timer gives up and escalates to a human instead of trying forever. |
+| `lease_until` | While a sweeper is working on this row, this is set a bit into the future (30 seconds) so no other sweeper grabs it too. If a sweeper crashes mid-work, the lease simply expires and another sweeper picks the row back up. |
+| `worker_id` | Which sweeper process currently holds (or last held) the lease on this row. |
+| `last_error` | Human-readable reason the timer is stuck or failed, e.g. `engine_unavailable:prolog`, `layer_disagreement: bppy=X prolog=Y`, `opa denied dispatch: ...`, `case not found`. |
+| `created_at` / `updated_at` | Standard bookkeeping timestamps. |
+| `decision` | What the decision-making layers actually chose for this timer's most recent claim, and if a safety rule overrode the obvious choice, which one and why. Example: `RECONCILE (proposed DISPATCH: dispatch: blind_redispatch_from_unknown)`. Written *before* the chosen action runs; `fire_state` is written *after*. |
 
-```mermaid
-stateDiagram-v2
-  [*] --> SCHEDULED
-  SCHEDULED --> DUE: due_at passed (claim_due)
-  DUE --> DISPATCHING: reassessment (fire.dispatch)
-  DUE --> DELIVERED: notify-only reminder, sent
-  DUE --> CANCELLED: notify-only reminder, pause already resolved
-  DUE --> FAILED: notify-only reminder, budget exhausted
-  DISPATCHING --> DELIVERED: resume landed
-  DISPATCHING --> FAILED: resume raised, or case already gone
-  DISPATCHING --> UNKNOWN: process died mid-call (lease expired)
-  FAILED --> DISPATCHING: redispatched (claim_retryable)
-  UNKNOWN --> DELIVERED: reconcile finds fire_id in the audit log
-  UNKNOWN --> FAILED: reconcile finds case still at the same pause
-  UNKNOWN --> UNKNOWN: reconcile stays inconclusive, budget left
-  UNKNOWN --> ESCALATED_TO_HUMAN: reconcile budget spent
-  DELIVERED --> [*]
-  CANCELLED --> [*]
-  ESCALATED_TO_HUMAN --> [*]
-```
+There's also an index on `(fire_state, due_at)` so "find everything that's
+due" is a fast lookup rather than a table scan.
 
-The rule that matters: `UNKNOWN` **never jumps straight back to `DISPATCHING`**.
-A blind retry could deliver twice. `reconcile()` first checks the case's audit
-trail for this exact fire; only a clear "no" leads to a retry.
+## Fire states — every status a timer can be in
 
-That is what `fire_id` is for: a fingerprint of `(case_id, kind, cycle, due_at)`,
-so reconciliation asks "did _this_ fire land?" not "did _a_ reassessment happen?"
+"Fire" means a timer going off, like an alarm going off. This is the timer's
+full life cycle:
 
-## Notify-only reminders
+| `fire_state` | Meaning |
+| --- | --- |
+| `SCHEDULED` | Sitting in the queue, waiting for `due_at` to arrive. |
+| `DUE` | Its time came and a sweeper has claimed it — about to be handled. |
+| `DISPATCHING` | (reassessment timers only) Actively waking the case up right now. |
+| `DELIVERED` | Done — it worked. Terminal state. |
+| `FAILED` | A clear "no": the case is closed/missing, the reminder's notification budget ran out, or an engine refused it (`engine_unavailable:*`) or two engines disagreed (`layer_disagreement:*`). Safe to retry (for reassessments) or just leave as failed (for reminders). |
+| `UNKNOWN` | Not sure it worked — the process may have died mid-attempt. Needs reconciliation. |
+| `ESCALATED_TO_HUMAN` | Reconciliation tried enough times (3) and still can't tell — a human needs to look at it. Terminal state. |
+| `CANCELLED` | A notify-only reminder that no longer matters, because the thing it was about to remind someone of is already resolved. Terminal state. |
 
-A second kind of timer, three flavours. At the human-approval gate, two
-`gate_reminder` timers are scheduled at once: ping the assigned nurse after
-10 min, widen to any charge nurse after 20 (`_GATE_RUNG_RECIPIENTS`, indexed
-by `cycle % 2`, because each gate visit gets its own cycle numbers). A case
-handed up to a senior schedules one `senior_reminder` to any shift lead; the
-re-filing pause schedules one `reassessment_reminder` to any charge nurse.
-All three are I15: the system keeps escalating, widening who is alerted.
+There is deliberately no stored "reconciling" state — reconciliation takes
+an `UNKNOWN` row and resolves it to one of `DELIVERED`, `FAILED`, `UNKNOWN`
+again, or `ESCALATED_TO_HUMAN` in one single database call, so there's never
+a window where a row sits in a "currently reconciling" limbo.
 
-They **don't change the case** - just send a notification - so on the normal
-path they skip `DISPATCHING`/reconcile: `DUE` resolves straight to
-`DELIVERED`, `CANCELLED`, or `FAILED` (budget exhausted). The pause check
-itself now lives in `_context()`/the `stale_reminder` b-thread, not in
-`fire.notify()`: `_context()` reads whether the case is still at the pause
-the reminder is about (`_REMINDER_PAUSES`) into `pause_active`, and BPpy
-requests `CANCEL` when it's gone. `fire.notify()` is kept only as a named
-entry point — the decision is `handle()`'s. One path *can* still put a
-reminder into `UNKNOWN`/`ESCALATED_TO_HUMAN`: if `_context()` itself fails
-(the graph/checkpoint store is unreachable while reading that pause state),
-`handle()`'s `_context`-failure branch routes it through `_inconclusive` the
-same as a reassessment timer would.
+Transitions:
 
-## The heartbeat: watching the watcher
+- `SCHEDULED` → `DUE` once `due_at` has passed and a sweeper claims it.
+- `DUE` → `DISPATCHING` (reassessment) or straight to `DELIVERED` /
+  `CANCELLED` / `FAILED` (notify-only reminder, no dispatching step needed).
+- `DISPATCHING` → `DELIVERED` (the resume landed), `FAILED` (resume raised
+  an error, or the case is already gone), or `UNKNOWN` (the worker process
+  died mid-call, so the lease just expired without a clean answer).
+- `FAILED` → `DISPATCHING` again if it gets picked up for a retry.
+- `UNKNOWN` → `DELIVERED` (reconciliation found this exact `fire_id` already
+  in the case's history), `FAILED` (case is still sitting at the same pause,
+  so nothing landed — safe to redispatch), `UNKNOWN` again (still can't
+  tell, but attempts left), or `ESCALATED_TO_HUMAN` (attempts budget spent).
 
-A crashed sweeper fails silently: timers just stop firing. So every tick the
-sweeper writes a heartbeat row, and the board (`/api/heartbeat`) checks its
-age from the outside. Too old → "monitor degraded" banner. A dead process
-can't self-report, so the check must live elsewhere.
+**The one rule that matters most:** `UNKNOWN` never jumps straight back to
+`DISPATCHING`. If a fire's outcome is unclear, blindly retrying it could
+deliver it twice. Reconciliation always checks the case's audit trail for
+that exact `fire_id` first; only a clear "it never happened" leads to a
+safe retry.
 
-## Two bugs we hit
+## The sweeper loop
 
-**The cycle number.** Timer id is `case_id:kind:cycle`. With `cycle` always 0,
-the next reassessment reused the same id and due time forever. Fix:
-`reassessment_cycle` lives on the case and increments each fire.
+`uv run sweeper` runs forever. Every 5 seconds it does, in order:
 
-**Matching on "no fingerprint".** Dedupe was `rec.get("fire_id") == fire_id`.
-A nurse's deterioration report has no `fire_id`, and neither do many unrelated
-audit rows, so `None == None` dropped real reports as duplicates. Fix: only
-compare when there is a fingerprint (`if fire_id and ...`).
+1. **Heartbeat.** Write a row saying "I'm alive" (see below).
+2. **Claim newly due timers.** Ask the database for every `SCHEDULED` timer
+   whose `due_at` has passed and that nobody else currently holds the lease
+   on, and mark them `DUE` with a fresh 30-second lease, atomically (so two
+   sweepers running at once can never grab the same timer).
+3. **Claim leftovers.** Also grab any `FAILED`, `UNKNOWN`, or lease-expired
+   `DISPATCHING` timer — these are retries from earlier ticks.
+4. **Hand each claimed timer to `fire.handle()`**, which decides and
+   executes what happens to it.
+5. **Run one consistency check** (the Datalog pass, explained below) over
+   the *entire* timer store, looking for two kinds of trouble across all
+   cases at once — not just the ones claimed this tick.
 
-Both only show up after the cycle runs more than once - "worked in the first
-test" and "works" are different claims.
+If anything in a single tick blows up unexpectedly, the sweeper logs it and
+keeps ticking — a crash in one tick must never stop the whole loop.
+
+## The three engines that double-check every decision
+
+`fire.py` never decides anything by itself. For every claimed timer it
+builds one bag of facts (kind, current state, is the case still paused where
+this timer expects it to be, how many notifications went out recently) and
+asks three separate systems, each answering a different question:
+
+1. **BPpy (`bthreads.py`)** — "which single action is allowed right now?"
+   A `proposer` thread asks for the obvious thing (dispatch a reassessment,
+   send a reminder). Other threads act as safety rules: if the timer's last
+   attempt is unacknowledged, a rule blocks a blind redispatch and requests
+   `RECONCILE` first instead. If a reminder's pause already resolved, a rule
+   cancels it instead of sending it. If the notification budget for that
+   recipient is used up, a rule fails it instead of sending yet another
+   alert. Exactly one of these wins per timer.
+
+2. **Prolog** (`app/symbolic/rules/monitor.pl`) — answers the exact same
+   question independently, using its own rules, and can also explain *why*
+   something is refused. `fire.py` requires Prolog's answer to match BPpy's
+   answer exactly — if they disagree, the timer is marked `FAILED` with
+   `layer_disagreement` rather than guessing which one is right. If the
+   Prolog engine (`swipl`) itself isn't running, the timer fails with
+   `engine_unavailable:prolog`.
+
+3. **OPA** (`app/symbolic/policy/monitor.rego`) — the very last check,
+   immediately before the actual side effect (waking the case, or recording
+   a sent notification). Answers "is this exact action allowed to happen
+   right this instant?" If the `opa` binary isn't running, the action is
+   refused with `engine_unavailable:opa`.
+
+4. **Datalog** (`app/symbolic/datalog.py`) — not per-timer. Runs once at
+   the end of every sweeper tick over the whole timer store plus every case
+   it touches, looking for two problems no single timer can see on its own:
+   a waiting patient that nothing is currently watching (no live timer for
+   them at all), and a timer that's still alive but points at a case that no
+   longer exists. Each finding becomes one row in `escalations`, addressed
+   to a technician, written once per (case, problem) so a problem found on
+   every tick doesn't spam escalations every 5 seconds. This pass never
+   touches a timer's state — a timer it keeps flagging as a problem is
+   evidence to look at, not something to quietly fix.
+
+If either the Prolog or the OPA binary isn't installed and running, every
+action they'd need to approve is refused rather than silently allowed
+through — the sweeper keeps ticking, but the affected rows sit as
+`FAILED`/`engine_unavailable:*` until the engine comes back.
+
+## The other tables
+
+### `sweeper_heartbeats` — watching the watcher
+
+A crashed sweeper fails silently from the outside — timers just quietly
+stop firing, with no error anywhere. So every tick, the sweeper writes/
+updates one row here per `worker_id`, with the current timestamp
+(`beat_at`). Something outside the sweeper (the board's `/api/heartbeat`
+endpoint) checks the age of these rows: if a worker's last heartbeat is
+older than 3x the sweep interval (i.e. older than 15 seconds, since the
+sweeper ticks every 5), that worker counts as stale. If every known worker
+is stale, or there are no heartbeat rows at all, the whole monitor is
+considered degraded and the board shows a "monitor degraded" warning. A dead
+process can't report its own death, so this check has to live somewhere
+else — hence a separate table plus an outside reader.
+
+Columns: `worker_id` (primary key, one row per sweeper process),
+`beat_at` (last time that worker said "I'm alive").
+
+### `notifications` — every reminder actually sent
+
+One row per notification that was actually delivered. Used to enforce the
+per-recipient rate limit (no more than 5 notifications to the same
+recipient class inside any 60-minute window, so a bug in a timer loop can't
+flood staff with alerts) and to prevent sending the exact same reminder
+twice.
+
+Columns:
+
+| Column | What it holds |
+| --- | --- |
+| `id` | Auto-incrementing primary key. |
+| `case_id` | Which case this notification was about. |
+| `reason` | What it was for, built as `{kind}_{cycle}` (e.g. `gate_reminder_1`). |
+| `channel` | Where it was sent — currently always `notification_strip` (a UI element, not email/SMS). |
+| `recipient_class` | Who got it: `assigned_nurse`, `any_charge_nurse`, or `any_shift_lead`. |
+| `sent_at` | When it was recorded. |
+
+There's a uniqueness constraint on `(case_id, reason)` — trying to insert
+the same case+reason twice is silently rejected, which is what makes
+sending the same reminder twice impossible even under a race.
+
+### `escalations` — every time a human had to be paged
+
+One row per out-of-band alert raised either by a timer that ran out of
+reconciliation attempts (`ESCALATED_TO_HUMAN`) or by the Datalog
+consistency check (`unwatched_case`, `orphan_timer`).
+
+Columns:
+
+| Column | What it holds |
+| --- | --- |
+| `id` | Auto-incrementing primary key. |
+| `case_id` | Which case triggered this. |
+| `fire_id` | The fingerprint of the timer firing that led to this escalation. For Datalog findings (which aren't about one specific firing), this is a synthetic value like `invariant:unwatched_case`. |
+| `raised_at` | When it happened. |
+| `channel` | Where the alert went — currently always `notification_strip`. |
+| `recipient_class` | Who it's addressed to: `technician` (infra problems, Datalog findings) or `charge_nurse` (a reassessment that's ambiguously overdue). |
+| `reason` | Why: `store_unreachable`, `reassessment_overdue`, `unwatched_case`, or `orphan_timer`. |
+
+## Cancellation, in detail
+
+Only notify-only reminders (`gate_reminder`, `reassessment_reminder`,
+`senior_reminder`) get cancelled — a reassessment timer either dispatches or
+fails, never cancels. A reminder gets cancelled when, by the time it fires,
+the thing it would have reminded someone about is already resolved — e.g. a
+`gate_reminder` fires but the case already got approved and moved past the
+gate. Sending it anyway would be a stale, confusing alert, so BPpy's
+`stale_reminder` rule intercepts it before it goes out and cancels it
+instead.
+
+## Two real bugs this design had to fix
+
+**Reusing timer ids.** The timer id is `case_id:kind:cycle`. Early on,
+`cycle` was always 0, so every new reassessment for the same case reused the
+exact same `timer_id` and `due_at` forever — the second reassessment never
+actually got scheduled. Fixed by giving each case its own
+`reassessment_cycle` counter that increments on every fire.
+
+**Matching on nothing.** Reconciliation checked "did this fire land" by
+comparing `fire_id` values in the case's audit log. But a nurse manually
+reporting a patient got worse produces an audit entry with no `fire_id` at
+all (`None`) — and so do several other unrelated audit entries. Comparing
+`None == None` made those look like a match, so real nurse reports were
+mistaken for a timer's own delivery and silently dropped. Fixed by only
+counting a match when there's an actual fingerprint to compare
+(`if fire_id and rec.get("fire_id") == fire_id`).
+
+Both bugs only showed up once a case went through more than one cycle —
+"worked in the first test" and "actually works" turned out to be different
+claims.
