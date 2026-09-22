@@ -187,3 +187,15 @@ def test_record_escalation_persists_a_row(conn):
         "SELECT case_id, fire_id, channel, recipient_class, reason FROM escalations WHERE fire_id='fid-1'"
     ).fetchone()
     assert row == ("c1", "fid-1", "notification_strip", "charge_nurse", "budget_spent")
+
+
+def test_all_rows_always_includes_a_cases_most_recent_reassessment_timer(conn):
+    """A terminal reassessment timer untouched past the scan window must
+    still surface — otherwise a case whose deadline was never rescheduled
+    quietly ages out of the unwatched check instead of being caught by it."""
+    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
+    timers.set_state(conn, timer_id, "CANCELLED")
+    conn.execute("UPDATE timers SET updated_at = now() - interval '30 days' WHERE timer_id = %s", (timer_id,))
+
+    rows = timers.all_rows(conn)
+    assert [r["timer_id"] for r in rows] == [timer_id]

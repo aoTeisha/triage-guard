@@ -14,13 +14,17 @@ from pyDatalog import pyDatalog
 # A timer that is still going to do something. Everything else is history.
 LIVE_STATES = {"SCHEDULED", "DUE", "DISPATCHING", "FAILED", "UNKNOWN"}
 
-# A FAILED timer whose last_error starts with one of these isn't stuck on an
+# A FAILED timer whose last_error contains one of these isn't stuck on an
 # ordinary retryable fault — it's being refused outright by an engine outage
 # or a cross-layer disagreement (see `app.monitor.fire.handle`). `claim_retryable`
 # still retries it forever, but for *this* pass it must not count as
 # "coverage": a case whose only reassessment timer is wedged this way is
 # exactly the silently-unwatched case this check exists to catch.
-_ENGINE_REFUSAL_PREFIXES = ("engine_unavailable:", "layer_disagreement")
+#
+# Checked as a substring, not a prefix: the OPA gate wraps the same marker
+# (`fire.dispatch`/`fire._send_reminder` write "opa denied dispatch:
+# engine_unavailable:opa (...)"), so a plain startswith would miss it.
+_ENGINE_REFUSAL_MARKERS = ("engine_unavailable:", "layer_disagreement")
 
 RULES = """
 unwatched(C) <= waiting(C) & ~live_timer(C, 'reassessment', T)
@@ -38,7 +42,7 @@ def _is_engine_refused(timer: dict[str, Any]) -> bool:
     if timer["fire_state"] != "FAILED":
         return False
     last_error = timer.get("last_error") or ""
-    return last_error.startswith(_ENGINE_REFUSAL_PREFIXES)
+    return any(marker in last_error for marker in _ENGINE_REFUSAL_MARKERS)
 
 
 def tick_invariants(timer_rows: list[dict[str, Any]], case_rows: list[dict[str, Any]]) -> dict[str, list]:

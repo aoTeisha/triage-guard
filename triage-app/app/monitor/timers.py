@@ -154,10 +154,14 @@ def escalation_exists(conn: psycopg.Connection, *, case_id: str, reason: str) ->
 
 def all_rows(conn: psycopg.Connection) -> list[dict]:
     """Timer rows for the deadline-check pass: every timer still in a
-    non-terminal `fire_state`, plus any terminal one touched within
-    `INVARIANT_SCAN_WINDOW_HOURS` — bounding the scan to roughly the live
-    ward instead of the store's all-time history. `last_error` is included so
-    callers can tell a genuine engine refusal apart from an ordinary FAILED.
+    non-terminal `fire_state`, any terminal one touched within
+    `INVARIANT_SCAN_WINDOW_HOURS` (bounding the scan to roughly the live
+    ward instead of the store's all-time history), plus each case's single
+    most recent reassessment timer regardless of age — otherwise a case
+    whose last reassessment timer went terminal and was never replaced
+    quietly ages out of the unwatched check instead of being the case it
+    most needs to catch. `last_error` is included so callers can tell a
+    genuine engine refusal apart from an ordinary FAILED.
     """
     return conn.cursor(row_factory=dict_row).execute(
         """
@@ -165,6 +169,12 @@ def all_rows(conn: psycopg.Connection) -> list[dict]:
           FROM timers
          WHERE fire_state NOT IN ('DELIVERED', 'CANCELLED', 'ESCALATED_TO_HUMAN')
             OR updated_at > now() - %s * INTERVAL '1 hour'
+            OR timer_id IN (
+                 SELECT DISTINCT ON (case_id) timer_id
+                   FROM timers
+                  WHERE kind = 'reassessment'
+                  ORDER BY case_id, updated_at DESC
+               )
         """,
         (INVARIANT_SCAN_WINDOW_HOURS,),
     ).fetchall()

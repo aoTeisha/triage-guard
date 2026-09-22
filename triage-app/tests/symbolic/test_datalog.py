@@ -68,3 +68,13 @@ def test_a_failed_timer_from_an_engine_refusal_does_not_count_as_watching():
     # An ordinary FAILED (not an engine refusal) still counts as watched.
     rows = [{**_timer("a", "FAILED"), "last_error": "case not found"}]
     assert datalog.tick_invariants(rows, [_case("a")])["unwatched"] == []
+
+
+def test_an_opa_wrapped_engine_refusal_does_not_count_as_watching():
+    """fire.dispatch/_send_reminder wrap the refusal marker inside their own
+    "opa denied ..." message, not as a bare prefix — the check must still
+    catch it."""
+    for last_error in ("opa denied dispatch: engine_unavailable:opa (boom)",
+                       "opa denied notify: engine_unavailable:opa (boom)"):
+        rows = [{**_timer("a", "FAILED"), "last_error": last_error}]
+        assert datalog.tick_invariants(rows, [_case("a")])["unwatched"] == ["a"]
