@@ -26,8 +26,8 @@ def _reach_monitoring(conn, graph, run, case=None):
     state, pending, thread = run(case)
     assert pending == {"case_id": case["case_id"], "waiting_room": True}
     due_at = "2000-01-01T00:00:00Z"  # already due
-    timer_id = timers.schedule(conn, case_id=thread, kind="reassessment", cycle=0, due_at=due_at)
-    return {"timer_id": timer_id, "case_id": thread, "kind": "reassessment", "cycle": 0, "due_at": due_at}
+    timer_id = timers.schedule(conn, case_id=thread, kind="reassessment", schedule_seq=0, due_at=due_at)
+    return {"timer_id": timer_id, "case_id": thread, "kind": "reassessment", "schedule_seq": 0, "due_at": due_at}
 
 
 def test_fire_id_is_deterministic():
@@ -95,9 +95,9 @@ def test_dispatch_is_idempotent_on_a_case_already_past_monitoring(conn, graph, r
 
 
 def test_dispatch_refuses_a_case_that_does_not_exist(conn, graph):
-    timer_id = timers.schedule(conn, case_id="no-such-case", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
+    timer_id = timers.schedule(conn, case_id="no-such-case", kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
     timer = {"timer_id": timer_id, "case_id": "no-such-case", "kind": "reassessment",
-             "cycle": 0, "due_at": "2000-01-01T00:00:00Z"}
+             "schedule_seq": 0, "due_at": "2000-01-01T00:00:00Z"}
 
     outcome = fire.dispatch(conn, timer, graph=graph)
 
@@ -113,7 +113,7 @@ def test_reconcile_finds_a_landed_fire_in_the_audit_log(conn, graph, run):
     # The fire actually landed; only the ack was lost.
     graph.invoke(Command(resume={"event": "REASSESSMENT_TIMEOUT", "fire_id": fid}), config_for(timer["case_id"]))
 
-    outcome = fire.reconcile(conn, {**timer, "fire_id": fid, "attempts": 0}, graph=graph)
+    outcome = fire.reconcile(conn, {**timer, "fire_id": fid, "reconcile_attempts": 0}, graph=graph)
 
     assert outcome == "DELIVERED"
 
@@ -124,7 +124,7 @@ def test_reconcile_fails_a_fire_that_never_applied(conn, graph, run):
     timers.set_state(conn, timer["timer_id"], "UNKNOWN", fire_id=fid)
     # Nobody ever resumed the thread — the case is still sitting at the pause.
 
-    outcome = fire.reconcile(conn, {**timer, "fire_id": fid, "attempts": 0}, graph=graph)
+    outcome = fire.reconcile(conn, {**timer, "fire_id": fid, "reconcile_attempts": 0}, graph=graph)
 
     assert outcome == "FAILED"
     row = conn.execute("SELECT fire_state FROM timers WHERE timer_id=%s", (timer["timer_id"],)).fetchone()
@@ -140,7 +140,7 @@ def test_reconcile_escalates_when_the_store_is_unreachable_through_the_whole_bud
 
     monkeypatch.setattr(graph, "get_state_history", broken_history)
 
-    outcome = fire.reconcile(conn, {**timer, "fire_id": fid, "attempts": fire.RECONCILE_BUDGET - 1}, graph=graph)
+    outcome = fire.reconcile(conn, {**timer, "fire_id": fid, "reconcile_attempts": fire.RECONCILE_BUDGET - 1}, graph=graph)
 
     assert outcome == "ESCALATED_TO_HUMAN"
     row = conn.execute("SELECT recipient_class, reason FROM escalations WHERE fire_id=%s", (fid,)).fetchone()
@@ -150,7 +150,7 @@ def test_reconcile_escalates_when_the_store_is_unreachable_through_the_whole_bud
 def test_notify_delivers_a_reminder_while_the_gate_is_still_open(conn, graph, run):
     state, pending, thread = run(GAP_CASE)
     assert pending is not None and pending.get("gate") is not None
-    timer = {"timer_id": "t1", "case_id": thread, "kind": "gate_reminder", "cycle": 0,
+    timer = {"timer_id": "t1", "case_id": thread, "kind": "gate_reminder", "schedule_seq": 0,
              "due_at": "2000-01-01T00:00:00Z"}
 
     outcome = fire.notify(conn, timer, graph=graph)
@@ -163,7 +163,7 @@ def test_notify_delivers_a_reminder_while_the_gate_is_still_open(conn, graph, ru
 
 def test_notify_widens_to_any_charge_nurse_on_the_second_rung(conn, graph, run):
     state, pending, thread = run(GAP_CASE)
-    timer = {"timer_id": "t2", "case_id": thread, "kind": "gate_reminder", "cycle": 1,
+    timer = {"timer_id": "t2", "case_id": thread, "kind": "gate_reminder", "schedule_seq": 1,
              "due_at": "2000-01-01T00:00:00Z"}
 
     fire.notify(conn, timer, graph=graph)
@@ -176,7 +176,7 @@ def test_notify_widens_to_any_charge_nurse_on_the_second_rung(conn, graph, run):
 def test_notify_cancels_a_reminder_for_a_gate_thats_already_resolved(conn, graph, run):
     state, pending, thread = run(GAP_CASE)
     graph.invoke(Command(resume=CHARGE), config_for(thread))
-    timer = {"timer_id": "t3", "case_id": thread, "kind": "gate_reminder", "cycle": 0,
+    timer = {"timer_id": "t3", "case_id": thread, "kind": "gate_reminder", "schedule_seq": 0,
              "due_at": "2000-01-01T00:00:00Z"}
 
     outcome = fire.notify(conn, timer, graph=graph)
@@ -190,7 +190,7 @@ def test_notify_stops_sending_once_the_recipients_budget_is_spent(conn, graph, r
     state, pending, thread = run(GAP_CASE)
     timers.record_notification(conn, case_id="someone-else", reason="x", channel="notification_strip",
                                 recipient_class="assigned_nurse")
-    timer = {"timer_id": "t4", "case_id": thread, "kind": "gate_reminder", "cycle": 0,
+    timer = {"timer_id": "t4", "case_id": thread, "kind": "gate_reminder", "schedule_seq": 0,
              "due_at": "2000-01-01T00:00:00Z"}
 
     outcome = fire.notify(conn, timer, graph=graph)
@@ -224,9 +224,9 @@ def test_reconcile_escalation_holds_even_when_the_graph_is_totally_unreachable(c
     """Wait-liveness through total control-plane failure — the escalation must be
     raised even though this reconcile call never touches a working graph at all.
     """
-    timer_id = timers.schedule(conn, case_id="c9", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
-    timer = {"timer_id": timer_id, "case_id": "c9", "kind": "reassessment", "cycle": 0,
-             "due_at": "2000-01-01T00:00:00Z", "fire_id": "fid-c9", "attempts": fire.RECONCILE_BUDGET - 1}
+    timer_id = timers.schedule(conn, case_id="c9", kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
+    timer = {"timer_id": timer_id, "case_id": "c9", "kind": "reassessment", "schedule_seq": 0,
+             "due_at": "2000-01-01T00:00:00Z", "fire_id": "fid-c9", "reconcile_attempts": fire.RECONCILE_BUDGET - 1}
 
     class UnreachableGraph:
         def get_state_history(self, config):
@@ -245,22 +245,22 @@ def test_reconcile_escalation_holds_even_when_the_graph_is_totally_unreachable(c
 from app.symbolic import prolog
 
 
-def _gate_timer(conn, graph, run, cycle=0):
+def _gate_timer(conn, graph, run, schedule_seq=0):
     """A case parked at the human gate, plus a gate reminder row for it."""
     state, pending, thread = run(GAP_CASE)
     assert pending is not None and pending.get("gate") is not None
-    timer_id = timers.schedule(conn, case_id=thread, kind="gate_reminder", cycle=cycle,
+    timer_id = timers.schedule(conn, case_id=thread, kind="gate_reminder", schedule_seq=schedule_seq,
                                 due_at="2000-01-01T00:00:00Z")
-    return {"timer_id": timer_id, "case_id": thread, "kind": "gate_reminder", "cycle": cycle,
+    return {"timer_id": timer_id, "case_id": thread, "kind": "gate_reminder", "schedule_seq": schedule_seq,
             "due_at": "2000-01-01T00:00:00Z"}
 
 
-def test_handle_records_the_decision_and_dispatches(conn, graph, run):
+def test_handle_records_the_chosen_action_and_dispatches(conn, graph, run):
     timer = _reach_monitoring(conn, graph, run)
 
     assert fire.handle(conn, timer, graph=graph) == "DELIVERED"
 
-    row = conn.execute("SELECT decision FROM timers WHERE timer_id=%s", (timer["timer_id"],)).fetchone()
+    row = conn.execute("SELECT chosen_action FROM timers WHERE timer_id=%s", (timer["timer_id"],)).fetchone()
     assert row == ("DISPATCH",)
 
 
@@ -270,13 +270,13 @@ def test_handle_reconciles_an_unknown_timer_instead_of_redispatching(conn, graph
     fid = fire.fire_id(timer["case_id"], "reassessment", 0, timer["due_at"])
     timers.set_state(conn, timer["timer_id"], "UNKNOWN", fire_id=fid)
 
-    outcome = fire.handle(conn, {**timer, "fire_state": "UNKNOWN", "fire_id": fid, "attempts": 0}, graph=graph)
+    outcome = fire.handle(conn, {**timer, "fire_state": "UNKNOWN", "fire_id": fid, "reconcile_attempts": 0}, graph=graph)
 
     # reconcile proves the fire never applied: FAILED, retryable — and the case was NOT resumed
     assert outcome == "FAILED"
     assert hydrate(graph.get_state(config_for(timer["case_id"])).values)["reassessment_cycle"] == 0
-    decision = conn.execute("SELECT decision FROM timers WHERE timer_id=%s", (timer["timer_id"],)).fetchone()[0]
-    assert decision == "RECONCILE (proposed DISPATCH: dispatch: blind_redispatch_from_unknown)"
+    chosen_action = conn.execute("SELECT chosen_action FROM timers WHERE timer_id=%s", (timer["timer_id"],)).fetchone()[0]
+    assert chosen_action == "RECONCILE (proposed DISPATCH: dispatch: blind_redispatch_from_unknown)"
 
 
 def test_handle_refuses_when_prolog_and_bppy_disagree(conn, graph, run, monkeypatch):
@@ -330,12 +330,12 @@ def test_handle_treats_an_unreachable_graph_as_store_unreachable(conn):
         def get_state(self, config):
             raise ConnectionError("graph unreachable")
 
-    timers.schedule(conn, case_id="c9", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
-    timer = {"timer_id": "c9:reassessment:0", "case_id": "c9", "kind": "reassessment", "cycle": 0,
+    timers.schedule(conn, case_id="c9", kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
+    timer = {"timer_id": "c9:reassessment:0", "case_id": "c9", "kind": "reassessment", "schedule_seq": 0,
              "due_at": "2000-01-01T00:00:00Z"}
 
     assert fire.handle(conn, timer, graph=UnreachableGraph()) == "UNKNOWN"
 
-    row = conn.execute("SELECT fire_state, attempts, last_error FROM timers WHERE timer_id=%s",
+    row = conn.execute("SELECT fire_state, reconcile_attempts, last_error FROM timers WHERE timer_id=%s",
                        (timer["timer_id"],)).fetchone()
     assert row == ("UNKNOWN", 1, "graph unreachable")

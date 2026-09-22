@@ -99,9 +99,10 @@ def correction_rounds_left(rounds_used: int) -> bool:
 
 # How many times the monitor will retry confirming whether a timer's fire
 # actually reached the case (via store/graph reads) before giving up and
-# escalating to a human. Same status as RETRY_BUDGET — a placeholder pending
-# real latency measurements — kept low enough that the sweeper isn't blocked
-# waiting on it.
+# escalating to a human. Counted per timer row in `timers.reconcile_attempts`;
+# a failed dispatch is a different thing and does not spend this. Same status
+# as RETRY_BUDGET — a placeholder pending real latency measurements — kept low
+# enough that the sweeper isn't blocked waiting on it.
 RECONCILE_BUDGET: int = 3
 
 # Needs sign-off from clinical staff (a Medical Director), not just an
@@ -153,6 +154,13 @@ REASSESSMENT_REMINDER_DELAY_MINUTES: int = 15
 # ward" while it was touched within this window — bounding the per-tick scan
 # to roughly the live case count instead of the store's all-time history.
 INVARIANT_SCAN_WINDOW_HOURS: int = 24
+
+# How far back the board looks when it reads the monitor's `notifications`
+# and `escalations` tables for its notification strip. Long enough that a
+# reminder stays visible across a shift handover, short enough that the query
+# stays index-only. Same status as the other timings here: a working
+# placeholder.
+BOARD_FEED_WINDOW_MINUTES: int = 120
 
 # A worker's heartbeat is considered stale once it's older than this many
 # sweep intervals (`app.monitor.sweeper.SWEEP_INTERVAL_SECONDS`). The sweep

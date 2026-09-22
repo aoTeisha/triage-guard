@@ -408,3 +408,58 @@ def test_a_closed_case_cannot_be_released_again(seeded):
                         json={"reason": "discharge", "actor_role": "charge_nurse"})
 
     assert again.status_code == 409
+
+
+def test_a_sent_reminder_reaches_the_strip_with_its_recipient(seeded):
+    """The monitor records a reminder in its own table and never resumes the
+    case, so the only way it reaches a human is this join."""
+    case_id = seeded[0]
+    timers.record_notification(timers.connection(), case_id=case_id,
+                               reason="gate_reminder_1", channel="notification_strip",
+                               recipient_class="any_charge_nurse")
+
+    notes = client.get("/api/board").json()["notifications"]
+
+    nudge = next(n for n in notes if n.get("source") == "reminder")
+    assert nudge["kind"] == "gate_reminder"
+    assert nudge["schedule_seq"] == 1
+    assert nudge["recipient_class"] == "any_charge_nurse"
+    assert nudge["case_id"] == case_id
+
+
+def test_a_reminder_is_attached_to_its_own_card(seeded):
+    case_id = seeded[0]
+    timers.record_notification(timers.connection(), case_id=case_id,
+                               reason="gate_reminder_0", channel="notification_strip",
+                               recipient_class="assigned_nurse")
+
+    cards = client.get("/api/board").json()["cards"]
+
+    card = next(c for c in cards if c["case_id"] == case_id)
+    assert card["reminders"]["recipient_class"] == "assigned_nurse"
+    assert card["reminders"]["elapsed_min"] == 0
+    assert all(c["reminders"] is None for c in cards if c["case_id"] != case_id)
+
+
+def test_an_escalation_outranks_a_reminder_on_the_card(seeded):
+    """Both are nudges about the same case; the card shows the more serious
+    one rather than whichever happened to be newest."""
+    case_id = seeded[0]
+    conn = timers.connection()
+    timers.record_notification(conn, case_id=case_id, reason="gate_reminder_1",
+                               channel="notification_strip", recipient_class="any_charge_nurse")
+    timers.record_escalation(conn, case_id=case_id, fire_id="invariant:unwatched_case",
+                             channel="notification_strip", recipient_class="technician",
+                             reason="unwatched_case")
+
+    cards = client.get("/api/board").json()["cards"]
+
+    card = next(c for c in cards if c["case_id"] == case_id)
+    assert card["reminders"]["source"] == "escalation"
+    assert card["reminders"]["kind"] == "unwatched_case"
+
+
+def test_cards_carry_no_reminder_when_none_was_sent(seeded):
+    cards = client.get("/api/board").json()["cards"]
+    assert cards
+    assert all(c["reminders"] is None for c in cards)

@@ -188,7 +188,7 @@ def test_the_senior_reminder_goes_to_a_shift_lead(graph, run, monkeypatch, conn)
     _answer(graph, thread, "escalate_further", "charge_nurse")
 
     timer = {"timer_id": "s1", "case_id": thread, "kind": "senior_reminder",
-             "cycle": 0, "due_at": "2000-01-01T00:00:00Z"}
+             "schedule_seq": 0, "due_at": "2000-01-01T00:00:00Z"}
     assert fire.notify(conn, timer, graph=graph) == "DELIVERED"
     assert conn.execute(
         "SELECT recipient_class FROM notifications WHERE case_id=%s", (thread,)

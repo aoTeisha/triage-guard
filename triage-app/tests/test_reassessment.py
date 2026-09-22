@@ -104,14 +104,14 @@ def test_the_reminder_notifies_a_charge_nurse_while_the_case_still_waits(
     case = DEMO_CASES["clean"]
     _, _, thread = run(case)
     _fire_the_timer(graph, thread)
-    # cycle 0 -> _GATE_RUNG_RECIPIENTS[0] is "assigned_nurse", so only the
+    # schedule_seq 0 -> _GATE_RUNG_RECIPIENTS[0] is "assigned_nurse", so only the
     # kind-aware branch in fire.notify (not a gate-only fallback) can produce
-    # "any_charge_nurse" here; cycle 1 wouldn't discriminate the bug.
+    # "any_charge_nurse" here; schedule_seq 1 would not discriminate the bug.
     timer = {
         "timer_id": "r1",
         "case_id": thread,
         "kind": "reassessment_reminder",
-        "cycle": 0,
+        "schedule_seq": 0,
         "due_at": "2000-01-01T00:00:00Z",
     }
 
@@ -134,7 +134,7 @@ def test_the_reminder_is_cancelled_once_the_nurse_has_refiled(conn, graph, run):
         "timer_id": "r2",
         "case_id": thread,
         "kind": "reassessment_reminder",
-        "cycle": 1,
+        "schedule_seq": 1,
         "due_at": "2000-01-01T00:00:00Z",
     }
 

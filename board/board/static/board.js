@@ -119,7 +119,27 @@ const NOTICE_LABELS = {
   BLK: "action refused",
 };
 
+// Who a reminder went to, in words. The monitor widens the audience with each
+// rung, so these read as an escalation ladder.
+const REMINDER_LABELS = {
+  assigned_nurse: "assigned nurse reminded",
+  any_charge_nurse: "charge nurse reminded",
+  any_shift_lead: "shift lead reminded",
+};
+// What the monitor found on its own, looking across every case at once.
+const ESCALATION_LABELS = {
+  unwatched_case: "no timer watching this case",
+  orphan_timer: "timer with no case",
+  reassessment_overdue: "reassessment overdue",
+  store_unreachable: "case store unreachable",
+};
+
 const plain = (map, key, fallback) => map[key] || fallback || key || "—";
+
+const nudgeLabel = (n) =>
+  n.source === "escalation"
+    ? plain(ESCALATION_LABELS, n.kind)
+    : plain(REMINDER_LABELS, n.recipient_class);
 
 let selected = null;
 // Case ids seen on the previous poll. A new arrival sorts into the middle of a
@@ -163,11 +183,19 @@ function renderNotifications(items) {
     return;
   }
   box.replaceChildren(...items.map((n) => {
-    const node = el("div", "notif-item" + (n.arrow === "BLK" ? " blk" : ""));
-    node.append(el("div", "arrow", plain(NOTICE_LABELS, n.arrow)),
+    // An escalation borrows the red `.blk` treatment: both mean the system
+    // refused something or could not do it, which is what a nurse needs to
+    // spot first.
+    const escalated = n.source === "escalation";
+    const node = el("div", "notif-item"
+      + (n.arrow === "BLK" || escalated ? " blk" : "")
+      + (n.source === "reminder" ? " nudge" : ""));
+    node.append(el("div", "arrow", n.source ? nudgeLabel(n) : plain(NOTICE_LABELS, n.arrow)),
                 el("div", "complaint", n.complaint || ""),
                 el("div", "at", n.at));
-    node.title = `${n.case_id} · arrow ${n.arrow} · ${n.action} · ${readable(n.explanation)} · ${n.at}`;
+    node.title = n.source
+      ? `${n.case_id} · ${n.source} · ${nudgeLabel(n)} · ${n.at}`
+      : `${n.case_id} · arrow ${n.arrow} · ${n.action} · ${readable(n.explanation)} · ${n.at}`;
     // Clicking a notification opens the case panel but leaves this sidebar
     // open — only the X closes it.
     node.onclick = () => openPanel(n.case_id);
@@ -244,6 +272,11 @@ function renderCard(card, thresholds) {
     chips.append(el("span", "chip", "not yet triaged"));
   }
   if (card.gate_pending) chips.append(el("span", "chip gate", "awaiting charge nurse"));
+  if (card.reminders) {
+    chips.append(el("span",
+      "chip " + (card.reminders.source === "escalation" ? "escalated" : "nudge"),
+      `${nudgeLabel(card.reminders)} ${formatWait(card.reminders.elapsed_min)} ago`));
+  }
   card.degraded.forEach((d) => chips.append(el("span", "chip degraded", plain(DEGRADED_LABELS, d))));
   card.flags.forEach((f) => chips.append(el("span", "chip", plain(FLAG_LABELS, f))));
   node.append(chips);

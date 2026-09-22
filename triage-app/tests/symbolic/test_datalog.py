@@ -8,8 +8,8 @@ from __future__ import annotations
 from app.symbolic import datalog
 
 
-def _timer(case_id, fire_state, kind="reassessment", cycle=0):
-    return {"timer_id": f"{case_id}:{kind}:{cycle}", "case_id": case_id, "kind": kind, "fire_state": fire_state}
+def _timer(case_id, fire_state, kind="reassessment", schedule_seq=0):
+    return {"timer_id": f"{case_id}:{kind}:{schedule_seq}", "case_id": case_id, "kind": kind, "fire_state": fire_state}
 
 
 def _case(case_id, control_state="monitoring", clinical_status="waiting"):

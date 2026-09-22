@@ -143,7 +143,7 @@ def test_a_refused_gate_keeps_its_reminders_deliverable(conn, graph, run):
     _, _, thread = run(GAP_CASE)
     graph.invoke(Command(resume=JUNIOR), {"configurable": {"thread_id": thread}})
     timer = {"timer_id": "t-after-refusal", "case_id": thread, "kind": "gate_reminder",
-             "cycle": 0, "due_at": "2000-01-01T00:00:00Z"}
+             "schedule_seq": 0, "due_at": "2000-01-01T00:00:00Z"}
 
     assert fire.notify(conn, timer, graph=graph) == "DELIVERED"
 

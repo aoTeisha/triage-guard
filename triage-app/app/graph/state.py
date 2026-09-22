@@ -90,14 +90,16 @@ class TriageState(BaseModel):
     acuity_bucket: Optional[AcuityBucket] = None
     order_key: Optional[tuple[int, str]] = None
     arrival_time: Optional[str] = None
-    # How many times a reassessment timer has fired for this case.
-    # Incremented on every fire, so a later cycle never reuses an earlier
+    # How many times a reassessment timer has fired for this case. Incremented
+    # on every fire, and passed straight to `timers.schedule` as the new
+    # timer's `schedule_seq`, so a later reassessment never reuses an earlier
     # one's `timer_id` and its now-stale `due_at`.
     reassessment_cycle: int = 0
     # How many times this case has been parked waiting for a nurse to re-file
     # it. Counts waiting periods, not completed reassessments, so each one gets
     # its own reminder timer id (`timers.schedule` is idempotent on
-    # case_id:kind:cycle, so reusing a number would silently skip the reminder).
+    # case_id:kind:schedule_seq, so reusing a number would silently skip the
+    # reminder).
     refile_waits: int = 0
     # Set when a release is signed. Kept on the case so the audit trail and
     # the detail panel can both show why a patient was released without

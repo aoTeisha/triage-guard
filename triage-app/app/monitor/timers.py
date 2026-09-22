@@ -41,19 +41,20 @@ def due_in(minutes: int) -> datetime:
     return datetime.now(timezone.utc) + timedelta(minutes=minutes)
 
 
-def schedule(conn: psycopg.Connection, *, case_id: str, kind: str, cycle: int, due_at: datetime | str) -> str:
-    """Insert a SCHEDULED timer. Id is `case_id:kind:cycle`. Repeat calls are a no-op."""
-    timer_id = f"{case_id}:{kind}:{cycle}"
+def schedule(conn: psycopg.Connection, *, case_id: str, kind: str, schedule_seq: int,
+             due_at: datetime | str) -> str:
+    """Insert a SCHEDULED timer. Id is `case_id:kind:schedule_seq`. Repeat calls are a no-op."""
+    timer_id = f"{case_id}:{kind}:{schedule_seq}"
     conn.execute(
-        "INSERT INTO timers (timer_id, case_id, kind, cycle, due_at) VALUES (%s, %s, %s, %s, %s) "
+        "INSERT INTO timers (timer_id, case_id, kind, schedule_seq, due_at) VALUES (%s, %s, %s, %s, %s) "
         "ON CONFLICT (timer_id) DO NOTHING",
-        (timer_id, case_id, kind, cycle, due_at),
+        (timer_id, case_id, kind, schedule_seq, due_at),
     )
     return timer_id
 
 
 def set_state(conn: psycopg.Connection, timer_id: str, fire_state: str, **fields: object) -> None:
-    """Set `fire_state` and any extra columns (`fire_id`, `attempts`, …) in one write."""
+    """Set `fire_state` and any extra columns (`fire_id`, `reconcile_attempts`, …) in one write."""
     assignments = ", ".join(f"{c} = %s" for c in ("fire_state", *fields))
     conn.execute(
         f"UPDATE timers SET {assignments}, updated_at = now() WHERE timer_id = %s",
@@ -61,49 +62,51 @@ def set_state(conn: psycopg.Connection, timer_id: str, fire_state: str, **fields
     )
 
 
-def record_decision(conn: psycopg.Connection, timer_id: str, decision: str) -> None:
-    """Record what the symbolic layers chose for this claim, and what they
-    overrode. Separate from `set_state`: a decision is written *before*
-    the action it names runs, `fire_state` after.
+def record_chosen_action(conn: psycopg.Connection, timer_id: str, chosen_action: str) -> None:
+    """Record which action the symbolic layers picked for this claim, and what
+    they overrode. Separate from `set_state`: the chosen action is written
+    *before* the action it names runs, `fire_state` after.
     """
     conn.execute(
-        "UPDATE timers SET decision = %s, updated_at = now() WHERE timer_id = %s",
-        (decision, timer_id),
+        "UPDATE timers SET chosen_action = %s, updated_at = now() WHERE timer_id = %s",
+        (chosen_action, timer_id),
     )
 
 
-def claim_due(conn: psycopg.Connection, *, worker_id: str, lease_seconds: int) -> list[dict]:
+def claim_due(conn: psycopg.Connection, *, worker_id: str, lock_seconds: int) -> list[dict]:
     """Claim every due SCHEDULED timer. Safe if several sweepers run at once."""
     # One UPDATE ... RETURNING: Postgres serializes it, so two sweepers never take the same row.
     return conn.cursor(row_factory=dict_row).execute(
         """
         UPDATE timers
            SET fire_state = 'DUE',
-               lease_until = now() + %s * INTERVAL '1 second',
+               locked_until = now() + %s * INTERVAL '1 second',
                worker_id = %s,
                updated_at = now()
          WHERE fire_state = 'SCHEDULED'
            AND due_at <= now()
-           AND (lease_until IS NULL OR lease_until < now())
-        RETURNING timer_id, case_id, kind, cycle, due_at
+           AND (locked_until IS NULL OR locked_until < now())
+        RETURNING timer_id, case_id, kind, schedule_seq, due_at
         """,
-        (lease_seconds, worker_id),
+        (lock_seconds, worker_id),
     ).fetchall()
 
 
-def claim_retryable(conn: psycopg.Connection, *, worker_id: str, lease_seconds: int) -> list[dict]:
-    """Claim FAILED, UNKNOWN, or lease-expired DISPATCHING timers. Caller decides what to do next."""
+def claim_retryable(conn: psycopg.Connection, *, worker_id: str, lock_seconds: int) -> list[dict]:
+    """Claim FAILED, UNKNOWN, or DISPATCHING timers whose lock has run out.
+    Caller decides what to do next.
+    """
     return conn.cursor(row_factory=dict_row).execute(
         """
         UPDATE timers
-           SET lease_until = now() + %s * INTERVAL '1 second',
+           SET locked_until = now() + %s * INTERVAL '1 second',
                worker_id = %s,
                updated_at = now()
          WHERE fire_state IN ('FAILED', 'UNKNOWN', 'DISPATCHING')
-           AND (lease_until IS NULL OR lease_until < now())
-        RETURNING timer_id, case_id, kind, cycle, due_at, fire_state, fire_id, attempts
+           AND (locked_until IS NULL OR locked_until < now())
+        RETURNING timer_id, case_id, kind, schedule_seq, due_at, fire_state, fire_id, reconcile_attempts
         """,
-        (lease_seconds, worker_id),
+        (lock_seconds, worker_id),
     ).fetchall()
 
 
@@ -150,6 +153,41 @@ def escalation_exists(conn: psycopg.Connection, *, case_id: str, reason: str) ->
         "SELECT 1 FROM escalations WHERE case_id = %s AND reason = %s LIMIT 1",
         (case_id, reason),
     ).fetchone() is not None
+
+
+def recent_notifications(conn: psycopg.Connection, *, window_minutes: int,
+                         limit: int = 200) -> list[dict]:
+    """Reminders sent in the last `window_minutes`, newest first — the board's
+    read side for the notification strip.
+    """
+    return conn.cursor(row_factory=dict_row).execute(
+        """
+        SELECT case_id, reason, channel, recipient_class, sent_at
+          FROM notifications
+         WHERE sent_at >= now() - %s * INTERVAL '1 minute'
+         ORDER BY sent_at DESC
+         LIMIT %s
+        """,
+        (window_minutes, limit),
+    ).fetchall()
+
+
+def recent_escalations(conn: psycopg.Connection, *, window_minutes: int,
+                       limit: int = 200) -> list[dict]:
+    """Escalations raised in the last `window_minutes`, newest first. Unlike
+    `notifications` this table has no uniqueness constraint, so the limit is
+    load-bearing rather than a courtesy.
+    """
+    return conn.cursor(row_factory=dict_row).execute(
+        """
+        SELECT case_id, fire_id, reason, channel, recipient_class, raised_at
+          FROM escalations
+         WHERE raised_at >= now() - %s * INTERVAL '1 minute'
+         ORDER BY raised_at DESC
+         LIMIT %s
+        """,
+        (window_minutes, limit),
+    ).fetchall()
 
 
 def all_rows(conn: psycopg.Connection) -> list[dict]:

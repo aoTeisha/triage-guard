@@ -42,6 +42,7 @@ Run:
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -57,7 +58,7 @@ from app.labels import Arrow
 from app.monitor import timers
 from app.monitor.sweeper import SWEEP_INTERVAL_SECONDS
 from app.runner import config_for, history
-from app.budgets import BOARD_RED_AFTER_MINUTES
+from app.budgets import BOARD_FEED_WINDOW_MINUTES, BOARD_RED_AFTER_MINUTES
 from app.states import AcuityBucket, ClinicalStatus, State
 from app.views import BOARD_COLUMNS, CaseCard, card_from_state, case_view
 
@@ -113,43 +114,125 @@ def counters(cards: list[CaseCard]) -> dict[str, int | float]:
 def heartbeat_status() -> dict:
     """Whether the background sweeper process (which fires reassessment
     timers) is still alive, checked here rather than trusted from the sweeper
-    itself — a dead process can't self-report. Reads the same SQLite file the
-    timers live in, opened read-write like the rest of `timers.py`, even
-    though the board itself never writes to it.
+    itself — a dead process can't self-report. Reads the same Postgres
+    database the timers live in, opened read-write like the rest of
+    `timers.py`, even though the board itself never writes to it.
     """
     return timers.heartbeat_status(
         timers.connection(), stale_after_seconds=HEARTBEAT_STALE_MULTIPLIER * SWEEP_INTERVAL_SECONDS
     )
 
 
-def notifications(states: list[dict]) -> list[dict]:
-    """The notification strip along the top of the board, built directly from
-    each case's audit log instead of a separate notification table.
-
-    Every event worth surfacing (missing fields, a failed scan, an injection
-    refusal, an approval request, a transition accepted) is already recorded
-    as an audit-log entry tagged with an "arrow" code, so filtering
-    `audit_log` by `NOTIFY_ARROWS` is enough — there's no second store that
-    could drift out of sync with the case that caused the entry.
+def _utc_iso(value: datetime) -> str:
+    """Postgres hands back `timestamptz` in the session's timezone; the audit
+    log's own timestamps are always UTC. Normalising here is what lets the two
+    streams sort against each other.
     """
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _at_key(at: str | None) -> datetime:
+    """Sort key for a record from either stream. Parsed rather than compared
+    as a string: `sent_at` carries microseconds and `now_iso()` sometimes
+    doesn't, and `+` sorts before `.`, which would order same-second records
+    wrongly.
+    """
+    try:
+        return datetime.fromisoformat(at)
+    except (TypeError, ValueError):
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _split_reason(reason: str) -> tuple[str, int | None]:
+    """`"gate_reminder_1"` -> `("gate_reminder", 1)`, mirroring how `fire.py`
+    builds the reason as `f"{kind}_{schedule_seq}"`.
+    """
+    kind, _, tail = reason.rpartition("_")
+    return (kind, int(tail)) if kind and tail.isdigit() else (reason, None)
+
+
+def monitor_feed() -> list[dict]:
+    """Reminders and escalations the monitor recorded recently.
+
+    Two queries per refresh, never one per card. This uses the connection
+    `heartbeat_status()` already opens on every `/api/board` call, so it adds
+    no new way for this endpoint to fail.
+    """
+    conn = timers.connection()
+    window = BOARD_FEED_WINDOW_MINUTES
+    feed = []
+    for row in timers.recent_notifications(conn, window_minutes=window):
+        kind, schedule_seq = _split_reason(row["reason"])
+        feed.append({"source": "reminder", "case_id": row["case_id"], "kind": kind,
+                     "schedule_seq": schedule_seq, "recipient_class": row["recipient_class"],
+                     "at": _utc_iso(row["sent_at"])})
+    for row in timers.recent_escalations(conn, window_minutes=window):
+        feed.append({"source": "escalation", "case_id": row["case_id"], "kind": row["reason"],
+                     "schedule_seq": None, "recipient_class": row["recipient_class"],
+                     "at": _utc_iso(row["raised_at"])})
+    return feed
+
+
+def _nudge_rank(rec: dict) -> tuple[bool, str]:
+    return (rec["source"] == "escalation", rec["at"])
+
+
+def nudges_by_case(feed: list[dict], now: datetime) -> dict[str, dict]:
+    """The one nudge worth putting on each card: an escalation outranks any
+    reminder, and among reminders the newest wins — which is also the widest
+    rung, because rungs only ever widen.
+    """
+    best: dict[str, dict] = {}
+    for rec in feed:
+        current = best.get(rec["case_id"])
+        if current is None or _nudge_rank(rec) > _nudge_rank(current):
+            best[rec["case_id"]] = rec
+    return {
+        case_id: rec | {"elapsed_min": max(0, int((now - _at_key(rec["at"])).total_seconds() // 60))}
+        for case_id, rec in best.items()
+    }
+
+
+def _complaint(state: dict) -> str:
+    """The patient's chief complaint, so a notification says which patient
+    it's about without anyone memorizing case ids. Checked in order: redacted
+    payload, then parsed fields, then the raw payload. The cases that generate
+    the most notifications (missing fields, unusable scan, refused input) are
+    exactly the ones that failed before a redacted payload was ever built, and
+    a notification reading only "invalid input" helps nobody. Only the
+    complaint text is ever read from the raw payload — never a patient
+    identifier.
+    """
+    return (
+        (state.get("redacted_payload") or {}).get("chief_complaint")
+        or (state.get("parsed_fields") or {}).get("chief_complaint")
+        or (state.get("raw_payload") or {}).get("chief_complaint")
+        or ""
+    )
+
+
+def notifications(states: list[dict], feed: list[dict] | None = None) -> list[dict]:
+    """The notification strip along the top of the board, from two sources.
+
+    Case events come from each case's audit log, filtered by `NOTIFY_ARROWS`
+    — every one of them is already recorded there by the node that caused it.
+    Staff reminders and monitor escalations cannot come from there: the
+    sweeper sends them without resuming the case, by design (`fire.notify`
+    changes no case state), so they live in the monitor's own `notifications`
+    and `escalations` tables and are joined here by `case_id`.
+
+    That join is the drift this function used to avoid by reading one store:
+    a feed row whose case has since closed still shows for the rest of the
+    window. It is the accepted cost of surfacing a reminder at all — the
+    alternative was writing to the checkpoint store from the sweeper, which
+    would disturb the `snapshot.next` that both `repo.load()` and
+    `fire._context()` read.
+    """
+    complaints = {(state.get("case_id") or ""): _complaint(state) for state in states}
     records = [
         {
             "case_id": rec.get("case_id") or state.get("case_id"),
-            # The patient's chief complaint, so a notification says which
-            # patient it's about without anyone memorizing case ids. Checked
-            # in order: redacted payload, then parsed fields, then the raw
-            # payload. The cases that generate the most notifications
-            # (missing fields, unusable scan, refused input) are exactly the
-            # ones that failed before a redacted payload was ever built, and
-            # a notification reading only "invalid input" helps nobody. Only
-            # the complaint text is ever read from the raw payload — never a
-            # patient identifier.
-            "complaint": (
-                (state.get("redacted_payload") or {}).get("chief_complaint")
-                or (state.get("parsed_fields") or {}).get("chief_complaint")
-                or (state.get("raw_payload") or {}).get("chief_complaint")
-                or ""
-            ),
+            "complaint": _complaint(state),
             "at": rec.get("at"),
             "arrow": rec.get("arrow"),
             "action": rec.get("action"),
@@ -159,7 +242,10 @@ def notifications(states: list[dict]) -> list[dict]:
         for rec in state.get("audit_log", [])
         if rec.get("arrow") in NOTIFY_ARROWS
     ]
-    records.sort(key=lambda r: r.get("at") or "", reverse=True)
+    records += [
+        rec | {"complaint": complaints.get(rec["case_id"], "")} for rec in (feed or [])
+    ]
+    records.sort(key=lambda r: _at_key(r.get("at")), reverse=True)
     return records[:12]
 
 
@@ -169,12 +255,18 @@ def board_payload() -> dict:
     states = [s for s, _ in scanned]
     cards = sort_cards([c for c in (card_from_state(s, None, g) for s, g in scanned) if c])
     place = positions(cards)
+    feed = monitor_feed()
+    nudges = nudges_by_case(feed, datetime.now(timezone.utc))
     return {
         "columns": BOARD_COLUMNS,
         "counters": counters(cards),
         "red_after_min": BOARD_RED_AFTER_MINUTES,
-        "notifications": notifications(states),
-        "cards": [c.model_dump() | {"position": place.get(c.case_id)} for c in cards],
+        "notifications": notifications(states, feed),
+        "cards": [
+            c.model_dump()
+            | {"position": place.get(c.case_id), "reminders": nudges.get(c.case_id)}
+            for c in cards
+        ],
     }
 
 
@@ -192,8 +284,8 @@ def health():
 def heartbeat():
     """Whether the background sweeper is alive, as its own endpoint so the
     frontend can poll it independently of `/api/board`. This just adds one
-    more query against the same SQLite file `/api/board` already reads case
-    data from.
+    more query against the same Postgres database `/api/board` already reads
+    the timer store from.
     """
     return heartbeat_status()
 

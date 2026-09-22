@@ -79,10 +79,12 @@ When a case is paused waiting for a human to approve it (the
 - Rung 0, fires after 10 minutes: pings the nurse who's assigned to the case.
 - Rung 1, fires after 20 minutes: widens to any charge nurse.
 
-Which rung a `gate_reminder` belongs to is `cycle % 2` (cycle 0 = rung 0,
-cycle 1 = rung 1, cycle 2 = rung 0 again next gate visit, etc). If the case
-has already moved past the gate by the time the reminder fires, nothing is
-sent — it's cancelled instead (see "cancellation" below).
+Both rungs of a gate visit are scheduled at the same moment, taking two
+consecutive `schedule_seq` numbers — an even one for rung 0 and the next, odd
+one for rung 1. So the rung a `gate_reminder` belongs to is just
+`schedule_seq % 2`, and the next gate visit starts again at the following even
+number. If the case has already moved past the gate by the time the reminder
+fires, nothing is sent — it's cancelled instead (see "cancellation" below).
 
 ### 3. `reassessment_reminder` — nudge someone to re-file a patient
 
@@ -108,25 +110,31 @@ never touch the case's state. Because of that, notify-only timers skip
 the "delivering" step entirely and go straight from due to done — see the
 state diagram below.
 
+A reminder still reaches a human, just not by changing the case: it is
+written to the `notifications` table described below, and the board joins
+that table onto each case by `case_id` when it builds a page. That join is
+the entire delivery path — if it were removed, every reminder would fire
+correctly and be seen by nobody.
+
 ## The `timers` table
 
 One row per timer. Columns:
 
 | Column | What it holds |
 | --- | --- |
-| `timer_id` | Unique id, built as `case_id:kind:cycle` (e.g. `case-42:reassessment:3`). Because it includes `cycle`, each new reassessment cycle gets its own row instead of colliding with the previous one. |
+| `timer_id` | Unique id, built as `case_id:kind:schedule_seq` (e.g. `case-42:reassessment:3`). Because it includes the sequence number, each new scheduling gets its own row instead of colliding with the previous one. |
 | `case_id` | Which patient case this timer belongs to. |
 | `kind` | One of the four kinds above. |
-| `cycle` | Which round this is for that case+kind. Reassessment cycles increment on the case each fire; gate reminder cycles are `visit + rung` so each gate visit gets fresh ids. |
+| `schedule_seq` | Which scheduling of this case+kind this row is — an occurrence number supplied by whoever scheduled it, not a count of failures, and never bounded. Reassessments number theirs from a counter on the case that goes up each time one fires; gate reminders use `visit + rung` so each gate visit gets a fresh pair. |
 | `due_at` | The timestamp this timer should fire at. |
 | `fire_state` | Where this timer is in its lifecycle — see the states table below. |
-| `fire_id` | A fingerprint of `(case_id, kind, cycle, due_at)`, computed once the timer is actually acted on. Used to check "did *this exact* firing land in the case's history", so a retry can tell the difference between "never happened" and "happened but we lost track." |
-| `attempts` | How many times reconciliation has tried to figure out what happened to an unclear (`UNKNOWN`) timer. Once this hits the reconcile budget (3), the timer gives up and escalates to a human instead of trying forever. |
-| `lease_until` | While a sweeper is working on this row, this is set a bit into the future (30 seconds) so no other sweeper grabs it too. If a sweeper crashes mid-work, the lease simply expires and another sweeper picks the row back up. |
-| `worker_id` | Which sweeper process currently holds (or last held) the lease on this row. |
+| `fire_id` | A fingerprint of `(case_id, kind, schedule_seq, due_at)`, computed once the timer is actually acted on. Used to check "did *this exact* firing land in the case's history", so a retry can tell the difference between "never happened" and "happened but we lost track." |
+| `reconcile_attempts` | How many times reconciliation has tried to figure out what happened to an unclear (`UNKNOWN`) timer. Once this hits the reconcile budget (3), the timer gives up and escalates to a human instead of trying forever. Only reconciliation spends it — a dispatch that fails outright does not. |
+| `locked_until` | While a sweeper is working on this row, this is set a bit into the future (30 seconds), and the claim queries skip rows whose lock hasn't run out yet, so no other sweeper grabs it. Nothing releases the lock explicitly: if a sweeper crashes mid-work the lock simply runs out and another sweeper picks the row back up. Not a deadline — `due_at` above is the deadline. |
+| `worker_id` | Which sweeper process currently holds (or last held) the lock on this row. |
 | `last_error` | Human-readable reason the timer is stuck or failed, e.g. `engine_unavailable:prolog`, `layer_disagreement: bppy=X prolog=Y`, `opa denied dispatch: ...`, `case not found`. |
 | `created_at` / `updated_at` | Standard bookkeeping timestamps. |
-| `decision` | What the decision-making layers actually chose for this timer's most recent claim, and if a safety rule overrode the obvious choice, which one and why. Example: `RECONCILE (proposed DISPATCH: dispatch: blind_redispatch_from_unknown)`. Written *before* the chosen action runs; `fire_state` is written *after*. |
+| `chosen_action` | Which action the rule layers picked for this timer's most recent claim, and if a safety rule overrode the obvious choice, which one and why. Example: `RECONCILE (proposed DISPATCH: dispatch: blind_redispatch_from_unknown)`. Written *before* the action it names runs; `fire_state` is written *after*. This is the monitor's own choice about a timer — nothing to do with the charge nurse's decision at an approval gate, which lives on the case. |
 
 There's also an index on `(fire_state, due_at)` so "find everything that's
 due" is a fast lookup rather than a table scan.
@@ -159,12 +167,13 @@ Transitions:
   `CANCELLED` / `FAILED` (notify-only reminder, no dispatching step needed).
 - `DISPATCHING` → `DELIVERED` (the resume landed), `FAILED` (resume raised
   an error, or the case is already gone), or `UNKNOWN` (the worker process
-  died mid-call, so the lease just expired without a clean answer).
+  died mid-call, so its lock on the row just ran out without a clean answer).
 - `FAILED` → `DISPATCHING` again if it gets picked up for a retry.
 - `UNKNOWN` → `DELIVERED` (reconciliation found this exact `fire_id` already
   in the case's history), `FAILED` (case is still sitting at the same pause,
   so nothing landed — safe to redispatch), `UNKNOWN` again (still can't
-  tell, but attempts left), or `ESCALATED_TO_HUMAN` (attempts budget spent).
+  tell, but reconcile attempts left), or `ESCALATED_TO_HUMAN` (the reconcile
+  budget is spent).
 
 **The one rule that matters most:** `UNKNOWN` never jumps straight back to
 `DISPATCHING`. If a fire's outcome is unclear, blindly retrying it could
@@ -178,11 +187,11 @@ safe retry.
 
 1. **Heartbeat.** Write a row saying "I'm alive" (see below).
 2. **Claim newly due timers.** Ask the database for every `SCHEDULED` timer
-   whose `due_at` has passed and that nobody else currently holds the lease
-   on, and mark them `DUE` with a fresh 30-second lease, atomically (so two
+   whose `due_at` has passed and that nobody else currently holds the lock
+   on, and mark them `DUE` with a fresh 30-second lock, atomically (so two
    sweepers running at once can never grab the same timer).
-3. **Claim leftovers.** Also grab any `FAILED`, `UNKNOWN`, or lease-expired
-   `DISPATCHING` timer — these are retries from earlier ticks.
+3. **Claim leftovers.** Also grab any `FAILED`, `UNKNOWN`, or `DISPATCHING`
+   timer whose lock has run out — these are retries from earlier ticks.
 4. **Hand each claimed timer to `fire.handle()`**, which decides and
    executes what happens to it.
 5. **Run one consistency check** (the Datalog pass, explained below) over
@@ -271,7 +280,7 @@ Columns:
 | --- | --- |
 | `id` | Auto-incrementing primary key. |
 | `case_id` | Which case this notification was about. |
-| `reason` | What it was for, built as `{kind}_{cycle}` (e.g. `gate_reminder_1`). |
+| `reason` | What it was for, built as `{kind}_{schedule_seq}` (e.g. `gate_reminder_1`). |
 | `channel` | Where it was sent — currently always `notification_strip` (a UI element, not email/SMS). |
 | `recipient_class` | Who got it: `assigned_nurse`, `any_charge_nurse`, or `any_shift_lead`. |
 | `sent_at` | When it was recorded. |
@@ -279,6 +288,16 @@ Columns:
 There's a uniqueness constraint on `(case_id, reason)` — trying to insert
 the same case+reason twice is silently rejected, which is what makes
 sending the same reminder twice impossible even under a race.
+
+**Who reads it.** The board, on every refresh (about every 5 seconds). It
+asks for the rows from the last 2 hours (`BOARD_FEED_WINDOW_MINUTES`),
+newest first, and does two things with them: each one becomes a line in the
+notification strip naming who was nudged, and the most significant one for
+each case becomes a chip on that patient's card, reading something like
+"charge nurse reminded 12m ago". Only the widest rung shows on the card,
+because each rung is an escalation of the one before it. A reminder older
+than the 2-hour window stops appearing even though its row stays in the
+table forever.
 
 ### `escalations` — every time a human had to be paged
 
@@ -298,6 +317,14 @@ Columns:
 | `recipient_class` | Who it's addressed to: `technician` (infra problems, Datalog findings) or `charge_nurse` (a reassessment that's ambiguously overdue). |
 | `reason` | Why: `store_unreachable`, `reassessment_overdue`, `unwatched_case`, or `orphan_timer`. |
 
+**Who reads it.** The board, over the same 2-hour window and on the same
+refresh as `notifications` above. An escalation is shown in red rather than
+amber, and it outranks any reminder for the same case — so a card whose
+patient has both a reminder and an escalation shows the escalation, because
+"no timer is watching this patient" matters more than "somebody was
+nudged". Like reminders, escalations never change a timer; they are a
+report addressed to a person.
+
 ## Cancellation, in detail
 
 Only notify-only reminders (`gate_reminder`, `reassessment_reminder`,
@@ -311,11 +338,12 @@ instead.
 
 ## Two real bugs this design had to fix
 
-**Reusing timer ids.** The timer id is `case_id:kind:cycle`. Early on,
-`cycle` was always 0, so every new reassessment for the same case reused the
-exact same `timer_id` and `due_at` forever — the second reassessment never
-actually got scheduled. Fixed by giving each case its own
-`reassessment_cycle` counter that increments on every fire.
+**Reusing timer ids.** The timer id is `case_id:kind:schedule_seq`. Early on,
+the sequence number was always 0, so every new reassessment for the same case
+reused the exact same `timer_id` and `due_at` forever — the second
+reassessment never actually got scheduled. Fixed by giving each case its own
+`reassessment_cycle` counter that increments on every fire and supplies the
+sequence number.
 
 **Matching on nothing.** Reconciliation checked "did this fire land" by
 comparing `fire_id` values in the case's audit log. But a nurse manually
@@ -326,6 +354,6 @@ mistaken for a timer's own delivery and silently dropped. Fixed by only
 counting a match when there's an actual fingerprint to compare
 (`if fire_id and rec.get("fire_id") == fire_id`).
 
-Both bugs only showed up once a case went through more than one cycle —
+Both bugs only showed up once a case went round more than once —
 "worked in the first test" and "actually works" turned out to be different
 claims.

@@ -38,7 +38,7 @@ def monitoring(state: TriageState) -> dict[str, Any]:
     minutes = REASSESSMENT_INTERVAL_MINUTES[state.acuity] if state.acuity else 0
     due_at = timers.due_in(minutes)
     timers.schedule(timers.connection(), case_id=state.case_id, kind="reassessment",
-                     cycle=state.reassessment_cycle, due_at=due_at)
+                     schedule_seq=state.reassessment_cycle, due_at=due_at)
 
     return {
         "control_state": State.MONITORING.value,

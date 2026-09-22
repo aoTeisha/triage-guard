@@ -41,7 +41,7 @@ def reassessment_required(state: TriageState) -> dict[str, Any]:
     # has a two-step ladder. Add a second rung if reminders go unanswered in
     # practice — the recipient lookup in `fire.notify` is where it would go.
     timers.schedule(timers.connection(), case_id=state.case_id,
-                     kind="reassessment_reminder", cycle=waits, due_at=due_at)
+                     kind="reassessment_reminder", schedule_seq=waits, due_at=due_at)
 
     return {
         "control_state": State.REASSESSMENT_REQUIRED.value,

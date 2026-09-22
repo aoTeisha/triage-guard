@@ -10,16 +10,16 @@ from app.monitor import timers
 
 
 def test_schedule_inserts_a_scheduled_row(conn):
-    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2026-01-01T00:00:00Z")
+    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", schedule_seq=0, due_at="2026-01-01T00:00:00Z")
 
-    row = conn.execute("SELECT case_id, kind, cycle, due_at, fire_state FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
+    row = conn.execute("SELECT case_id, kind, schedule_seq, due_at, fire_state FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
     assert row == ("c1", "reassessment", 0, datetime(2026, 1, 1, tzinfo=timezone.utc), "SCHEDULED")
 
 
 def test_claim_due_claims_a_past_due_timer(conn):
-    timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
+    timers.schedule(conn, case_id="c1", kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
 
-    claimed = timers.claim_due(conn, worker_id="w1", lease_seconds=30)
+    claimed = timers.claim_due(conn, worker_id="w1", lock_seconds=30)
 
     assert len(claimed) == 1
     assert claimed[0]["case_id"] == "c1"
@@ -28,18 +28,18 @@ def test_claim_due_claims_a_past_due_timer(conn):
 
 
 def test_claim_due_ignores_future_timers(conn):
-    timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2999-01-01T00:00:00Z")
+    timers.schedule(conn, case_id="c1", kind="reassessment", schedule_seq=0, due_at="2999-01-01T00:00:00Z")
 
-    claimed = timers.claim_due(conn, worker_id="w1", lease_seconds=30)
+    claimed = timers.claim_due(conn, worker_id="w1", lock_seconds=30)
 
     assert claimed == []
 
 
 def test_claim_due_does_not_double_claim_an_active_lease(conn):
-    timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
-    timers.claim_due(conn, worker_id="w1", lease_seconds=9999)
+    timers.schedule(conn, case_id="c1", kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
+    timers.claim_due(conn, worker_id="w1", lock_seconds=9999)
 
-    claimed_by_second_worker = timers.claim_due(conn, worker_id="w2", lease_seconds=30)
+    claimed_by_second_worker = timers.claim_due(conn, worker_id="w2", lock_seconds=30)
 
     assert claimed_by_second_worker == []
 
@@ -47,11 +47,11 @@ def test_claim_due_does_not_double_claim_an_active_lease(conn):
 def test_claim_due_claims_a_scheduled_row_with_an_expired_stale_lease(conn):
     # A SCHEDULED row should never carry a lease in normal flow, but the claim
     # query's own lease check must still let a stale/expired one through.
-    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
-    conn.execute("UPDATE timers SET lease_until='2000-01-01T00:00:00Z', worker_id='ghost' WHERE timer_id=%s", (timer_id,))
+    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
+    conn.execute("UPDATE timers SET locked_until='2000-01-01T00:00:00Z', worker_id='ghost' WHERE timer_id=%s", (timer_id,))
     conn.commit()
 
-    claimed = timers.claim_due(conn, worker_id="w2", lease_seconds=30)
+    claimed = timers.claim_due(conn, worker_id="w2", lock_seconds=30)
 
     assert len(claimed) == 1
     row = conn.execute("SELECT worker_id FROM timers WHERE case_id='c1'").fetchone()
@@ -69,13 +69,13 @@ def test_heartbeat_upserts_the_workers_row(conn):
     assert conn.execute("SELECT COUNT(*) FROM sweeper_heartbeats").fetchone()[0] == 1
 
 
-def test_schedule_is_idempotent_on_the_same_case_kind_cycle(conn):
+def test_schedule_is_idempotent_on_the_same_case_kind_schedule_seq(conn):
     # The graph's `monitoring` node calls `schedule` every time its pause
-    # actually resumes, which can happen more than once for the same cycle
+    # actually resumes, which can happen more than once for the same sequence number
     # on a replay — so a second call must be a no-op, not a duplicate row or
     # a changed due_at.
-    first = timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2026-01-01T00:00:00Z")
-    second = timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2099-01-01T00:00:00Z")
+    first = timers.schedule(conn, case_id="c1", kind="reassessment", schedule_seq=0, due_at="2026-01-01T00:00:00Z")
+    second = timers.schedule(conn, case_id="c1", kind="reassessment", schedule_seq=0, due_at="2099-01-01T00:00:00Z")
 
     assert first == second
     rows = conn.execute("SELECT due_at FROM timers WHERE timer_id=%s", (first,)).fetchall()
@@ -83,19 +83,19 @@ def test_schedule_is_idempotent_on_the_same_case_kind_cycle(conn):
 
 
 def test_set_state_updates_fire_state_and_fields(conn):
-    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
+    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
 
-    timers.set_state(conn, timer_id, "DISPATCHING", fire_id="fid-1", attempts=1)
+    timers.set_state(conn, timer_id, "DISPATCHING", fire_id="fid-1", reconcile_attempts=1)
 
-    row = conn.execute("SELECT fire_state, fire_id, attempts FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
+    row = conn.execute("SELECT fire_state, fire_id, reconcile_attempts FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
     assert row == ("DISPATCHING", "fid-1", 1)
 
 
 def test_claim_retryable_claims_an_unleased_failed_row(conn):
-    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
-    timers.set_state(conn, timer_id, "FAILED", lease_until=None, worker_id=None)
+    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
+    timers.set_state(conn, timer_id, "FAILED", locked_until=None, worker_id=None)
 
-    claimed = timers.claim_retryable(conn, worker_id="w2", lease_seconds=30)
+    claimed = timers.claim_retryable(conn, worker_id="w2", lock_seconds=30)
 
     assert [t["timer_id"] for t in claimed] == [timer_id]
     row = conn.execute("SELECT fire_state, worker_id FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
@@ -107,10 +107,10 @@ def test_claim_retryable_claims_a_firing_row_with_an_expired_lease(conn):
     # holding it likely crashed mid-dispatch — the same ambiguous situation
     # as a lost acknowledgment, so it's picked up by the same claim query and
     # routed to reconciliation, not blindly re-dispatched.
-    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
-    timers.set_state(conn, timer_id, "DISPATCHING", lease_until="2000-01-01T00:00:00Z", worker_id="dead")
+    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
+    timers.set_state(conn, timer_id, "DISPATCHING", locked_until="2000-01-01T00:00:00Z", worker_id="dead")
 
-    claimed = timers.claim_retryable(conn, worker_id="w2", lease_seconds=30)
+    claimed = timers.claim_retryable(conn, worker_id="w2", lock_seconds=30)
 
     assert [t["timer_id"] for t in claimed] == [timer_id]
     row = conn.execute("SELECT fire_state, worker_id FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
@@ -118,10 +118,10 @@ def test_claim_retryable_claims_a_firing_row_with_an_expired_lease(conn):
 
 
 def test_claim_retryable_ignores_a_row_under_active_lease(conn):
-    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
-    timers.set_state(conn, timer_id, "UNKNOWN", lease_until="2999-01-01T00:00:00Z", worker_id="w1")
+    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
+    timers.set_state(conn, timer_id, "UNKNOWN", locked_until="2999-01-01T00:00:00Z", worker_id="w1")
 
-    claimed = timers.claim_retryable(conn, worker_id="w2", lease_seconds=30)
+    claimed = timers.claim_retryable(conn, worker_id="w2", lock_seconds=30)
 
     assert claimed == []
 
@@ -193,9 +193,43 @@ def test_all_rows_always_includes_a_cases_most_recent_reassessment_timer(conn):
     """A terminal reassessment timer untouched past the scan window must
     still surface — otherwise a case whose deadline was never rescheduled
     quietly ages out of the unwatched check instead of being caught by it."""
-    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
+    timer_id = timers.schedule(conn, case_id="c1", kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
     timers.set_state(conn, timer_id, "CANCELLED")
     conn.execute("UPDATE timers SET updated_at = now() - interval '30 days' WHERE timer_id = %s", (timer_id,))
 
     rows = timers.all_rows(conn)
     assert [r["timer_id"] for r in rows] == [timer_id]
+
+
+def test_recent_notifications_returns_rows_in_the_window_newest_first(conn):
+    timers.record_notification(conn, case_id="c1", reason="gate_reminder_0",
+                               channel="notification_strip", recipient_class="assigned_nurse")
+    timers.record_notification(conn, case_id="c1", reason="gate_reminder_1",
+                               channel="notification_strip", recipient_class="any_charge_nurse")
+
+    rows = timers.recent_notifications(conn, window_minutes=120)
+
+    assert [r["recipient_class"] for r in rows] == ["any_charge_nurse", "assigned_nurse"]
+    assert rows[0]["case_id"] == "c1"
+    assert rows[0]["sent_at"].tzinfo is not None
+
+
+def test_recent_notifications_excludes_rows_older_than_the_window(conn):
+    timers.record_notification(conn, case_id="c1", reason="gate_reminder_0",
+                               channel="notification_strip", recipient_class="assigned_nurse")
+    conn.execute("UPDATE notifications SET sent_at = now() - INTERVAL '5 hours'")
+
+    assert timers.recent_notifications(conn, window_minutes=120) == []
+
+
+def test_recent_escalations_returns_the_reason_and_recipient(conn):
+    timers.record_escalation(conn, case_id="c2", fire_id="invariant:unwatched_case",
+                             channel="notification_strip", recipient_class="technician",
+                             reason="unwatched_case")
+
+    rows = timers.recent_escalations(conn, window_minutes=120)
+
+    assert len(rows) == 1
+    assert rows[0]["reason"] == "unwatched_case"
+    assert rows[0]["recipient_class"] == "technician"
+    assert rows[0]["raised_at"].tzinfo is not None

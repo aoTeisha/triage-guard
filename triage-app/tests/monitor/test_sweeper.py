@@ -23,7 +23,7 @@ def test_run_once_writes_a_heartbeat(conn, graph):
 
 
 def test_run_once_claims_due_timers(conn, graph):
-    timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
+    timers.schedule(conn, case_id="c1", kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
 
     claimed = sweeper.run_once(conn, worker_id="w1", graph=graph)
 
@@ -40,7 +40,7 @@ def test_run_once_dispatches_a_claimed_timer(conn, graph, run):
     case = DEMO_CASES["clean"]
     state, pending, thread = run(case)
     assert pending == {"case_id": case["case_id"], "waiting_room": True}
-    timers.schedule(conn, case_id=thread, kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
+    timers.schedule(conn, case_id=thread, kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
 
     sweeper.run_once(conn, worker_id="w1", graph=graph)
 
@@ -51,9 +51,9 @@ def test_run_once_dispatches_a_claimed_timer(conn, graph, run):
 
 
 def test_run_once_redispatches_a_failed_timer_on_a_later_tick(conn, graph):
-    timer_id = timers.schedule(conn, case_id="no-such-case", kind="reassessment", cycle=0,
+    timer_id = timers.schedule(conn, case_id="no-such-case", kind="reassessment", schedule_seq=0,
                                 due_at="2000-01-01T00:00:00Z")
-    timers.set_state(conn, timer_id, "FAILED", lease_until=None, worker_id=None)
+    timers.set_state(conn, timer_id, "FAILED", locked_until=None, worker_id=None)
 
     sweeper.run_once(conn, worker_id="w1", graph=graph)
 
@@ -66,7 +66,7 @@ def test_run_once_flags_timer_gap_on_a_severely_overdue_reassessment(conn, graph
     band = state["acuity"] or 5
     grace = TIMER_GAP_GRACE_MINUTES.get(band, TIMER_GAP_GRACE_MINUTES[5])
     overdue_due_at = (datetime.now(timezone.utc) - timedelta(minutes=grace + 5)).isoformat()
-    timers.schedule(conn, case_id=thread, kind="reassessment", cycle=0, due_at=overdue_due_at)
+    timers.schedule(conn, case_id=thread, kind="reassessment", schedule_seq=0, due_at=overdue_due_at)
 
     sweeper.run_once(conn, worker_id="w1", graph=graph)
 
@@ -77,7 +77,7 @@ def test_run_once_flags_timer_gap_on_a_severely_overdue_reassessment(conn, graph
 def test_run_once_does_not_flag_timer_gap_within_the_grace_window(conn, graph, run):
     state, pending, thread = run(DEMO_CASES["clean"])
     just_overdue = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-    timers.schedule(conn, case_id=thread, kind="reassessment", cycle=0, due_at=just_overdue)
+    timers.schedule(conn, case_id=thread, kind="reassessment", schedule_seq=0, due_at=just_overdue)
 
     sweeper.run_once(conn, worker_id="w1", graph=graph)
 
@@ -89,8 +89,8 @@ def test_run_once_reconciles_an_unknown_timer(conn, graph, run):
     case = DEMO_CASES["clean"]
     state, pending, thread = run(case)
     fid = fire.fire_id(thread, "reassessment", 0, "2000-01-01T00:00:00Z")
-    timer_id = timers.schedule(conn, case_id=thread, kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
-    timers.set_state(conn, timer_id, "UNKNOWN", fire_id=fid, lease_until=None, worker_id=None)
+    timer_id = timers.schedule(conn, case_id=thread, kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
+    timers.set_state(conn, timer_id, "UNKNOWN", fire_id=fid, locked_until=None, worker_id=None)
     # Nobody ever resumed the thread: reconciliation should prove it, not guess.
 
     sweeper.run_once(conn, worker_id="w1", graph=graph)
@@ -101,23 +101,23 @@ def test_run_once_reconciles_an_unknown_timer(conn, graph, run):
 
 def test_run_once_never_redispatches_an_unknown_timer_blind(conn, graph, run):
     """A retryable UNKNOWN row must go to reconcile, not dispatch — and the
-    decision column has to show the b-threads made that call (I18)."""
+    chosen_action column has to show the b-threads made that call (I18)."""
     case = DEMO_CASES["clean"]
     state, pending, thread = run(case)
     fid = fire.fire_id(thread, "reassessment", 0, "2000-01-01T00:00:00Z")
-    timer_id = timers.schedule(conn, case_id=thread, kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
-    timers.set_state(conn, timer_id, "UNKNOWN", fire_id=fid, lease_until=None, worker_id=None)
+    timer_id = timers.schedule(conn, case_id=thread, kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
+    timers.set_state(conn, timer_id, "UNKNOWN", fire_id=fid, locked_until=None, worker_id=None)
 
     sweeper.run_once(conn, worker_id="w1", graph=graph)
 
-    row = conn.execute("SELECT fire_state, decision FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
+    row = conn.execute("SELECT fire_state, chosen_action FROM timers WHERE timer_id=%s", (timer_id,)).fetchone()
     assert row[0] == "FAILED"
     assert row[1].startswith("RECONCILE (proposed DISPATCH")
     assert hydrate(graph.get_state(config_for(thread)).values)["reassessment_cycle"] == 0
 
 
 def test_an_orphan_timer_is_escalated_to_a_technician_once(conn, graph):
-    timer_id = timers.schedule(conn, case_id="no-such-case", kind="reassessment", cycle=0,
+    timer_id = timers.schedule(conn, case_id="no-such-case", kind="reassessment", schedule_seq=0,
                                 due_at="2000-01-01T00:00:00Z")
 
     sweeper.run_once(conn, worker_id="w1", graph=graph)
@@ -135,7 +135,7 @@ def test_run_once_survives_a_broken_invariant_pass(conn, graph, monkeypatch):
     tick_invariants, or the escalation writes) must not propagate out of
     run_once — and the rest of that tick's work must already have
     completed, unaffected."""
-    timers.schedule(conn, case_id="c1", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
+    timers.schedule(conn, case_id="c1", kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
 
     def boom(*a, **k):
         raise RuntimeError("db connection lost")
@@ -155,12 +155,12 @@ def test_handle_degrades_to_technician_escalation_when_graph_is_unreachable_for_
     UNKNOWN reassessment timer must still degrade to the technician
     escalation, not raise.
     """
-    timer_id = timers.schedule(conn, case_id="c9", kind="reassessment", cycle=0, due_at="2000-01-01T00:00:00Z")
+    timer_id = timers.schedule(conn, case_id="c9", kind="reassessment", schedule_seq=0, due_at="2000-01-01T00:00:00Z")
     timers.set_state(conn, timer_id, "UNKNOWN", fire_id="fid-c9",
-                      attempts=fire.RECONCILE_BUDGET - 1, lease_until=None, worker_id=None)
-    timer = {"timer_id": timer_id, "case_id": "c9", "kind": "reassessment", "cycle": 0,
+                      reconcile_attempts=fire.RECONCILE_BUDGET - 1, locked_until=None, worker_id=None)
+    timer = {"timer_id": timer_id, "case_id": "c9", "kind": "reassessment", "schedule_seq": 0,
              "due_at": "2000-01-01T00:00:00Z", "fire_state": "UNKNOWN",
-             "fire_id": "fid-c9", "attempts": fire.RECONCILE_BUDGET - 1}
+             "fire_id": "fid-c9", "reconcile_attempts": fire.RECONCILE_BUDGET - 1}
 
     class UnreachableGraph:
         def get_state(self, config):
@@ -183,7 +183,7 @@ def test_a_waiting_case_nobody_is_watching_is_escalated(conn, graph, run):
     """I16: the queue's deadline disappeared, so somebody has to hear about it."""
     case = DEMO_CASES["clean"]
     state, pending, thread = run(case)
-    timer_id = timers.schedule(conn, case_id=thread, kind="reassessment", cycle=0, due_at="2999-01-01T00:00:00Z")
+    timer_id = timers.schedule(conn, case_id=thread, kind="reassessment", schedule_seq=0, due_at="2999-01-01T00:00:00Z")
     sweeper.run_once(conn, worker_id="w1", graph=graph)
     assert conn.execute("SELECT COUNT(*) FROM escalations WHERE case_id=%s", (thread,)).fetchone() == (0,)
 

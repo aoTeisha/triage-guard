@@ -25,7 +25,7 @@ from app.symbolic import datalog
 logger = logging.getLogger(__name__)
 
 SWEEP_INTERVAL_SECONDS = 5
-LEASE_SECONDS = 30
+LOCK_SECONDS = 30
 
 
 def _is_timer_gap(graph, timer: dict) -> bool:
@@ -94,11 +94,11 @@ def run_once(conn: psycopg.Connection, *, worker_id: str, graph=None) -> list[di
     g = graph or real_graph()
     timers.heartbeat(conn, worker_id=worker_id)
 
-    claimed = timers.claim_due(conn, worker_id=worker_id, lease_seconds=LEASE_SECONDS)
+    claimed = timers.claim_due(conn, worker_id=worker_id, lock_seconds=LOCK_SECONDS)
     for timer in claimed:
         _handle(conn, timer, g)
 
-    for timer in timers.claim_retryable(conn, worker_id=worker_id, lease_seconds=LEASE_SECONDS):
+    for timer in timers.claim_retryable(conn, worker_id=worker_id, lock_seconds=LOCK_SECONDS):
         _handle(conn, timer, g)
 
     _check_invariants(conn, g)

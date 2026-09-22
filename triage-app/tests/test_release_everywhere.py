@@ -85,5 +85,5 @@ def test_a_reminder_left_over_after_release_is_cancelled(graph, run, monkeypatch
     graph.invoke(Command(resume=RELEASE), _cfg(thread))
 
     timer = {"timer_id": "g0", "case_id": thread, "kind": "gate_reminder",
-             "cycle": 0, "due_at": "2000-01-01T00:00:00Z"}
+             "schedule_seq": 0, "due_at": "2000-01-01T00:00:00Z"}
     assert fire.notify(conn, timer, graph=graph) == "CANCELLED"
