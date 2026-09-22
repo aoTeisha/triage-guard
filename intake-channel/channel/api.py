@@ -108,7 +108,10 @@ def submit(body: SubmitRequest):
 
     with agent_span("intake-submission", case_id=case["case_id"]) as span:
         span.update(input=case)
-        state, pending = start_case(case)
+        try:
+            state, pending = start_case(case)
+        except runner.CaseClosedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
         span.update(output={"control_state": state.get("control_state")})
     flush()
 

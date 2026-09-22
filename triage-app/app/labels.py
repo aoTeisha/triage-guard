@@ -50,6 +50,7 @@ class Arrow(str, Enum):
     LOOKUP = "4b"
     CRM_FOUND = "4b·found"
     CRM_NEW = "4b·new"
+    DUPLICATE_CASE = "4b·duplicate"
 
     # ---- redaction / classification ----------------------------------------
     BUILD_PAYLOAD = "5"

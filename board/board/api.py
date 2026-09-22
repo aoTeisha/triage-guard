@@ -328,14 +328,17 @@ def deteriorated(case_id: str, report: DeteriorationReport):
     re-enters the case's paused LangGraph run with a `Command(resume=...)`
     into that case's own thread, the same mechanism intake-channel's own
     `/resume` endpoint uses, rather than writing to case state directly.
+
+    Routed through `_resume_waiting_case` (I22): this mutates the same case
+    thread `/move-to-treatment` and `/release` do, through the same
+    `g.invoke()` mechanism, so it needs the same `runner.case_lock` —
+    without it, a deterioration report racing a concurrent release could hit
+    a thread the release had already closed out from under it.
     """
-    g, config, _ = _waiting_snapshot(case_id)
-    g.invoke(
-        Command(resume={"event": "DETERIORATION_DETECTED", "signal": report.signal,
-                         "actor_role": report.actor_role}),
-        config,
+    return _resume_waiting_case(
+        case_id, {"event": "DETERIORATION_DETECTED", "signal": report.signal,
+                  "actor_role": report.actor_role}
     )
-    return {"status": "ok"}
 
 
 class MoveToTreatmentReport(BaseModel):
@@ -375,19 +378,31 @@ def _resume_waiting_case(case_id: str, resume: dict, any_pause: bool = False) ->
     every 200 means success.
 
     Reads the outcome from `g.invoke()`'s own return value, not a second
-    `g.get_state()` call — two near-simultaneous requests for the same case
-    (a double-click, or two nurses) can otherwise interleave, and a second
-    `get_state()` risks reading whichever request's audit row landed last
-    rather than this call's own. If the audit log didn't grow at all, this
-    request's resume never actually applied — another request already
-    consumed the pending interrupt between our guard check and this
-    `invoke()` — so it's reported the same way as "case not currently
-    waiting" rather than a false "ok".
-    """
-    g, config, snapshot = (_paused_snapshot if any_pause else _waiting_snapshot)(case_id)
-    before = len(snapshot.values.get("audit_log") or [])
+    `g.get_state()` call after invoking — a second post-invoke `get_state()`
+    would risk reading whichever request's audit row landed last rather than
+    this call's own. If the audit log didn't grow at all, this request's
+    resume never actually applied — so it's reported the same way as "case
+    not currently waiting" rather than a false "ok".
 
-    result = g.invoke(Command(resume=resume), config)
+    I22: the pause-validity snapshot is taken *after* acquiring
+    `runner.case_lock`, not before. Two near-simultaneous requests for the
+    same case (a double-click, or two nurses) used to both pass this
+    function's own guard while the case still looked paused to both, then
+    race into `g.invoke()` — the loser's `g.invoke()` could land on a thread
+    the winner had *already closed*, and LangGraph's `Command(resume=...)`
+    on an ended thread with no pending task just returns the current (now
+    fully-updated) state rather than erroring, so the loser's audit-log
+    check would see growth and misreport the *winner's* outcome as its own.
+    Locking first, then snapshotting, means a second request only ever sees
+    truth: either the pause is genuinely still open (rare true idempotent
+    replay — the length check below still catches that), or the case has
+    already moved on and `_paused_snapshot`/`_waiting_snapshot` itself
+    refuses with its normal 404/409 before `g.invoke()` is ever called.
+    """
+    with runner.case_lock(case_id):
+        g, config, snapshot = (_paused_snapshot if any_pause else _waiting_snapshot)(case_id)
+        before = len(snapshot.values.get("audit_log") or [])
+        result = g.invoke(Command(resume=resume), config)
 
     after_log = result.get("audit_log") or []
     if len(after_log) <= before:

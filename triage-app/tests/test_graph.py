@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+from app.graph import routers
+from app.graph.state import TriageState
+from app.labels import Route
 from app.mock_cases import DEMO_CASES
 from app.states import State
 from tests.conftest import arrows
+
+
+def test_route_after_identity_denies_a_rejected_duplicate():
+    state = TriageState(case_id="c1", control_state=State.INPUT_REJECTED)
+    assert routers.route_after_identity(state) == Route.DENIED
 
 
 def test_clean_case_reaches_the_queue(run):

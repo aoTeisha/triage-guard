@@ -10,11 +10,8 @@ row-set per `thread_id`, and `thread_id == case_id` by construction in
 
 from __future__ import annotations
 
-from contextlib import closing
 from datetime import datetime
 from typing import Any
-
-import psycopg
 
 from app import runner
 from app.states import State
@@ -31,23 +28,11 @@ class CheckpointRepo:
     """
 
     def case_ids(self) -> list[str]:
-        # runner.DSN is read per call, not captured at import: the tests point
-        # it at a throwaway database, and a captured DSN would ignore them.
-        # Read-only session: the board must not be able to write the checkpoint
-        # store even by accident, and Postgres enforces that here rather than
-        # trusting every future edit to this class to stay a SELECT.
-        # OperationalError as well as UndefinedTable: before the first case the
-        # checkpointer's tables don't exist, and the board may also start before
-        # Postgres is up. Both mean an empty board, which is the correct answer
-        # and not an error page.
-        try:
-            with closing(
-                psycopg.connect(runner.DSN, options="-c default_transaction_read_only=on")
-            ) as conn:
-                rows = conn.execute("SELECT DISTINCT thread_id FROM checkpoints").fetchall()
-        except (psycopg.errors.UndefinedTable, psycopg.OperationalError):
-            return []
-        return [r[0] for r in rows]
+        # Shared with app.runner.all_case_summaries (the I19 duplicate-case
+        # check) — one query against the checkpoints table, not two copies
+        # of the same SQL and the same UndefinedTable/OperationalError
+        # fallback-to-empty-board handling.
+        return runner.all_case_ids()
 
     def load(self, case_id: str) -> tuple[dict[str, Any], bool]:
         """One case as (state, at_gate), from a single checkpoint read.

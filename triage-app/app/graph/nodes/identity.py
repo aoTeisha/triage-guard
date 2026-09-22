@@ -10,6 +10,7 @@ from app.graph.nodes._shared import _bump
 from app.graph.state import TriageState
 from app.labels import Arrow
 from app.states import State
+from app.symbolic.datalog import find_duplicate_active_case
 from app.verification import verify_patient_record
 
 
@@ -45,6 +46,23 @@ def resolving_identity(state: TriageState) -> dict[str, Any]:
         }
 
     found = status == "found"
+    if found:
+        # Imported here, not at module scope: `app.runner` imports
+        # `app.graph` (for `build_graph`), and this module is imported while
+        # `app.graph` is still assembling itself — a module-scope import
+        # here would be circular. Same reasoning as the lazy pyswip import
+        # in app/symbolic/prolog.py.
+        from app.runner import all_case_summaries
+
+        duplicate = find_duplicate_active_case(
+            state.stable_patient_id, all_case_summaries(exclude_case_id=state.case_id)
+        )
+        if duplicate:
+            return {
+                "control_state": State.INPUT_REJECTED.value,
+                "audit_log": [audit(state.case_id, State.INPUT_REJECTED, "notify_user",
+                                    f"case already open: {duplicate}", Arrow.DUPLICATE_CASE)],
+            }
     return {
         "control_state": State.RESOLVING_IDENTITY.value,
         "crm_status": status,

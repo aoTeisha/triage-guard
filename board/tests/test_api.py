@@ -223,9 +223,21 @@ def test_release_endpoint_defaults_actor_role_to_nurse_not_charge_nurse(seeded):
 
 def test_racing_release_requests_each_report_their_own_outcome(seeded):
     """Two near-simultaneous /release calls for the same case — a plain
-    nurse (must be denied) and a charge nurse (must succeed) — must each
-    report their OWN outcome, not whichever audit row landed last in the
-    checkpoint under real thread-pool concurrency.
+    nurse (never authorized) and a charge nurse (authorized) — must each
+    report their OWN outcome, never the other's, under real thread-pool
+    concurrency.
+
+    I22 now serializes these two calls (`runner.case_lock` in
+    `_resume_waiting_case`), so whichever request's turn comes second sees
+    the *true*, already-updated state — including "the case is now closed,"
+    if the charge nurse's request happened to run first. That's a stricter,
+    correct outcome, not flakiness: charge_nurse is guaranteed to succeed
+    either way (nurse can never close the case out from under it), while
+    nurse is guaranteed to never see a false "ok" — either its own role
+    check denies it (if it ran while the case was still open) or it finds
+    the case already closed (409, if the charge nurse's request won the
+    race). The one thing that must never happen, in either order, is
+    misattribution: nurse reporting the charge nurse's success as its own.
     """
     import threading
 
@@ -238,7 +250,7 @@ def test_racing_release_requests_each_report_their_own_outcome(seeded):
             f"/api/case/{seeded[0]}/release",
             json={"reason": "discharge", "actor_role": role},
         )
-        results[key] = resp.json()
+        results[key] = resp
 
     t1 = threading.Thread(target=call, args=("nurse", "nurse"))
     t2 = threading.Thread(target=call, args=("charge_nurse", "charge"))
@@ -247,8 +259,56 @@ def test_racing_release_requests_each_report_their_own_outcome(seeded):
     t1.join()
     t2.join()
 
-    assert results["nurse"]["status"] == "denied"
-    assert results["charge"]["status"] == "ok"
+    assert results["charge"].status_code == 200
+    assert results["charge"].json()["status"] == "ok"
+
+    nurse_resp = results["nurse"]
+    if nurse_resp.status_code == 200:
+        assert nurse_resp.json()["status"] == "denied"
+    else:
+        assert nurse_resp.status_code == 409
+
+
+def test_i22_two_identical_concurrent_moves_only_one_wins(seeded):
+    """Two near-simultaneous /move-to-treatment calls for the SAME case, same
+    role: with no lock, both could interleave into `g.invoke` and the
+    'audit log grew' check that used to be the only defense could pass for
+    both. With the I22 lock, exactly one actually runs at a time — the other
+    finds the pause already consumed and reports the existing 409 signal.
+    """
+    import threading
+
+    barrier = threading.Barrier(2)
+    results = {}
+
+    def call(key):
+        barrier.wait()
+        resp = client.post(
+            f"/api/case/{seeded[0]}/move-to-treatment", json={"actor_role": "nurse"}
+        )
+        results[key] = resp
+
+    t1 = threading.Thread(target=call, args=("a",))
+    t2 = threading.Thread(target=call, args=("b",))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    # Exactly one call actually moves the case. The other is NOT a true
+    # concurrent write (the lock ruled that out) — by the time it gets the
+    # lock, the case is already in treatment and this same pause has
+    # re-armed for the next event, so it lands on the graph's own
+    # move-to-treatment idempotency guard (terminal.py's "already in
+    # treatment" check) rather than the generic "pause already left" 409.
+    # Either refusal shape proves the same thing: never two "ok"s.
+    ok_count = sum(1 for r in results.values() if r.status_code == 200 and r.json().get("status") == "ok")
+    refused_count = sum(
+        1 for r in results.values()
+        if r.status_code == 409 or (r.status_code == 200 and r.json().get("status") == "denied")
+    )
+    assert ok_count == 1
+    assert refused_count == 1
 
 
 def test_release_endpoint_refuses_a_plain_nurse(seeded):

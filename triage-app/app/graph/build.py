@@ -215,6 +215,7 @@ def build_graph(checkpointer=None):
         {
             Route.PROCEED: State.REDACTING_ROUTING,
             Route.RETRY:   State.RESOLVING_IDENTITY,
+            Route.DENIED:  END,
         },
     )
 

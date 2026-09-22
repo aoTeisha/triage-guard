@@ -113,6 +113,33 @@ def run(graph):
     return _run
 
 
+@pytest.fixture
+def checkpoint_db(monkeypatch):
+    """A throwaway checkpoint database, wired into both `runner.graph` (where
+    cases are written) and `runner.DSN` (which `all_case_summaries` and
+    `case_lock` read). They must be the same database, or a test would be
+    reading/locking a different store than the one it just wrote to.
+
+    Unlike this file's own `graph` fixture, this one goes through
+    `app.runner` itself — needed for any test that calls `runner.start_case`,
+    `runner.resume_case`, `runner.all_case_summaries`, or `runner.case_lock`
+    directly, since those all read the `runner.DSN` / `runner.graph` module
+    attributes rather than taking a graph object as a parameter.
+    """
+    from app import runner
+
+    dsn = _throwaway_db()
+    try:
+        with PostgresSaver.from_conn_string(dsn) as saver:
+            saver.setup()
+            compiled = build_graph(checkpointer=saver)
+            monkeypatch.setattr(runner, "graph", lambda: compiled)
+            monkeypatch.setattr(runner, "DSN", dsn)
+            yield dsn
+    finally:
+        _drop_db(dsn)
+
+
 def arrows(state: dict[str, Any]) -> list[str]:
     """Arrow labels from a run's audit trail, in order."""
     return [r["arrow"] for r in state.get("audit_log", []) if r.get("arrow")]

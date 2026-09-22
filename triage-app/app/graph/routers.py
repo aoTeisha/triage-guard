@@ -25,11 +25,14 @@ def route_intake(state: TriageState) -> Event:
 
 
 def route_after_identity(state: TriageState) -> Route:
-    """4b·found / 4b·new / AF·db all continue; only a malformed record retries.
+    """4b·found / 4b·new / AF·db all continue; a malformed record retries;
+    a duplicate active case for this patient (I19) is denied outright.
 
     A DB outage is not a verification failure — it is the fail-open degrade path,
     and the case proceeds on intake-only data.
     """
+    if state.control_state == State.INPUT_REJECTED.value:
+        return Route.DENIED
     if state.crm_status is None:
         return (
             Route.RETRY if retry_budget_left(state.retry_count, "crm")
