@@ -514,6 +514,66 @@ This table is the core of the state machine. Each edge is shown as **current sta
 
 > **About the arrow labels:** numbered arrows (`1a`, `1b.x`, `1b.y`, `1b.z`, `2` to `20`) appear on the diagram. Lettered/suffixed rows (`4b`, `9a` to `9c`, `10·fail`, `11·pass`, the `AF·…` agent-failure edges, the `V·…` output-verification edges, `20a`/`20b`, `FV`, `REL`, `BLK`) are internal details of those same edges, listed for completeness.
 
+> **Transition names in code.** The code never uses these numbers. Each arrow is a `Transition` member in `triage-app/app/labels.py`, and the audit trail records the member name in lower case (`missing_fields`, `cleared_to_queue`). To check a run's trail against a scenario path below, translate with this table.
+
+| Diagram arrow | Name in code / audit trail |
+|---|---|
+| `1a` | `entry` |
+| `1a·resubmit` | `resubmit` |
+| `1a·rejected` | `rejected_return` |
+| `2` | `normalized` |
+| `3` | `run_validator` |
+| `4` | `submission_valid` |
+| `1b.x` | `fields_resubmitted` |
+| `16` | `missing_fields` |
+| `17` | `submission_unusable` |
+| `18` | `invalid_input` |
+| `4b` | `lookup` |
+| `4b·found` | `crm_found` |
+| `4b·new` | `crm_new` |
+| `4b·duplicate` | `duplicate_case` |
+| `5` | `build_payload` |
+| `6` | `payload_clean` |
+| `7` | `run_classifier` |
+| `8` | `acuity_proposed` |
+| `9a` | `acuity_agree` |
+| `9b` | `acuity_gap_minor` |
+| `9c` | `acuity_gap_major` |
+| `10` | `safety_passed` |
+| `10·fail` | `safety_failed` |
+| `11` | `escalation_needed` |
+| `11·pass` | `cleared_to_queue` |
+| `12` | `escalation_recorded` |
+| `20` | `approval_requested` |
+| `1b.z·acuity` | `gate_acuity_resolved` |
+| `1b.z·safety` | `gate_safety_corrected` |
+| `1b.z·senior` | `senior_escalation` |
+| `13` | `timer_running` |
+| `14` | `reassessment_due` |
+| `15` | `front_door_rerun` |
+| `1b.y` | `move_authorized` |
+| `19` | `move_confirmed` |
+| `FV` | `formal_validation` |
+| `REL` | `release` |
+| `AF·db` | `af_db` |
+| `AF·PII` | `af_pii` |
+| `AF·classifier` | `af_classifier` |
+| `AF·safety` | `af_safety` |
+| `AF·human_bridge` | `af_human_bridge` |
+| `AF·recover` | `af_recover` |
+| `V·pass` | `v_pass` |
+| `V·retry` | `v_retry` |
+| `V·exhausted` | `v_exhausted` |
+| `V·halt` | `v_halt` |
+| `V·halt·PII` | `v_halt_pii` |
+| `V·retry·classifier` | `v_retry_classifier` |
+| `V·exhausted·classifier` | `v_exhausted_classifier` |
+| `V·retry·safety` | `v_retry_safety` |
+| `V·exhausted·safety` | `v_exhausted_safety` |
+| `BLK` | `blk` |
+
+`20a` / `20b` (gate reminders) are not arrows in code: a reminder nudges staff about a pause the case is already in, and nothing happens to the patient. The Waiting Room Monitor fires them as timers of kind `gate_reminder` (see `REMINDER_KINDS` in `triage-app/app/monitor/bthreads.py`), and the board shows them as notifications, not audit-trail rows.
+
 > **Documented scenario paths (regression cases):**
 >
 > - **Normal entry (demo case 1):** `1a, 2, 3, 4, 4b, 4b·found, 5, 6, 7, 8, 9a, 10, 11·pass, 13`

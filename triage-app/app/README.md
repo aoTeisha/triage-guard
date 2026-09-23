@@ -15,16 +15,17 @@ Datalog, BPpy, OPA) — see `app/monitor/README.md` § "The symbolic layers".
 ```bash
 uv sync
 uv run triage-guard            # clean case — full happy path
-uv run triage-guard missing    # arrow 16 — missing fields
-uv run triage-guard failed     # arrow 17 — nothing usable
-uv run triage-guard injection  # arrow 18 — prompt injection rejected
+uv run triage-guard missing    # missing_fields — required fields absent
+uv run triage-guard failed     # submission_unusable — nothing usable
+uv run triage-guard injection  # invalid_input — prompt injection rejected
 uv run pytest                  # 92 tests, offline, ~40s
 uv run plot                    # regenerate docs/diagrams/control-plane.mmd
 uv run visualize-graph         # open the graph as a live Mermaid diagram in the browser
 ```
 
-Every run prints the final state and the full audit trail, labelled with the
-arrows from `docs/SPECIFICATION.md` § Transitions.
+Every run prints the final state and the full audit trail, labelled with
+transition names — one per row of `docs/SPECIFICATION.md` § Transitions (the
+spec maps each to its diagram number).
 
 ## Why LangGraph
 
@@ -74,7 +75,7 @@ app/
   runner.py          start / resume / snapshot a case (used by CLI *and* UI)
   states.py          State enum — the spec's control plane
   events.py          Event enum + IntakeOutcome
-  labels.py          Arrow (spec traceability) + Route (graph-internal)
+  labels.py          Transition (spec traceability) + Route (graph-internal)
   budgets.py         retry budgets N + the correction-round loop guard
   verification.py    output verification: schema, range, invariants
   deterministic.py   order_key, acuity bands, audit records, OPA predicates
@@ -108,7 +109,7 @@ uses.
 
 1. **Safety Validation → symbolic engines.** Replace `actors/safety.py:validate`
    and the predicates in `deterministic.py`. The graph already routes pass / fail
-   and the V·* rows off their results.
+   and the V_* rows off their results.
 3. **CRM.** Start `crm-stub/` and set `CRM_BASE_URL`.
 4. **Human gate.** Already real. Point a UI at `/resume/{case_id}`.
 5. **Retry budgets.** `budgets.py` holds working defaults standing in for a

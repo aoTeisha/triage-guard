@@ -30,7 +30,7 @@ They are opposite in direction and are separate services:
    injection) and clicks **Submit**.
 3. The service builds the payload and invokes the graph. The response carries the
    real control state, the settled acuity, and the full audit trail with the
-   spec's arrow labels.
+   readable transition names.
 4. If the case pauses at a gate, the UI renders it and the nurse resolves it —
    `POST /resume/{case_id}` continues the checkpointed case.
 
@@ -39,10 +39,10 @@ They are opposite in direction and are separate services:
 | Type | Exercises |
 | --- | --- |
 | clean | the happy path through to `monitoring` |
-| missing | arrow 16 — missing fields, no acuity ever guessed |
-| failed | arrow 17 — nothing usable |
-| gap | arrow 9c — nurse and system disagree by ≥2, **pauses for a charge nurse** |
-| injection | arrow 18 — rejected before anything reaches the model |
+| missing | `missing_fields` — no acuity ever guessed |
+| failed | `submission_unusable` — nothing usable |
+| gap | `acuity_gap_major` — nurse and system disagree by ≥2, **pauses for a charge nurse** |
+| injection | `invalid_input` — rejected before anything reaches the model |
 
 `gap` is the interesting one: it suspends the case to a checkpoint and waits. Try
 resolving it as `nurse` rather than `charge_nurse` to see a `BLK` refusal that

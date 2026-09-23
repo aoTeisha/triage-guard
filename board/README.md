@@ -2,7 +2,7 @@
 
 The nurse-facing view of the World plane: one card per live case, one column per
 `clinical_status`, sorted by the `order_key` the control plane already assigned.
-Click a card for its state, its acuity block, and its arrow trail.
+Click a card for its state, its acuity block, and its transition trail.
 
 ```
 crm-stub        :8000   patient history

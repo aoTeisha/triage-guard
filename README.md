@@ -46,8 +46,9 @@ uv run pytest                  # 148 tests, offline
 uv run sweeper                 # waiting-room monitor — fires reassessment timers
 ```
 
-Each run prints the final state and the full audit trail, labelled with the arrows
-from the Transitions table. With Langfuse configured it also sends one trace per
+Each run prints the final state and the full audit trail, labelled with
+transition names from the Transitions table (the spec maps each to its
+diagram number). With Langfuse configured it also sends one trace per
 run, with a span per node.
 
 `sweeper` is its own long-running process, separate from any single `triage-guard`
@@ -133,7 +134,7 @@ See [intake-channel/README.md](intake-channel/README.md) for the full details.
 The other end of the same system: where intake is one case in, the board is all
 cases out. A nurse-facing kanban of the World plane — one card per live case, one
 column per `clinical_status`, sorted by the `order_key` the control plane already
-assigned. Click a card for its acuity block and its arrow trail.
+assigned. Click a card for its acuity block and its transition trail.
 
 It is a _view_: the board computes no triage, writes no state, and re-computes no
 ordering. Two of the six columns have a writer today (`waiting`, `human_review`);

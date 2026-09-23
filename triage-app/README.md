@@ -14,7 +14,7 @@ triage-app/
 │   ├── schemas/            Pydantic payload schemas
 │   ├── states.py           control-plane vocabulary
 │   ├── events.py           events / intake outcomes
-│   ├── labels.py           spec arrows + internal route labels
+│   ├── labels.py           transition names + internal route labels
 │   ├── budgets.py          retry budgets N
 │   ├── verification.py     output verification
 │   ├── deterministic.py    ordering, acuity bands, audit, OPA predicates
