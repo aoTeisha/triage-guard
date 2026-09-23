@@ -11,3 +11,6 @@ output/
 .triage_state.db*
 *.db-journal
 .vscode/settings.json
+
+# Git worktrees used for isolated plan execution
+.worktrees/
