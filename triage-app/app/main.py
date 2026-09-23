@@ -2,9 +2,9 @@
 """Triage Guard entrypoint — runs the LangGraph control plane on a demo case.
 
     uv run triage-guard             # clean case, full happy path
-    uv run triage-guard missing     # arrow 16 — missing fields
-    uv run triage-guard failed      # arrow 17 — nothing usable
-    uv run triage-guard injection   # arrow 18 — prompt injection rejected
+    uv run triage-guard missing     # missing_fields — required fields absent
+    uv run triage-guard failed      # submission_unusable — nothing usable
+    uv run triage-guard injection   # invalid_input — prompt injection rejected
     uv run plot                     # write the control-plane diagram
 
 Mock by default: no LLM, no running CRM stub, no key. `TRIAGE_LLM=live` calls a
@@ -69,7 +69,7 @@ def _report(which: str, state: dict, gates: list[dict]) -> None:
 
     print("\n--- audit trail ---")
     for row in get("audit_log", []):
-        print(f"  [{str(row.get('arrow') or '—'):>22}] "
+        print(f"  [{str(row.get('transition') or '—'):>22}] "
               f"{row['action']:<26} {row['explanation']}")
 
 

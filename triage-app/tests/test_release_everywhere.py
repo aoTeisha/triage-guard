@@ -11,10 +11,11 @@ import pytest
 from langgraph.types import Command
 
 from app.actors import normalizer
+from app.labels import Transition
 from app.mock_cases import DEMO_CASES
 from app.runner import hydrate
 from app.states import State
-from tests.conftest import arrows
+from tests.conftest import transitions
 from tests.test_gates import GAP_CASE
 
 RELEASE = {"event": "RELEASE_REQUESTED", "reason": "ama", "actor_role": "charge_nurse"}
@@ -72,7 +73,7 @@ def test_a_refused_release_leaves_the_case_paused_where_it_was(graph, run, monke
 
     snap = graph.get_state(_cfg(thread))
     assert snap.next == (pause,)
-    assert arrows(hydrate(snap.values))[-1] == "BLK"
+    assert transitions(hydrate(snap.values))[-1] == Transition.BLK
 
 
 def test_a_reminder_left_over_after_release_is_cancelled(graph, run, monkeypatch, conn):

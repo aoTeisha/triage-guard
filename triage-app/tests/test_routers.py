@@ -14,7 +14,7 @@ from app.deterministic import assign_order_key, bucket_for, resolve_acuity
 from app.events import Event
 from app.graph import TriageState
 from app.graph import routers
-from app.labels import Route
+from app.labels import Route, Transition
 from app.states import AcuityBucket, AcuitySource, ClinicalStatus
 
 
@@ -26,7 +26,15 @@ def s(**kw) -> TriageState:
     return TriageState(case_id="t", **kw)
 
 
-# ---- intake fan-out (arrows 4 / 16 / 17 / 18) -------------------------------
+def test_every_transition_value_is_its_member_name_in_lower_case():
+    """Transition values are readable names, never the diagram's raw numbers
+    or codes. The diagram's numbers live in docs/SPECIFICATION.md only.
+    """
+    for transition in Transition:
+        assert transition.value == transition.name.lower(), transition.name
+
+
+# ---- intake fan-out (SUBMISSION_VALID / MISSING_FIELDS / SUBMISSION_UNUSABLE / INVALID_INPUT) ---
 
 
 @pytest.mark.parametrize(
@@ -43,15 +51,15 @@ def test_each_intake_outcome_routes_to_its_own_branch(outcome):
     assert routers.route_intake(s(intake_outcome=outcome)) == Event(outcome)
 
 
-# ---- acuity bands (9a / 9b / 9c), I4 -----------------------------------------
+# ---- acuity bands (ACUITY_AGREE / GAP_MINOR / GAP_MAJOR), I4 -----------------
 
 
 @pytest.mark.parametrize("nurse,system", [(1, 1), (3, 3), (5, 5)])
 def test_gap_zero_keeps_the_agreed_level(nurse, system):
-    final, source, arrow = resolve_acuity(nurse, system)
+    final, source, transition = resolve_acuity(nurse, system)
     assert final == nurse
     assert source is AcuitySource.HUMAN_CONFIRMED
-    assert arrow.value == "9a"
+    assert transition is Transition.ACUITY_AGREE
 
 
 @pytest.mark.parametrize("nurse,system", [(3, 2), (2, 3), (5, 4)])
@@ -62,34 +70,39 @@ def test_gap_one_settles_to_the_nurse(nurse, system):
     so it should not silently win every close call. See
     docs/plans/2026-09-13-acuity-classifier-design.md.
     """
-    final, source, arrow = resolve_acuity(nurse, system)
+    final, source, transition = resolve_acuity(nurse, system)
     assert final == nurse
     assert source is AcuitySource.AUTO_RESOLVED
-    assert arrow.value == "9b"
+    assert transition is Transition.ACUITY_GAP_MINOR
 
 
 @pytest.mark.parametrize("nurse,system", [(5, 2), (1, 4), (5, 1)])
 def test_gap_two_or_more_settles_nothing(nurse, system):
-    """9c returns no acuity at all — not a sentinel that could be mistaken for one."""
-    final, source, arrow = resolve_acuity(nurse, system)
+    """ACUITY_GAP_MAJOR returns no acuity at all — not a sentinel that could be
+    mistaken for one."""
+    final, source, transition = resolve_acuity(nurse, system)
     assert final is None
     assert source is None
-    assert arrow.value == "9c"
+    assert transition is Transition.ACUITY_GAP_MAJOR
 
 
-@pytest.mark.parametrize("gap,band", [(0, "9a"), (1, "9b"), (2, "9c"), (3, "9c"), (4, "9c")])
+@pytest.mark.parametrize("gap,band", [
+    (0, Transition.ACUITY_AGREE), (1, Transition.ACUITY_GAP_MINOR),
+    (2, Transition.ACUITY_GAP_MAJOR), (3, Transition.ACUITY_GAP_MAJOR),
+    (4, Transition.ACUITY_GAP_MAJOR),
+])
 def test_each_gap_lands_in_its_band(gap, band):
     """I4: checks the right band per gap. The old version only checked that some
     band was returned, which every code path does, so it could not fail.
     """
-    assert resolve_acuity(1, 1 + gap)[2].value == band
+    assert resolve_acuity(1, 1 + gap)[2] is band
 
 
 def test_a_case_with_no_system_acuity_escalates_rather_than_guessing():
     assert routers.route_acuity_gap(s(nurse_proposed_acuity=3)) is Route.ESCALATE
 
 
-# ---- classifier degrade (V·retry / V·exhausted) -----------------------------
+# ---- classifier degrade (V_RETRY / V_EXHAUSTED) -----------------------------
 
 
 def test_classifier_retries_while_budget_remains():
@@ -110,7 +123,7 @@ def test_a_proposed_acuity_proceeds():
     assert routers.route_after_classify(s(system_proposed_acuity=3)) is Route.PROCEED
 
 
-# ---- safety (10 / 10·fail / AF·safety) --------------------------------------
+# ---- safety (SAFETY_PASSED / SAFETY_FAILED / AF_SAFETY) ---------------------
 
 
 def test_a_passing_verdict_clears():
@@ -134,7 +147,7 @@ def test_a_missing_verdict_exhausts_into_the_human_route():
     )
 
 
-# ---- the gate (1b.z·* / BLK / loop guard) -----------------------------------
+# ---- the gate (GATE_* / BLK / loop guard) ------------------------------------
 
 
 def test_a_non_charge_resolver_is_denied():
@@ -190,35 +203,37 @@ def test_arrival_breaks_ties_same_acuity():
 # ---- awaiting_reassessment's three-way exit (move / release / reassess) ----
 
 
-def _state(arrow=None, clinical_status=None):
+def _state(transition=None, clinical_status=None):
     return s(
         clinical_status=clinical_status,
-        audit_log=[{"arrow": arrow}] if arrow else [],
+        audit_log=[{"transition": transition}] if transition else [],
     )
 
 
 def test_route_wait_resume_sends_blk_to_denied():
-    assert routers.route_wait_resume(_state(arrow="BLK")) == Route.DENIED
+    assert routers.route_wait_resume(_state(transition=Transition.BLK)) == Route.DENIED
 
 
 def test_route_wait_resume_sends_release_to_released():
-    assert routers.route_wait_resume(_state(arrow="REL")) == Route.RELEASED
+    assert routers.route_wait_resume(_state(transition=Transition.RELEASE)) == Route.RELEASED
 
 
 def test_route_wait_resume_sends_a_case_already_in_treatment_back_to_moved():
     """Covers both the just-moved case and a stale timer firing afterward —
     both look identical to this router: clinical_status is treatment_started
-    and the arrow is neither BLK nor REL.
+    and the transition is neither BLK nor RELEASE.
     """
     assert (
         routers.route_wait_resume(
-            _state(arrow="19", clinical_status=ClinicalStatus.TREATMENT_STARTED.value)
+            _state(transition=Transition.MOVE_CONFIRMED,
+                  clinical_status=ClinicalStatus.TREATMENT_STARTED.value)
         )
         == Route.MOVED
     )
     assert (
         routers.route_wait_resume(
-            _state(arrow="14", clinical_status=ClinicalStatus.TREATMENT_STARTED.value)
+            _state(transition=Transition.REASSESSMENT_DUE,
+                  clinical_status=ClinicalStatus.TREATMENT_STARTED.value)
         )
         == Route.MOVED
     )
@@ -226,6 +241,8 @@ def test_route_wait_resume_sends_a_case_already_in_treatment_back_to_moved():
 
 def test_route_wait_resume_defaults_to_proceed_for_a_normal_reassessment():
     assert (
-        routers.route_wait_resume(_state(arrow="14", clinical_status="waiting"))
+        routers.route_wait_resume(
+            _state(transition=Transition.REASSESSMENT_DUE, clinical_status="waiting")
+        )
         == Route.PROCEED
     )

@@ -57,7 +57,7 @@ const SOURCE_LABELS = {
 // Everything below translates the spec's vocabulary into something a person can
 // read at a glance. The spec names are not thrown away — they go in the `title`
 // of the element, so traceability against docs/SPECIFICATION.md is one hover
-// away and nobody has to learn arrow numbers to use the board.
+// away and nobody has to learn transition names to use the board.
 const ACTION_LABELS = {
   route_channel: "case arrived",
   invoke_intake_parser: "reading the submission",
@@ -107,16 +107,16 @@ const RELEASE_REASON_LABELS = {
   discharge: "Discharge", ama: "AMA", transfer: "Transfer", admit: "Admit",
 };
 
-// What a notification is about, in words. Arrow codes stay in the tooltip.
+// What a notification is about, in words. The raw transition name stays in the tooltip.
 const NOTICE_LABELS = {
-  "16": "details missing",
-  "17": "submission unusable",
-  "18": "unsafe input blocked",
-  "20": "approval requested",
-  "12": "charge nurse answered",
-  "14": "reassessment due",
-  "19": "move to treatment confirmed",
-  BLK: "action refused",
+  missing_fields: "details missing",
+  submission_unusable: "submission unusable",
+  invalid_input: "unsafe input blocked",
+  approval_requested: "approval requested",
+  escalation_recorded: "charge nurse answered",
+  reassessment_due: "reassessment due",
+  move_confirmed: "move to treatment confirmed",
+  blk: "action refused",
 };
 
 // Who a reminder went to, in words. The monitor widens the audience with each
@@ -188,14 +188,14 @@ function renderNotifications(items) {
     // spot first.
     const escalated = n.source === "escalation";
     const node = el("div", "notif-item"
-      + (n.arrow === "BLK" || escalated ? " blk" : "")
+      + (n.transition === "blk" || escalated ? " blk" : "")
       + (n.source === "reminder" ? " nudge" : ""));
-    node.append(el("div", "arrow", n.source ? nudgeLabel(n) : plain(NOTICE_LABELS, n.arrow)),
+    node.append(el("div", "transition", n.source ? nudgeLabel(n) : plain(NOTICE_LABELS, n.transition)),
                 el("div", "complaint", n.complaint || ""),
                 el("div", "at", n.at));
     node.title = n.source
       ? `${n.case_id} · ${n.source} · ${nudgeLabel(n)} · ${n.at}`
-      : `${n.case_id} · arrow ${n.arrow} · ${n.action} · ${readable(n.explanation)} · ${n.at}`;
+      : `${n.case_id} · transition ${n.transition} · ${n.action} · ${readable(n.explanation)} · ${n.at}`;
     // Clicking a notification opens the case panel but leaves this sidebar
     // open — only the X closes it.
     node.onclick = () => openPanel(n.case_id);
@@ -333,10 +333,10 @@ function trail(records) {
     const said = r.action in ACTION_LABELS ? ACTION_LABELS[r.action] : r.action;
     const explanation = readable(r.explanation);
     const tr = el("tr");
-    // The arrow and the raw action name are what tie a row back to the
+    // The transition and the raw action name are what tie a row back to the
     // Transitions table. They belong in the tooltip, not in a nurse's line of
     // sight — the row itself is one sentence about what happened.
-    tr.title = `${r.arrow ? "arrow " + r.arrow + " · " : ""}${r.action}`;
+    tr.title = `${r.transition ? "transition " + r.transition + " · " : ""}${r.action}`;
     tr.append(el("td", "at", (r.at || "").slice(11, 19)),
               el("td", null, said && explanation ? `${said} — ${explanation}`
                                                  : said || explanation || r.action));

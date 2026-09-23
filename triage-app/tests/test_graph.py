@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from app.graph import routers
 from app.graph.state import TriageState
-from app.labels import Route
+from app.labels import Route, Transition
 from app.mock_cases import DEMO_CASES
 from app.states import State
-from tests.conftest import arrows
+from tests.conftest import transitions
 
 
 def test_route_after_identity_denies_a_rejected_duplicate():
@@ -28,31 +28,33 @@ def test_clean_case_reaches_the_queue(run):
     assert state["clinical_status"] == "waiting"
 
 
-def test_clean_case_walks_the_documented_arrows_in_order(run):
+def test_clean_case_walks_the_documented_transitions_in_order(run):
     """The audit trail should record every major step of a clean case's
     journey through the graph, in order, so it can be checked against
     expected behavior.
     """
     state, _, _ = run(DEMO_CASES["clean"])
-    trail = arrows(state)
+    trail = transitions(state)
 
     # Every agent-driven step (parsing intake, classifying acuity, validating
     # safety, escalating to a human, monitoring the wait) is traced as an
     # "invoke" / "result" pair of audit entries. The CRM lookup and the
     # payload-redaction step aren't agents — they're plain on-entry actions —
     # but they're recorded the same way for the same traceability.
-    assert trail[:4] == ["1a", "2", "3", "4"]
-    assert trail.index("4b") < trail.index("4b·found" if "4b·found" in trail else "AF·db")
-    assert trail.index("5") < trail.index("6")     # build payload -> payload clean
-    assert trail.index("7") < trail.index("8")     # invoke classifier -> acuity proposed
-    assert trail[-2:] == ["11·pass", "13"]         # cleared to queue, timer running
+    assert trail[:4] == [Transition.ENTRY, Transition.NORMALIZED,
+                         Transition.RUN_VALIDATOR, Transition.SUBMISSION_VALID]
+    assert trail.index(Transition.LOOKUP) < trail.index(
+        Transition.CRM_FOUND if Transition.CRM_FOUND in trail else Transition.AF_DB)
+    assert trail.index(Transition.BUILD_PAYLOAD) < trail.index(Transition.PAYLOAD_CLEAN)
+    assert trail.index(Transition.RUN_CLASSIFIER) < trail.index(Transition.ACUITY_PROPOSED)
+    assert trail[-2:] == [Transition.CLEARED_TO_QUEUE, Transition.TIMER_RUNNING]
 
 
 def test_missing_fields_stops_at_the_request(run):
     state, _, _ = run(DEMO_CASES["missing"])
 
     assert state["control_state"] == State.MISSING_FIELDS_REQUESTED.value
-    assert arrows(state)[-1] == "16"
+    assert transitions(state)[-1] == Transition.MISSING_FIELDS
     assert "nurse_proposed_acuity" in state["missing_fields"]
 
 
@@ -68,7 +70,7 @@ def test_unusable_submission_stops(run):
     state, _, _ = run(DEMO_CASES["failed"])
 
     assert state["control_state"] == State.SUBMISSION_FAILED.value
-    assert arrows(state)[-1] == "17"
+    assert transitions(state)[-1] == Transition.SUBMISSION_UNUSABLE
 
 
 def test_injection_is_rejected_before_anything_is_classified(run):
@@ -76,10 +78,10 @@ def test_injection_is_rejected_before_anything_is_classified(run):
     state, _, _ = run(DEMO_CASES["injection"])
 
     assert state["control_state"] == State.INPUT_REJECTED.value
-    assert arrows(state)[-1] == "18"
+    assert transitions(state)[-1] == Transition.INVALID_INPUT
     assert state["redacted_payload"] == {}
     assert state["system_proposed_acuity"] is None
-    assert "8" not in arrows(state)
+    assert Transition.ACUITY_PROPOSED not in transitions(state)
 
 
 def test_missing_fields_case_gets_no_invented_queue_position(run):
@@ -128,7 +130,7 @@ def test_missing_fields_pause_and_the_same_case_continues(graph, run):
     ))
 
     assert result["arrival_time"] == first["arrival_time"]
-    assert "1b.x" in arrows(result)
+    assert Transition.FIELDS_RESUBMITTED in transitions(result)
     assert graph.get_state(config_for(thread)).next == ("awaiting_reassessment",)  # queued
 
 

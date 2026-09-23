@@ -203,7 +203,7 @@ def _require_pause(case_id: str, node: str) -> None:
 
 @app.post("/fields/{case_id}")
 def fields(case_id: str, body: dict[str, Any]):
-    """Completes an incomplete intake (arrows 1b.x / 1a·resubmit). The same
+    """Completes an incomplete intake (FIELDS_RESUBMITTED / RESUBMIT). The same
     case continues, so the patient keeps their arrival time (I2, I10).
     """
     unknown = sorted(set(body) - NURSE_SUPPLIED_FIELDS)
@@ -216,7 +216,7 @@ def fields(case_id: str, body: dict[str, Any]):
 @app.post("/recover/{case_id}")
 def recover(case_id: str):
     """The technician reports AGENT_RECOVERED; the case re-enters at the
-    stage that halted (arrow AF·recover).
+    stage that halted (AF_RECOVER).
     """
     _require_pause(case_id, "awaiting_recovery")
     return _answer_pause(case_id, {"event": "AGENT_RECOVERED"})

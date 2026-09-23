@@ -1,7 +1,7 @@
-"""Agent-failure and output-verification rows (AF·* and V·*).
+"""Agent-failure and output-verification rows (AF_* and V_*).
 
 These branches existed on paper before the migration and were never executed:
-the old Flow logged `V·exhausted·classifier` on the *first* verification failure,
+the old Flow logged `V_EXHAUSTED_CLASSIFIER` on the *first* verification failure,
 having attempted no retry at all. Each row below is now driven for real.
 """
 
@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from app.actors import normalizer, safety
 from app.budgets import RETRY_BUDGET, retry_budget_left
+from app.labels import Transition
 from app.mock_cases import DEMO_CASES
 from app.schemas import SafetyVerdict
 from app.states import State
-from tests.conftest import arrows
+from tests.conftest import transitions
 
 GAP_FREE_CASE = {
     "case_id": "case-plain",
@@ -49,7 +50,7 @@ def test_an_unknown_agent_fails_closed():
     assert not retry_budget_left({}, "not_an_agent")
 
 
-# ---- V·halt·PII: structural, never retried -----------------------------------
+# ---- V_HALT_PII: structural, never retried -------------------------------
 
 
 def test_an_identifier_leak_halts_the_case(run, monkeypatch):
@@ -61,7 +62,7 @@ def test_an_identifier_leak_halts_the_case(run, monkeypatch):
     state, _, _ = run(DEMO_CASES["clean"])
 
     assert state["control_state"] == State.AGENT_FAILED.value
-    assert "V·halt·PII" in arrows(state)
+    assert Transition.V_HALT_PII in transitions(state)
     assert state["failed_stage"] == State.REDACTING_ROUTING.value
 
 
@@ -84,7 +85,7 @@ def test_a_halted_case_never_reaches_the_queue(run, monkeypatch):
     assert state["approved"] is False
 
 
-# ---- 10·fail: safety failure routes to a human -------------------------------
+# ---- SAFETY_FAILED: safety failure routes to a human ----------------------
 
 
 def test_a_failing_verdict_routes_to_the_gate(run, monkeypatch):
@@ -97,7 +98,7 @@ def test_a_failing_verdict_routes_to_the_gate(run, monkeypatch):
 
     assert pending is not None
     assert pending["gate"] == "safety_fail"
-    assert "10·fail" in arrows(state)
+    assert Transition.SAFETY_FAILED in transitions(state)
     assert state["safety_passed"] is False
 
 
@@ -114,7 +115,7 @@ def test_a_failing_verdict_never_reaches_monitoring_unattended(run, monkeypatch)
     assert state["approved"] is False
 
 
-# ---- AF·db: CRM outage degrades, it does not stop the line -------------------
+# ---- AF_DB: CRM outage degrades, it does not stop the line ----------------
 
 
 def test_a_crm_outage_degrades_and_continues(run):
@@ -123,7 +124,7 @@ def test_a_crm_outage_degrades_and_continues(run):
 
     assert "crm" in state["degraded"]
     assert "crm_down_intake_only" in state["flags"]
-    assert "AF·db" in arrows(state)
+    assert Transition.AF_DB in transitions(state)
     # Fail-open: the case still gets triaged.
     assert state["control_state"] == State.MONITORING.value
 
@@ -152,6 +153,6 @@ def test_a_halted_case_waits_for_recovery_then_resumes_at_redaction(graph, run, 
     result = hydrate(graph.invoke(Command(resume={"event": "AGENT_RECOVERED"}),
                                   config_for(thread)))
 
-    assert "AF·recover" in arrows(result)
+    assert Transition.AF_RECOVER in transitions(result)
     assert result["redacted_payload"]
     assert graph.get_state(config_for(thread)).next == ("awaiting_reassessment",)

@@ -1,4 +1,4 @@
-"""redacting_routing — build the model-facing payload (arrows 5, 6, V·halt·PII)."""
+"""redacting_routing — build the model-facing payload (BUILD_PAYLOAD, PAYLOAD_CLEAN, V_HALT_PII)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from app.actors import normalizer
 from app.deterministic import audit
 from app.graph.nodes._shared import _bump
 from app.graph.state import TriageState
-from app.labels import Arrow
+from app.labels import Transition
 from app.states import State
 from app.verification import verify_redacted_payload
 
@@ -26,21 +26,21 @@ def redacting_routing(state: TriageState) -> dict[str, Any]:
 
     check = verify_redacted_payload(payload)
     if not check.passed:
-        arrow = Arrow.V_HALT_PII if check.structural else Arrow.V_RETRY
+        transition = Transition.V_HALT_PII if check.structural else Transition.V_RETRY
         return {
             "control_state": State.REDACTING_ROUTING.value,
             "retry_count": _bump(state, "pii_schema_drop"),
             "failed_stage": State.REDACTING_ROUTING.value,
             "audit_log": [audit(state.case_id, State.REDACTING_ROUTING,
                                 "alert_technician", "; ".join(check.violations),
-                                arrow)],
+                                transition)],
         }
 
     audit_records = [
         audit(state.case_id, State.REDACTING_ROUTING, "build_model_payload",
-              "build model payload", Arrow.BUILD_PAYLOAD),
+              "build model payload", Transition.BUILD_PAYLOAD),
         audit(state.case_id, State.REDACTING_ROUTING, "emit_event_log",
-              "payload clean", Arrow.PAYLOAD_CLEAN),
+              "payload clean", Transition.PAYLOAD_CLEAN),
     ]
     return {
         "control_state": State.REDACTING_ROUTING.value,

@@ -17,7 +17,7 @@ from app.deterministic import audit, audit_denial, move_authorized, now_iso
 from app.graph.nodes._shared import is_release, release_case
 from app.events import Event
 from app.graph.state import TriageState
-from app.labels import Arrow
+from app.labels import Transition
 from app.monitor import timers
 from app.states import ClinicalStatus, State
 
@@ -47,9 +47,9 @@ def monitoring(state: TriageState) -> dict[str, Any]:
         "waiting_started_at": now_iso(),
         "audit_log": [
             audit(state.case_id, State.MONITORING, "emit_event_log",
-                  "cleared to queue", Arrow.CLEARED_TO_QUEUE),
+                  "cleared to queue", Transition.CLEARED_TO_QUEUE),
             audit(state.case_id, State.MONITORING, "start_reassessment_timer",
-                  "queued, timer running", Arrow.TIMER_RUNNING),
+                  "queued, timer running", Transition.TIMER_RUNNING),
         ],
     }
 
@@ -108,7 +108,7 @@ def awaiting_reassessment(state: TriageState) -> dict[str, Any]:
             "clinical_status": ClinicalStatus.TREATMENT_STARTED.value,
             "treatment_started_at": now_iso(),
             "audit_log": [audit(state.case_id, State.MONITORING, "emit_event_log",
-                                 "move to treatment confirmed", Arrow.MOVE_CONFIRMED)],
+                                 "move to treatment confirmed", Transition.MOVE_CONFIRMED)],
         }
 
     if is_release(fired):
@@ -119,7 +119,7 @@ def awaiting_reassessment(state: TriageState) -> dict[str, Any]:
         "reassessment_cycle": state.reassessment_cycle + 1,
         "audit_log": [
             audit(state.case_id, State.MONITORING, "emit_event_log",
-                  f"reassessment timer fired: {event}", Arrow.REASSESSMENT_DUE,
+                  f"reassessment timer fired: {event}", Transition.REASSESSMENT_DUE,
                   fire_id=fire_id),
         ],
     }
@@ -139,13 +139,13 @@ def agent_failed(state: TriageState) -> dict[str, Any]:
         "control_state": State.AGENT_FAILED.value,
         "audit_log": [audit(state.case_id, State.AGENT_FAILED, "alert_technician",
                             f"halted at {state.failed_stage or 'unknown stage'}; "
-                            "awaiting AGENT_RECOVERED", Arrow.AF_RECOVER)],
+                            "awaiting AGENT_RECOVERED", Transition.AF_RECOVER)],
     }
 
 
 def awaiting_recovery(state: TriageState) -> dict[str, Any]:
     """Wait for the technician's AGENT_RECOVERED, then re-enter at the stage
-    that failed (arrow AF·recover). A case that is still broken there halts
+    that failed (AF_RECOVER). A case that is still broken there halts
     again; a critical step gets no retries.
     """
     answer = interrupt({"case_id": state.case_id, "recovery_pending": True,
@@ -155,5 +155,5 @@ def awaiting_recovery(state: TriageState) -> dict[str, Any]:
     return {
         "audit_log": [audit(state.case_id, State.AGENT_FAILED, "resume_at_failed_stage",
                             f"recovered; resuming at {state.failed_stage}",
-                            Arrow.AF_RECOVER)],
+                            Transition.AF_RECOVER)],
     }

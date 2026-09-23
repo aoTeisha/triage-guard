@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from langgraph.types import Command
 
 import channel.api as api_module
+from app.labels import Transition
 from app.mock_cases import DEMO_CASES
 from app.runner import config_for, start_case
 from channel.patient_lookup import CRM_BASE_URL
@@ -122,17 +123,18 @@ def test_a_clean_submission_runs_the_whole_pipeline():
 
 @respx.mock
 def test_a_submission_returns_the_real_audit_trail():
-    """The UI shows the spec's arrows, not a canned response."""
+    """The UI shows the real audit trail, not a canned response."""
     _crm()
 
     body = _submit("clean")
-    arrows = [r["arrow"] for r in body["audit_log"] if r["arrow"]]
+    trail = [r["transition"] for r in body["audit_log"] if r["transition"]]
 
-    assert arrows[0] == "1a"
-    # Ends on the Waiting Room Monitor's timer (arrow 13), the invoke half of the
-    # 13/14 pair, not on the 11·pass transition that got the case there.
-    assert arrows[-2:] == ["11·pass", "13"]
-    assert arrows.index("7") < arrows.index("8")   # classifier invoke -> propose
+    assert trail[0] == Transition.ENTRY
+    # Ends on the Waiting Room Monitor's timer (TIMER_RUNNING), the invoke half
+    # of the TIMER_RUNNING / REASSESSMENT_DUE pair, not on the CLEARED_TO_QUEUE
+    # transition that got the case there.
+    assert trail[-2:] == [Transition.CLEARED_TO_QUEUE, Transition.TIMER_RUNNING]
+    assert trail.index(Transition.RUN_CLASSIFIER) < trail.index(Transition.ACUITY_PROPOSED)
 
 
 @respx.mock
@@ -232,7 +234,7 @@ def test_an_unauthorized_resolver_is_refused_through_the_api():
     assert denied["status"] == "awaiting_human_approval"
     assert denied["gate"] is not None
     assert denied["acuity"] is None
-    assert any(r["arrow"] == "BLK" for r in denied["audit_log"])
+    assert any(r["transition"] == Transition.BLK.value for r in denied["audit_log"])
 
     resolved = client.post(
         f"/resume/{paused['case_id']}",

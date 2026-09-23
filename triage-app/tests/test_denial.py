@@ -10,10 +10,11 @@ from __future__ import annotations
 from langgraph.types import Command
 
 from app.deterministic import actor_is_charge, move_authorized, release_authorized
+from app.labels import Transition
 from app.monitor import fire
 from app.runner import hydrate
 from app.states import State
-from tests.conftest import arrows
+from tests.conftest import transitions
 from tests.test_gates import CHARGE, GAP_CASE
 
 JUNIOR = {"decision": "use_system_acuity", "resolver_role": "nurse"}
@@ -73,7 +74,7 @@ def test_an_unauthorized_resolver_is_refused_and_the_gate_stays_open(graph, run)
 
     denied = hydrate(graph.invoke(Command(resume=JUNIOR), config))
 
-    assert "BLK" in arrows(denied)
+    assert Transition.BLK in transitions(denied)
     assert denied["control_state"] == State.AWAITING_HUMAN_APPROVAL.value
     assert State.AWAITING_HUMAN_APPROVAL.value in graph.get_state(config).next, \
         "the run must still be paused at the gate, not ended"
@@ -90,8 +91,8 @@ def test_a_refused_gate_changes_no_case_state(graph, run):
 
     # "The case does not move" means literally unchanged, so compare fields
     # against the paused snapshot rather than against assumed defaults.
-    # `acuity_source` is already set here — the classifier proposed at arrow 8,
-    # long before the gate — and a denial must not clear that either.
+    # `acuity_source` is already set here — the classifier proposed at
+    # ACUITY_PROPOSED, long before the gate — and a denial must not clear that either.
     for field in ("acuity", "acuity_source", "acuity_bucket", "order_key",
                   "approved", "safety_passed", "acuity_gap"):
         assert denied[field] == paused[field], f"{field} changed on a denied action"
@@ -106,7 +107,7 @@ def test_a_denial_records_the_denying_layer(graph, run):
         graph.invoke(Command(resume=JUNIOR), {"configurable": {"thread_id": thread}})
     )
 
-    blk = [r for r in denied["audit_log"] if r["arrow"] == "BLK"]
+    blk = [r for r in denied["audit_log"] if r["transition"] == Transition.BLK]
     assert blk
     assert any(r.get("denying_layer") for r in blk)
 
@@ -118,7 +119,7 @@ def test_a_denied_case_never_reaches_the_queue(graph, run):
     )
 
     assert denied["control_state"] != State.MONITORING.value
-    assert "11·pass" not in arrows(denied)
+    assert Transition.CLEARED_TO_QUEUE not in transitions(denied)
 
 
 def test_a_refused_gate_can_still_be_resolved_afterwards(graph, run):
@@ -157,6 +158,6 @@ def test_a_denial_names_the_layer_that_refused():
     row = audit_denial("c1", State.MONITORING, "move refused: not approved", layer="OPA (authorization)")
     assert row["denying_layer"] == "OPA (authorization)"
     assert audit_denial("c1", State.AWAITING_HUMAN_APPROVAL, "x")["denying_layer"] == "Prolog (authorization)"
-    # The arrow stays BLK whatever the layer — `routers.release_route` routes
-    # off that arrow, so a new kwarg must not change it.
-    assert row["arrow"] == "BLK"
+    # The transition stays BLK whatever the layer — `routers.release_route`
+    # routes off that transition, so a new kwarg must not change it.
+    assert row["transition"] == Transition.BLK

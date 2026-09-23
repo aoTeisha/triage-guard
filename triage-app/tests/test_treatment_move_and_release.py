@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from langgraph.types import Command
 
+from app.labels import Transition
 from app.mock_cases import DEMO_CASES
 from app.runner import config_for, hydrate
 from app.states import State
-from tests.conftest import arrows
+from tests.conftest import transitions
 
 
 def _resume(graph, thread: str, **payload):
@@ -28,7 +29,7 @@ def test_charge_nurse_moves_a_waiting_patient_to_treatment(graph, run):
 
     assert result["clinical_status"] == "treatment_started"
     assert result["control_state"] == State.MONITORING.value
-    assert "19" in arrows(result)        # Arrow.MOVE_CONFIRMED
+    assert Transition.MOVE_CONFIRMED in transitions(result)
     snapshot = graph.get_state(config_for(thread))
     assert snapshot.next, "case stays parked at the same pause, ready for release next"
 
@@ -51,7 +52,7 @@ def test_charge_nurse_releases_a_waiting_patient(graph, run):
     assert result["control_state"] == State.CASE_CLOSED.value
     assert result["clinical_status"] == "patient_released"
     assert result["release_reason"] == "discharge"
-    assert "REL" in arrows(result)
+    assert Transition.RELEASE in transitions(result)
     snapshot = graph.get_state(config_for(thread))
     assert not snapshot.next, "the run must actually end, not stay paused"
 
@@ -86,7 +87,7 @@ def test_release_refuses_a_plain_nurse(graph, run):
 
     assert result.get("clinical_status") != "patient_released"
     assert result["control_state"] == State.MONITORING.value
-    assert "BLK" in arrows(result)
+    assert Transition.BLK in transitions(result)
     snapshot = graph.get_state(config_for(thread))
     assert snapshot.next, "a denied release must not end the run"
 
@@ -121,7 +122,7 @@ def test_a_stale_reassessment_timer_after_treatment_started_does_not_revert_stat
 
 def test_a_duplicate_move_requested_after_treatment_started_is_denied(graph, run):
     """A replayed/duplicate MOVE_REQUESTED for a patient already in
-    treatment must not silently re-confirm (a second Arrow.MOVE_CONFIRMED
+    treatment must not silently re-confirm (a second Transition.MOVE_CONFIRMED
     row with no error) — it must be denied and the case must stay parked.
     """
     case = DEMO_CASES["clean"]
@@ -132,7 +133,7 @@ def test_a_duplicate_move_requested_after_treatment_started_is_denied(graph, run
 
     assert result["clinical_status"] == "treatment_started"
     assert result["control_state"] == State.MONITORING.value
-    assert arrows(result).count("19") == 1        # no duplicate MOVE_CONFIRMED
-    assert "BLK" in arrows(result)
+    assert transitions(result).count(Transition.MOVE_CONFIRMED) == 1        # no duplicate
+    assert Transition.BLK in transitions(result)
     snapshot = graph.get_state(config_for(thread))
     assert snapshot.next, "must stay parked, not silently re-confirm or end the run"

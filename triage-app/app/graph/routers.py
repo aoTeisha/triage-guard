@@ -14,18 +14,19 @@ from __future__ import annotations
 from app.budgets import confidence_ok, correction_rounds_left, retry_budget_left
 from app.events import Event
 from app.graph.state import TriageState
-from app.labels import Arrow, Route
+from app.labels import Transition, Route
 from app.states import ClinicalStatus, State
 from app.symbolic import prolog
 
 
 def route_intake(state: TriageState) -> Event:
-    """arrows 4 / 16 / 17 / 18 — the four mutually exclusive intake outcomes."""
+    """SUBMISSION_VALID / MISSING_FIELDS / SUBMISSION_UNUSABLE / INVALID_INPUT —
+    the four mutually exclusive intake outcomes."""
     return Event(state.intake_outcome)
 
 
 def route_after_identity(state: TriageState) -> Route:
-    """4b·found / 4b·new / AF·db all continue; a malformed record retries;
+    """CRM_FOUND / CRM_NEW / AF_DB all continue; a malformed record retries;
     a duplicate active case for this patient (I19) is denied outright.
 
     A DB outage is not a verification failure — it is the fail-open degrade path,
@@ -42,7 +43,7 @@ def route_after_identity(state: TriageState) -> Route:
 
 
 def route_after_redaction(state: TriageState) -> Route:
-    """arrow 6 / V·halt·PII / AF·PII.
+    """PAYLOAD_CLEAN / V_HALT_PII / AF_PII.
 
     `pii_schema_drop` carries N=0 by design, so a recoverable fault here exhausts
     on its first occurrence and halts. That is the critical-closed rule from the
@@ -58,7 +59,7 @@ def route_after_redaction(state: TriageState) -> Route:
 
 
 def route_after_classify(state: TriageState) -> Route:
-    """arrow 8 / V·retry·classifier / V·exhausted·classifier.
+    """ACUITY_PROPOSED / V_RETRY_CLASSIFIER / V_EXHAUSTED_CLASSIFIER.
 
     Exhaustion is not a halt: the classifier is non-critical and fail-open, so the
     case degrades to the nurse's acuity with the gate disabled.
@@ -71,7 +72,7 @@ def route_after_classify(state: TriageState) -> Route:
 
 
 def route_acuity_gap(state: TriageState) -> Route:
-    """arrows 9a / 9b (settled) vs 9c (charge nurse decides).
+    """ACUITY_AGREE / ACUITY_GAP_MINOR (settled) vs ACUITY_GAP_MAJOR (charge nurse decides).
 
     `nurse_proposed_acuity` is mandatory for a DATA_PARSED case, so it is present
     here — but if either value is missing there is no gap to resolve and the case
@@ -83,7 +84,7 @@ def route_acuity_gap(state: TriageState) -> Route:
 
 
 def route_after_safety(state: TriageState) -> Route:
-    """arrows 10 / 10·fail / V·retry·safety / AF·safety."""
+    """SAFETY_PASSED / SAFETY_FAILED / V_RETRY_SAFETY / AF_SAFETY."""
     if state.safety_verdict is None:
         return (
             Route.RETRY if retry_budget_left(state.retry_count, "safety_validation")
@@ -93,13 +94,13 @@ def route_after_safety(state: TriageState) -> Route:
 
 
 def route_verdict(state: TriageState) -> Route:
-    """arrows 11 / 11·pass.
+    """ESCALATION_NEEDED / CLEARED_TO_QUEUE.
 
     `escalation_needed` = "verdict fail ∨ low confidence ∨ policy hit" is a
     cross-cutting condition, not a single-node guard: it names every reason to
     invoke the Human Escalation agent, and each disjunct fires wherever its reason
-    arises. "verdict fail" fires on the 10·fail edge, which never reaches this
-    node, so what is left to test here is the confidence disjunct.
+    arises. "verdict fail" fires on the SAFETY_FAILED edge, which never reaches
+    this node, so what is left to test here is the confidence disjunct.
 
     "policy hit" has no definition anywhere in the spec and is not wired; when it
     gains one it becomes an `or` on the line below.
@@ -110,7 +111,7 @@ def route_verdict(state: TriageState) -> Route:
     # bounce between the gate and safety validation until the recursion limit.
     #
     # The test is `human_decision`, which only the gate writes. NOT
-    # `acuity_source == human_confirmed`: arrow 9a sets that when the nurse and
+    # `acuity_source == human_confirmed`: ACUITY_AGREE sets that when the nurse and
     # the system merely agree, with no human consulted, so it would suppress the
     # gate for exactly the cases that never reached one.
     if state.human_decision is not None:
@@ -121,7 +122,7 @@ def route_verdict(state: TriageState) -> Route:
 
 
 def route_gate(state: TriageState) -> Route:
-    """arrows 1b.z·acuity / 1b.z·safety / BLK, plus the correction-round loop guard.
+    """GATE_ACUITY_RESOLVED / GATE_SAFETY_CORRECTED / BLK, plus the correction-round loop guard.
 
     Both resolved branches return to `safety_validating`: the acuity branch because
     a newly settled acuity must be validated, the safety branch because the spec
@@ -147,9 +148,9 @@ def route_gate(state: TriageState) -> Route:
 def route_wait_resume(state: TriageState) -> Route:
     """Where `awaiting_reassessment` goes next, based on what it just wrote.
 
-    BLK and RELEASE are told apart by the arrow the node just logged, not by
-    re-deriving authorization here — the node already decided that. A move
-    is told apart by `clinical_status` rather than its arrow: once a case is
+    BLK and RELEASE are told apart by the transition the node just logged, not
+    by re-deriving authorization here — the node already decided that. A move
+    is told apart by `clinical_status` rather than its transition: once a case is
     `treatment_started`, ANY later resume (a stale reassessment timer, a
     deterioration report — the timer scheduled at queue-entry keeps running
     independently of this case's later moves) must keep routing back here
@@ -168,10 +169,10 @@ def release_route(state: TriageState) -> Route | None:
     """What a pause just did, read from the last audit row (the node already
     decided): RELEASED ends the run, DENIED re-pauses, None means its own answer.
     """
-    last_arrow = state.audit_log[-1].get("arrow") if state.audit_log else None
-    if last_arrow == Arrow.RELEASE.value:
+    last_transition = state.audit_log[-1].get("transition") if state.audit_log else None
+    if last_transition == Transition.RELEASE.value:
         return Route.RELEASED
-    if last_arrow == Arrow.BLK.value:
+    if last_transition == Transition.BLK.value:
         return Route.DENIED
     return None
 
@@ -182,5 +183,5 @@ def route_pause_exit(state: TriageState) -> Route:
 
 
 def route_after_recovery(state: TriageState) -> Route | State:
-    """arrow AF·recover: re-enter at the stage that halted, unless released."""
+    """AF_RECOVER: re-enter at the stage that halted, unless released."""
     return release_route(state) or state.failed_stage

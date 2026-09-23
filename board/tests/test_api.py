@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from app.labels import Transition
 from app.mock_cases import DEMO_CASES
 from app.monitor import timers
 from app.runner import run_to_completion
@@ -74,8 +75,8 @@ def test_case_detail_returns_the_shared_view_and_the_trail(seeded):
     body = client.get(f"/api/case/{seeded[0]}").json()
 
     assert body["view"]["case_id"] == seeded[0]
-    assert body["view"]["audit_log"], "the arrow trail is what the panel renders"
-    assert all("arrow" in rec for rec in body["view"]["audit_log"])
+    assert body["view"]["audit_log"], "the transition trail is what the panel renders"
+    assert all("transition" in rec for rec in body["view"]["audit_log"])
     assert body["card"]["case_id"] == seeded[0]
     assert body["card"]["position"] >= 1, "the panel shows the queue position too"
     assert body["checkpoints"] > 0
@@ -109,10 +110,10 @@ def test_unknown_case_is_404(checkpoint_db):
     assert client.get("/api/case/nope").status_code == 404
 
 
-def test_notifications_come_from_the_audit_arrows(seeded):
+def test_notifications_come_from_the_audit_transitions(seeded):
     notes = client.get("/api/board").json()["notifications"]
     assert notes
-    assert all(n["arrow"] in api_module.NOTIFY_ARROWS for n in notes)
+    assert all(n["transition"] in api_module.NOTIFY_TRANSITIONS for n in notes)
 
 
 def test_a_notification_names_the_complaint_even_with_no_redacted_payload():
@@ -127,7 +128,7 @@ def test_a_notification_names_the_complaint_even_with_no_redacted_payload():
         "audit_log": [
             {
                 "case_id": "c-1",
-                "arrow": "16",
+                "transition": Transition.MISSING_FIELDS.value,
                 "action": "notify_user",
                 "explanation": "request fields",
                 "at": "2026-01-01T00:00:00+00:00",
@@ -431,7 +432,7 @@ def test_a_refused_resolution_leaves_the_gate_open_on_the_board(checkpoint_db):
 
     detail = client.get(f"/api/case/{case['case_id']}").json()
     assert detail["view"]["status"] == "awaiting_human_approval"
-    assert any(r["arrow"] == "BLK" for r in detail["view"]["audit_log"])
+    assert any(r["transition"] == Transition.BLK.value for r in detail["view"]["audit_log"])
     card = next(
         c
         for c in client.get("/api/board").json()["cards"]

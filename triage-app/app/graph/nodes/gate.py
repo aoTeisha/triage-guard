@@ -13,7 +13,7 @@ from app.budgets import GATE_REMINDER_DELAY_MINUTES, SENIOR_REMINDER_DELAY_MINUT
 from app.deterministic import assign_order_key, audit, audit_denial, bucket_for
 from app.graph.nodes._shared import is_release, release_case
 from app.graph.state import TriageState
-from app.labels import Arrow
+from app.labels import Transition
 from app.monitor import timers
 from app.states import AcuitySource, ClinicalStatus, State
 from app.symbolic import prolog
@@ -72,7 +72,7 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
     # that someone actually answered.
     recorded = audit(state.case_id, State.AWAITING_HUMAN_APPROVAL, "emit_event_log",
                      f"escalation recorded: {decision} by {resolver}",
-                     Arrow.ESCALATION_RECORDED)
+                     Transition.ESCALATION_RECORDED)
 
     base: dict[str, Any] = {
         "control_state": State.AWAITING_HUMAN_APPROVAL.value,
@@ -104,7 +104,7 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
                           audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
                                 "apply_human_acuity",
                                 f"charge nurse resolved acuity: {chosen}",
-                                Arrow.GATE_ACUITY_RESOLVED)],
+                                Transition.GATE_ACUITY_RESOLVED)],
         }
 
     if decision == "escalate_further" and not state.senior_required:
@@ -113,7 +113,7 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
             "audit_log": [recorded,
                           audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
                                 "escalate_further", f"{resolver} escalated to a senior",
-                                Arrow.SENIOR_ESCALATION)],
+                                Transition.SENIOR_ESCALATION)],
         }
 
     # Safety-fail branch: correct and revalidate. No override path exists.
@@ -135,7 +135,7 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
                       audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
                             "apply_correction",
                             f"correction round {state.correction_rounds + 1}: {changes}; re-running safety",
-                            Arrow.GATE_SAFETY_CORRECTED)],
+                            Transition.GATE_SAFETY_CORRECTED)],
     }
     if "acuity" in changes:
         new = changes["acuity"]
@@ -159,5 +159,5 @@ def escalate_to_senior(state: TriageState) -> dict[str, Any]:
     return {
         "senior_required": True,
         "audit_log": [audit(state.case_id, State.AWAITING_HUMAN_APPROVAL, "escalate_to_senior",
-                            "correction loop handed to a shift lead", Arrow.SENIOR_ESCALATION)],
+                            "correction loop handed to a shift lead", Transition.SENIOR_ESCALATION)],
     }

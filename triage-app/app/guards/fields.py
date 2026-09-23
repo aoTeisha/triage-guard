@@ -6,7 +6,7 @@ Presence checks only — none of these infer or guess a missing value.
 from __future__ import annotations
 
 # The mandatory webform fields (SPECIFICATION.md § Context / State variables).
-# nurse_proposed_acuity is mandatory and never inferred: absent means arrow 16,
+# nurse_proposed_acuity is mandatory and never inferred: absent means MISSING_FIELDS,
 # never a guessed value.
 REQUIRED_FIELDS = (
     "case_id",
@@ -49,7 +49,7 @@ def nothing_usable(payload: dict) -> bool:
 
 
 def not_required_fields_complete(payload: dict) -> tuple[bool, str]:
-    """¬`required_fields_complete` — the guard on arrow 16."""
+    """¬`required_fields_complete` — the guard on MISSING_FIELDS."""
     gaps = missing_fields(payload)
     if not gaps:
         return False, "no required fields are missing"

@@ -14,6 +14,7 @@ import pytest
 
 from app import runner
 from app.crm_client import PatientLookupResult
+from app.labels import Transition
 from app.mock_cases import DEMO_CASES
 from app.states import State
 
@@ -51,7 +52,7 @@ def test_i19_second_intake_for_the_same_found_patient_is_rejected(checkpoint_db,
     state_b, _ = runner.start_case(case_b)
 
     assert state_b["control_state"] == State.INPUT_REJECTED.value
-    assert any(r.get("arrow") == "4b·duplicate" for r in state_b["audit_log"])
+    assert any(r.get("transition") == Transition.DUPLICATE_CASE for r in state_b["audit_log"])
 
 
 def test_i19_two_concurrent_intakes_for_the_same_patient_only_one_wins(checkpoint_db, monkeypatch):

@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from app.labels import Arrow
+from app.labels import Transition
 from app.states import AcuityBucket, AcuitySource, State
 from app.symbolic import opa, prolog
 
@@ -40,7 +40,7 @@ def assign_order_key(acuity: int, arrival_time: str) -> tuple[int, str]:
     return (acuity, arrival_time)
 
 
-# ---- acuity-gap resolution at the gate (arrows 9a / 9b / 9c) ----------------
+# ---- acuity-gap resolution at the gate -----------------------------------
 
 
 def compute_acuity_gap(nurse: int, system: int) -> int:
@@ -49,27 +49,29 @@ def compute_acuity_gap(nurse: int, system: int) -> int:
 
 def resolve_acuity(
     nurse: int, system: int
-) -> tuple[int | None, AcuitySource | None, Arrow]:
-    """Return (final_acuity, acuity_source, arrow) per the gap bands (I4).
+) -> tuple[int | None, AcuitySource | None, Transition]:
+    """Return (final_acuity, acuity_source, transition) per the gap bands (I4).
 
-        gap 0   -> agree, keep it              (9a, human_confirmed)
-        gap 1   -> take the NURSE's value      (9b, auto_resolved)
-        gap >=2 -> charge nurse decides        (9c, unresolved)
+        gap 0   -> agree, keep it              (ACUITY_AGREE, human_confirmed)
+        gap 1   -> take the NURSE's value      (ACUITY_GAP_MINOR, auto_resolved)
+        gap >=2 -> charge nurse decides        (ACUITY_GAP_MAJOR, unresolved)
 
     The bands must be total and exclusive, so exactly one arm fires for every
-    gap >= 0 (I4; to be proven with Z3). The 9c arm returns None rather than a
-    sentinel number: there is no final acuity yet, and a placeholder integer here
-    would be indistinguishable from a real ESI level downstream.
+    gap >= 0 (I4; to be proven with Z3). The ACUITY_GAP_MAJOR arm returns None
+    rather than a sentinel number: there is no final acuity yet, and a
+    placeholder integer here would be indistinguishable from a real ESI level
+    downstream.
     """
     gap = compute_acuity_gap(nurse, system)
     if gap == 0:
-        return nurse, AcuitySource.HUMAN_CONFIRMED, Arrow.ACUITY_AGREE
+        return nurse, AcuitySource.HUMAN_CONFIRMED, Transition.ACUITY_AGREE
     if gap == 1:
         # The nurse holds a gap of 1. Was `min(nurse, system)` until 2026-09-13;
         # changed because the classifier over-triages systematically and would
-        # otherwise win every close call unseen. Both inputs are logged at 9b.
-        return nurse, AcuitySource.AUTO_RESOLVED, Arrow.ACUITY_GAP_MINOR
-    return None, None, Arrow.ACUITY_GAP_MAJOR
+        # otherwise win every close call unseen. Both inputs are logged at
+        # ACUITY_GAP_MINOR.
+        return nurse, AcuitySource.AUTO_RESOLVED, Transition.ACUITY_GAP_MINOR
+    return None, None, Transition.ACUITY_GAP_MAJOR
 
 
 # ---- audit (emit_event_log — every transition) ------------------------------
@@ -84,7 +86,7 @@ def audit(
     control_state: State,
     action: str,
     explanation: str,
-    arrow: Arrow | None = None,
+    transition: Transition | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     """Build one trace record.
@@ -99,7 +101,7 @@ def audit(
         "control_state": control_state.value,
         "action": action,
         "explanation": explanation,
-        "arrow": arrow.value if arrow else None,
+        "transition": transition.value if transition else None,
         **extra,
     }
 
@@ -110,7 +112,7 @@ def audit_denial(case_id: str, control_state: State, why: str,
     engine refused — the gate is Prolog's (I14), move and release are OPA's
     (I5/I9).
     """
-    return audit(case_id, control_state, "explain_denial", why, Arrow.BLK, denying_layer=layer)
+    return audit(case_id, control_state, "explain_denial", why, Transition.BLK, denying_layer=layer)
 
 
 # ---- symbolic-layer predicates ---------------------------------------------
@@ -124,7 +126,7 @@ def verify_no_identifiers(payload: dict) -> tuple[bool, str]:
 
     Real deployment: an OPA/Rego policy over the payload's information-flow graph
     (Datalog). A present name/ID/DOB/phone key is a structural violation — not
-    retryable, halts the case (V·halt·PII).
+    retryable, halts the case (V_HALT_PII).
     """
     banned = {"name", "stable_patient_id", "date_of_birth", "dob", "phone"}
     leaked = sorted(banned & set(payload))

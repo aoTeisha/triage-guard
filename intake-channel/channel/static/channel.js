@@ -92,7 +92,7 @@ function render(body) {
   if (body.outcome === "MISSING_FIELDS_DETECTED") {
     submitResultEl.appendChild(
       note(`Missing: ${body.missing_fields.join(", ")}. A completion form for these
-            arrives with the missing-fields return path (arrow 1b.x).`)
+            arrives with the missing-fields return path.`)
     );
   }
   submitResultEl.appendChild(trail(body.audit_log || []));
@@ -164,7 +164,7 @@ function trail(rows) {
     `<table>${rows
       .map(
         (r) =>
-          `<tr><td class="arrow">${r.arrow || "—"}</td>` +
+          `<tr><td class="transition">${r.transition || "—"}</td>` +
           `<td class="action">${r.action}</td>` +
           `<td>${r.explanation}</td></tr>`
       )

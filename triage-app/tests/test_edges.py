@@ -47,7 +47,7 @@ def test_unimplemented_states_are_actually_absent():
 
 
 def test_intake_fans_out_to_exactly_the_four_documented_outcomes():
-    """Arrows 4 / 16 / 17 / 18."""
+    """SUBMISSION_VALID / MISSING_FIELDS / SUBMISSION_UNUSABLE / INVALID_INPUT."""
     targets = {t for s, t in edges() if s == State.PARSING.value}
     assert targets == {
         State.DATA_PARSED.value,
@@ -58,35 +58,36 @@ def test_intake_fans_out_to_exactly_the_four_documented_outcomes():
 
 
 def test_data_parsed_leads_to_identity_lookup():
-    """Arrow 4b."""
+    """LOOKUP."""
     assert (State.DATA_PARSED.value, State.RESOLVING_IDENTITY.value) in edges()
 
 
 def test_redaction_can_halt_but_classification_is_the_only_way_forward():
-    """Arrow 6 forward, V·halt·PII sideways. Critical-closed: no third option."""
+    """PAYLOAD_CLEAN forward, V_HALT_PII sideways. Critical-closed: no third option."""
     targets = {t for s, t in edges() if s == State.REDACTING_ROUTING.value}
     assert targets == {
         State.CLASSIFYING.value,
         State.AGENT_FAILED.value,
-        State.REDACTING_ROUTING.value,     # V·retry self-loop
+        State.REDACTING_ROUTING.value,     # V_RETRY self-loop
     }
 
 
 def test_classifier_exhaustion_degrades_instead_of_halting():
-    """AF·classifier is fail-open: the case continues on nurse acuity."""
+    """AF_CLASSIFIER is fail-open: the case continues on nurse acuity."""
     assert (State.CLASSIFYING.value, "classifier_fallback") in edges()
     assert ("classifier_fallback", State.SAFETY_VALIDATING.value) in edges()
     assert (State.CLASSIFYING.value, State.AGENT_FAILED.value) not in edges()
 
 
 def test_safety_exhaustion_routes_to_a_human_not_a_halt():
-    """AF·safety: every case goes to a charge nurse so no-approval-bypass holds."""
+    """AF_SAFETY: every case goes to a charge nurse so no-approval-bypass holds."""
     assert (State.SAFETY_VALIDATING.value, "safety_fallback") in edges()
     assert ("safety_fallback", State.AWAITING_HUMAN_APPROVAL.value) in edges()
 
 
 def test_acuity_gap_has_exactly_two_destinations():
-    """9a/9b settle and continue; 9c escalates. The bands are total and exclusive."""
+    """ACUITY_AGREE / ACUITY_GAP_MINOR settle and continue; ACUITY_GAP_MAJOR escalates.
+    The bands are total and exclusive."""
     targets = {t for s, t in edges() if s == State.ACUITY_PROPOSED.value}
     assert targets == {
         State.SAFETY_VALIDATING.value,

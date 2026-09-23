@@ -13,11 +13,12 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command
 
 from app.graph import build_graph
+from app.labels import Transition
 from app.runner import hydrate
 from app.states import State
-from tests.conftest import _drop_db, _throwaway_db, arrows
+from tests.conftest import _drop_db, _throwaway_db, transitions
 
-# nurse says 5, the classifier proposes 2 (mock fixture) -> gap 3 -> arrow 9c.
+# nurse says 5, the classifier proposes 2 (mock fixture) -> gap 3 -> ACUITY_GAP_MAJOR.
 GAP_CASE = {
     "case_id": "case-gap",
     "channel": "website",
@@ -32,7 +33,7 @@ CHARGE = {"decision": "use_system_acuity", "resolver_role": "charge_nurse"}
 
 
 def test_a_major_gap_pauses_the_run(run):
-    """Arrow 9c: gap >= 2 is not resolved by the machine."""
+    """ACUITY_GAP_MAJOR: gap >= 2 is not resolved by the machine."""
     state, pending, _ = run(GAP_CASE)
 
     assert pending is not None
@@ -40,7 +41,7 @@ def test_a_major_gap_pauses_the_run(run):
     assert pending["required_role"] == "charge_nurse"
     assert pending["nurse_proposed_acuity"] == 5
     assert pending["system_proposed_acuity"] == 2
-    assert "9c" in arrows(state)
+    assert Transition.ACUITY_GAP_MAJOR in transitions(state)
 
 
 def test_a_paused_case_has_no_settled_acuity(run):
@@ -60,7 +61,7 @@ def test_resuming_applies_the_humans_choice_and_marks_it_confirmed(graph, run):
 
     assert resumed["acuity"] == 2
     assert resumed["acuity_source"] == "human_confirmed"
-    assert "1b.z·acuity" in arrows(resumed)
+    assert Transition.GATE_ACUITY_RESOLVED in transitions(resumed)
 
 
 def test_a_resolved_gate_re_runs_safety_before_the_queue(graph, run):
@@ -68,8 +69,8 @@ def test_a_resolved_gate_re_runs_safety_before_the_queue(graph, run):
     _, _, thread = run(GAP_CASE)
     resumed = hydrate(graph.invoke(Command(resume=CHARGE), {"configurable": {"thread_id": thread}}))
 
-    trail = arrows(resumed)
-    assert trail.index("1b.z·acuity") < trail.index("10")
+    trail = transitions(resumed)
+    assert trail.index(Transition.GATE_ACUITY_RESOLVED) < trail.index(Transition.SAFETY_PASSED)
     assert resumed["control_state"] == State.MONITORING.value
     assert resumed["safety_passed"] is True
 
@@ -102,7 +103,8 @@ def test_the_pause_survives_a_rebuilt_graph():
     assert resumed["acuity"] == 2
     assert resumed["control_state"] == State.MONITORING.value
     # The trail spans both processes.
-    assert "9c" in arrows(resumed) and "1b.z·acuity" in arrows(resumed)
+    assert (Transition.ACUITY_GAP_MAJOR in transitions(resumed)
+            and Transition.GATE_ACUITY_RESOLVED in transitions(resumed))
 
 
 def test_nurse_choice_is_honoured_when_that_is_what_the_charge_nurse_picks(graph, run):
@@ -153,7 +155,7 @@ def test_an_exhausted_correction_loop_waits_for_a_shift_lead(graph, run, monkeyp
     assert snap.next == (State.AWAITING_HUMAN_APPROVAL.value,)  # still open, not ended
 
     refused = _answer(graph, thread, "corrected", "charge_nurse", {"acuity": 4})
-    assert "BLK" in arrows(hydrate(refused.values))
+    assert Transition.BLK in transitions(hydrate(refused.values))
     assert refused.next == (State.AWAITING_HUMAN_APPROVAL.value,)
 
     monkeypatch.undo()  # the shift lead's correction now passes safety
@@ -171,7 +173,7 @@ def test_escalate_further_hands_the_case_to_a_shift_lead_at_once(graph, run, mon
 
     assert snap.values["senior_required"] is True
     assert hydrate(snap.values)["correction_rounds"] == 0
-    assert "1b.z·senior" in arrows(hydrate(snap.values))  # review fix 5
+    assert Transition.SENIOR_ESCALATION in transitions(hydrate(snap.values))  # review fix 5
     assert conn.execute(
         "SELECT COUNT(*) FROM timers WHERE case_id=%s AND kind='senior_reminder'",
         (DEMO_CASES["clean"]["case_id"],),
@@ -213,7 +215,7 @@ def test_a_correction_that_changes_nothing_is_refused(graph, run, monkeypatch, c
 
     result = hydrate(snap.values)
     assert snap.next == (State.AWAITING_HUMAN_APPROVAL.value,)
-    assert arrows(result)[-1] == "BLK"
+    assert transitions(result)[-1] == Transition.BLK
     assert result["correction_rounds"] == 0
     assert result["acuity"] == 3
 
@@ -231,5 +233,5 @@ def test_a_real_correction_is_applied_and_revalidated(graph, run, monkeypatch):
     assert result["acuity"] == 2
     assert result["order_key"][0] == 2          # re-keyed by the real acuity change (I2)
     assert result["correction_rounds"] == 1
-    assert "1b.z·safety" in arrows(result)
+    assert Transition.GATE_SAFETY_CORRECTED in transitions(result)
     assert snap.next == ("awaiting_reassessment",)  # revalidated and queued

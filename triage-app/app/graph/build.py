@@ -28,7 +28,7 @@ from app.budgets import RETRY_BUDGET
 from app.events import Event
 from app.graph import nodes, routers
 from app.graph.state import TriageState
-from app.labels import Arrow, Route
+from app.labels import Transition, Route
 from app.states import State
 
 # States this version deliberately does not implement yet — listed here so
@@ -90,7 +90,7 @@ def _crash(state: TriageState, node: State, agent: str, error: NodeError) -> dic
         "audit_log": [
             nodes.audit(state.case_id, node, "alert_technician",
                         f"{agent} raised after its retry budget: {error.error}",
-                        Arrow.AF_RECOVER)
+                        Transition.AF_RECOVER)
         ]
     }
 

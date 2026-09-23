@@ -7,7 +7,7 @@ from typing import Any
 from app.deterministic import audit, audit_denial, now_iso, release_authorized
 from app.events import Event
 from app.graph.state import TriageState
-from app.labels import Arrow
+from app.labels import Transition
 from app.states import ClinicalStatus, State
 
 
@@ -38,5 +38,5 @@ def release_case(state: TriageState, answer: dict[str, Any], at: State) -> dict[
         "released_at": now_iso(),
         "release_reason": reason,
         "audit_log": [audit(state.case_id, State.CASE_CLOSED, "sign_release",
-                            f"release signed: {reason}", Arrow.RELEASE)],
+                            f"release signed: {reason}", Transition.RELEASE)],
     }

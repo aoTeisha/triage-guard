@@ -5,9 +5,9 @@ Flow's routers can be exercised without any real channel or LLM. Edit the
 values, or add cases, to drive the pipeline down different paths.
 
   DEMO_CASE_1  clean submission        → DATA_PARSED        → full happy path
-  DEMO_CASE_2  missing fields          → MISSING_FIELDS_DETECTED (arrow 16)
-  DEMO_CASE_3  nothing usable          → SUBMISSION_FAILED  (arrow 17)
-  DEMO_CASE_4  prompt-injection text   → INVALID_INPUT_DETECTED (arrow 18)
+  DEMO_CASE_2  missing fields          → MISSING_FIELDS_DETECTED
+  DEMO_CASE_3  nothing usable          → SUBMISSION_FAILED
+  DEMO_CASE_4  prompt-injection text   → INVALID_INPUT_DETECTED
 """
 
 DEMO_CASE_1 = {

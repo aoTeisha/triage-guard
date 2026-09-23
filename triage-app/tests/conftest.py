@@ -140,6 +140,6 @@ def checkpoint_db(monkeypatch):
         _drop_db(dsn)
 
 
-def arrows(state: dict[str, Any]) -> list[str]:
-    """Arrow labels from a run's audit trail, in order."""
-    return [r["arrow"] for r in state.get("audit_log", []) if r.get("arrow")]
+def transitions(state: dict[str, Any]) -> list[str]:
+    """Transition labels from a run's audit trail, in order."""
+    return [r["transition"] for r in state.get("audit_log", []) if r.get("transition")]

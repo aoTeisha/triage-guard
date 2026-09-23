@@ -21,7 +21,7 @@ from app.budgets import REASSESSMENT_REMINDER_DELAY_MINUTES
 from app.deterministic import assign_order_key, audit
 from app.graph.nodes._shared import is_release, release_case
 from app.graph.state import TriageState
-from app.labels import Arrow
+from app.labels import Transition
 from app.monitor import timers
 from app.states import ClinicalStatus, State
 
@@ -97,6 +97,6 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
         if submitted.get("nurse_proposed_acuity") is not None else state.order_key,
         "audit_log": [
             audit(state.case_id, State.REASSESSMENT_REQUIRED, "emit_event_log",
-                  "nurse re-filed with fresh observations", Arrow.FRONT_DOOR_RERUN),
+                  "nurse re-filed with fresh observations", Transition.FRONT_DOOR_RERUN),
         ],
     }

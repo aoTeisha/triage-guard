@@ -5,8 +5,8 @@ by convenience — a safety verdict that a stochastic model could influence woul
 make every downstream invariant unprovable.
 
 SKELETON: returns the canned verdict from `mocks/safety_validator.json`. Edit that
-file to exercise the fail branch (10·fail -> the human gate). Replace this function
-body with real engine calls; the graph already routes pass / fail and the V·* rows
+file to exercise the fail branch (SAFETY_FAILED -> the human gate). Replace this function
+body with real engine calls; the graph already routes pass / fail and the V_* rows
 off its result, so no wiring changes.
 """
 
@@ -19,7 +19,7 @@ from app.schemas import SafetyVerdict
 
 
 class ValidatorUnavailable(RuntimeError):
-    """Raised when the symbolic engine cannot be reached (drives AF·safety)."""
+    """Raised when the symbolic engine cannot be reached (drives AF_SAFETY)."""
 
 
 def validate(case: dict[str, Any]) -> SafetyVerdict:

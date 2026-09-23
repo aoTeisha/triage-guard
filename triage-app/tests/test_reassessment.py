@@ -1,7 +1,7 @@
 """The reassessment re-filing pause: a fired timer (or a reported
 deterioration) must not silently replay the case's stale `raw_payload` — it
 has to wait for a nurse to submit fresh observations before re-entering
-intake (docs/SPECIFICATION.md, `reassessment_required` row, arrows 14->15).
+intake (docs/SPECIFICATION.md, `reassessment_required` row, REASSESSMENT_DUE -> FRONT_DOOR_RERUN).
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def test_nurse_refile_with_changed_acuity_moves_the_case_and_updates_its_order_k
     result = hydrate(graph.invoke(Command(resume=REFILE), config_for(thread)))
 
     # gap = |1 - 2| (the mock classifier always proposes 2) = 1, which
-    # resolve_acuity's 9b band settles to the nurse's number. So acuity really
+    # resolve_acuity's ACUITY_GAP_MINOR band settles to the nurse's number. So acuity really
     # did change because the nurse re-filed, not because the clock ticked.
     assert result["acuity"] == 1
     assert result["order_key"][0] == 1  # acuity is the first part of the key

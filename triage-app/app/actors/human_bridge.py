@@ -25,7 +25,7 @@ from langgraph.types import interrupt
 from app.actors import load_mock
 
 # Reasons the gate can be entered. One control state, two causes (§ Transitions:
-# 9c for the acuity discrepancy, 10·fail / AF·safety for the safety branch).
+# ACUITY_GAP_MAJOR for the acuity discrepancy, SAFETY_FAILED / AF_SAFETY for the safety branch).
 DISCREPANCY = "discrepancy"
 LOW_CONFIDENCE = "low_confidence"
 SAFETY_FAIL = "safety_fail"

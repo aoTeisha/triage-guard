@@ -1,4 +1,4 @@
-"""resolving_identity — CRM lookup (arrows 4b·found, 4b·new, AF·db)."""
+"""resolving_identity — CRM lookup (CRM_FOUND, CRM_NEW, DUPLICATE_CASE, AF_DB)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from app.crm_client import fetch_patient
 from app.deterministic import audit
 from app.graph.nodes._shared import _bump
 from app.graph.state import TriageState
-from app.labels import Arrow
+from app.labels import Transition
 from app.states import State
 from app.symbolic.datalog import find_duplicate_active_case
 from app.verification import verify_patient_record
@@ -32,7 +32,7 @@ def resolving_identity(state: TriageState) -> dict[str, Any]:
             "flags": ["crm_down_intake_only"],
             "audit_log": [audit(state.case_id, State.RESOLVING_IDENTITY,
                                 "alert_technician", "DB unreachable, degraded",
-                                Arrow.AF_DB)],
+                                Transition.AF_DB)],
         }
 
     check = verify_patient_record(record)
@@ -42,7 +42,7 @@ def resolving_identity(state: TriageState) -> dict[str, Any]:
             "retry_count": _bump(state, "crm"),
             "audit_log": [audit(state.case_id, State.RESOLVING_IDENTITY,
                                 "discard_output", "; ".join(check.violations),
-                                Arrow.V_RETRY)],
+                                Transition.V_RETRY)],
         }
 
     found = status == "found"
@@ -61,7 +61,7 @@ def resolving_identity(state: TriageState) -> dict[str, Any]:
             return {
                 "control_state": State.INPUT_REJECTED.value,
                 "audit_log": [audit(state.case_id, State.INPUT_REJECTED, "notify_user",
-                                    f"case already open: {duplicate}", Arrow.DUPLICATE_CASE)],
+                                    f"case already open: {duplicate}", Transition.DUPLICATE_CASE)],
             }
     return {
         "control_state": State.RESOLVING_IDENTITY.value,
@@ -70,12 +70,12 @@ def resolving_identity(state: TriageState) -> dict[str, Any]:
         "audit_log": [audit(state.case_id, State.RESOLVING_IDENTITY,
                             "fetch_patient_data",
                             "record found" if found else "new patient, no history",
-                            Arrow.CRM_FOUND if found else Arrow.CRM_NEW)],
+                            Transition.CRM_FOUND if found else Transition.CRM_NEW)],
     }
 
 
 def crm_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
-    """AF·db — the CRM client raised rather than returning a status.
+    """AF_DB — the CRM client raised rather than returning a status.
 
     Same outcome as the db_error branch inside `resolving_identity`: continue on
     intake-only data. Split into its own function so the error handler and the
@@ -90,5 +90,5 @@ def crm_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
                             "alert_technician",
                             "CRM unreachable, degraded"
                             + (f" ({reason})" if reason else ""),
-                            Arrow.AF_DB)],
+                            Transition.AF_DB)],
     }

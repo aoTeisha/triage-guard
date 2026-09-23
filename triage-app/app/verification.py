@@ -9,10 +9,10 @@ modelled as a type rather than a bool:
 
   RECOVERABLE  schema mismatch, value out of range, null/wrong type. The step is
                healthy, its output is malformed. Discard and re-invoke on the
-               agent's retry budget (V·retry), then that agent's AF row
-               (V·exhausted).
+               agent's retry budget (V_RETRY), then that agent's AF row
+               (V_EXHAUSTED).
   STRUCTURAL   an identifier reached a redacted payload, or a safety invariant
-               broke. A retry cannot fix it. Discard and halt (V·halt).
+               broke. A retry cannot fix it. Discard and halt (V_HALT).
 
 One rule never bends: a malformed or unsafe output is never written to state.
 """
@@ -81,7 +81,7 @@ def verify_schema(agent: str, output: Any, model: type[BaseModel]) -> Verificati
 
 
 def verify_redacted_payload(payload: dict[str, Any]) -> VerificationResult:
-    """The `redacting_routing` check (V·halt·PII).
+    """The `redacting_routing` check (V_HALT_PII).
 
     Structural by definition: an identifier in the model-facing payload is a
     privacy-invariant breach, and re-running the same drop on the same input would

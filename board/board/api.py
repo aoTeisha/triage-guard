@@ -54,7 +54,7 @@ from pydantic import BaseModel
 
 from app import runner
 from app.budgets import HEARTBEAT_STALE_MULTIPLIER
-from app.labels import Arrow
+from app.labels import Transition
 from app.monitor import timers
 from app.monitor.sweeper import SWEEP_INTERVAL_SECONDS
 from app.runner import config_for, history
@@ -71,21 +71,21 @@ STATIC_DIR = Path(__file__).with_name("static")
 
 
 # Which case events show up in the notification strip along the top of the
-# board. Every transition a case makes gets logged with an "arrow" — a short
-# code identifying which step just happened (e.g. "missing fields", "gate
-# reminder"). Only the ones a nurse actually needs to act on or notice are
-# listed here. Deliberately excluded: cleared-to-queue (`11·pass`) — every
-# normal case emits that one, so including it would add a "nothing wrong"
-# entry per card to a strip meant to surface exceptions, not routine success.
-NOTIFY_ARROWS = {
-    Arrow.MISSING_FIELDS.value,        # intake was missing required fields
-    Arrow.SUBMISSION_UNUSABLE.value,   # scan failed / erroneous file
-    Arrow.INVALID_INPUT.value,         # injection attempt refused
-    Arrow.APPROVAL_REQUESTED.value,    # a charge nurse's approval was requested
-    Arrow.ESCALATION_RECORDED.value,   # a charge nurse answered an escalation
-    Arrow.REASSESSMENT_DUE.value,      # a reassessment timer fired
-    Arrow.MOVE_CONFIRMED.value,        # move to treatment confirmed
-    Arrow.BLK.value,                   # an attempted action was refused — worth seeing most
+# board. Every transition a case makes gets logged under its own name (e.g.
+# "missing_fields", "gate_reminder"). Only the ones a nurse actually needs to
+# act on or notice are listed here. Deliberately excluded: CLEARED_TO_QUEUE —
+# every normal case emits that one, so including it would add a "nothing
+# wrong" entry per card to a strip meant to surface exceptions, not routine
+# success.
+NOTIFY_TRANSITIONS = {
+    Transition.MISSING_FIELDS.value,        # intake was missing required fields
+    Transition.SUBMISSION_UNUSABLE.value,   # scan failed / erroneous file
+    Transition.INVALID_INPUT.value,         # injection attempt refused
+    Transition.APPROVAL_REQUESTED.value,    # a charge nurse's approval was requested
+    Transition.ESCALATION_RECORDED.value,   # a charge nurse answered an escalation
+    Transition.REASSESSMENT_DUE.value,      # a reassessment timer fired
+    Transition.MOVE_CONFIRMED.value,        # move to treatment confirmed
+    Transition.BLK.value,                   # an attempted action was refused — worth seeing most
 }
 
 app = FastAPI(title="Triage Guard — board", version="0.1.0")
@@ -214,7 +214,7 @@ def _complaint(state: dict) -> str:
 def notifications(states: list[dict], feed: list[dict] | None = None) -> list[dict]:
     """The notification strip along the top of the board, from two sources.
 
-    Case events come from each case's audit log, filtered by `NOTIFY_ARROWS`
+    Case events come from each case's audit log, filtered by `NOTIFY_TRANSITIONS`
     — every one of them is already recorded there by the node that caused it.
     Staff reminders and monitor escalations cannot come from there: the
     sweeper sends them without resuming the case, by design (`fire.notify`
@@ -234,13 +234,13 @@ def notifications(states: list[dict], feed: list[dict] | None = None) -> list[di
             "case_id": rec.get("case_id") or state.get("case_id"),
             "complaint": _complaint(state),
             "at": rec.get("at"),
-            "arrow": rec.get("arrow"),
+            "transition": rec.get("transition"),
             "action": rec.get("action"),
             "explanation": rec.get("explanation"),
         }
         for state in states
         for rec in state.get("audit_log", [])
-        if rec.get("arrow") in NOTIFY_ARROWS
+        if rec.get("transition") in NOTIFY_TRANSITIONS
     ]
     records += [
         rec | {"complaint": complaints.get(rec["case_id"], "")} for rec in (feed or [])
@@ -409,7 +409,7 @@ def _resume_waiting_case(case_id: str, resume: dict, any_pause: bool = False) ->
         raise HTTPException(status_code=409, detail="case already left the pause")
 
     last = after_log[-1]
-    if last.get("arrow") == Arrow.BLK.value:
+    if last.get("transition") == Transition.BLK.value:
         return {"status": "denied", "detail": last.get("explanation")}
     return {"status": "ok"}
 
@@ -446,7 +446,7 @@ def case(case_id: str):
     """The case detail panel: the same view intake-channel renders for this
     case, plus how many checkpoints (state snapshots) it has. The event
     trail is `view["audit_log"]`, already formatted as
-    `at · arrow · action · explanation` by `deterministic.audit()`.
+    `at · transition · action · explanation` by `deterministic.audit()`.
     """
     values, gated = repo.load(case_id)
     if not values:

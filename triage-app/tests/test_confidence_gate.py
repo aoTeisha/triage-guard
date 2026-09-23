@@ -15,11 +15,11 @@ from app.actors import safety
 from app.budgets import CONFIDENCE_THRESHOLD, confidence_ok
 from app.graph import TriageState
 from app.graph.routers import route_verdict
-from app.labels import Route
+from app.labels import Route, Transition
 from app.runner import hydrate
 from app.schemas import AcuityProposal
 from app.states import State
-from tests.conftest import arrows
+from tests.conftest import transitions
 
 # Nurse proposes acuity 2, the mock classifier also proposes 2 — a gap of 0,
 # so the case sails past the nurse/system discrepancy check and reaches
@@ -92,7 +92,7 @@ def test_a_confident_classifier_never_reaches_the_gate(run):
     # here, not `None`.
     assert pending == {"case_id": SURE_CASE["case_id"], "waiting_room": True}
     assert state["control_state"] == State.MONITORING.value
-    assert "11" not in arrows(state)
+    assert Transition.ESCALATION_NEEDED not in transitions(state)
 
 
 def test_an_unsure_classifier_pauses_for_confirmation(run, monkeypatch):
@@ -113,7 +113,7 @@ def test_an_unsure_classifier_pauses_for_confirmation(run, monkeypatch):
 
     assert pending is not None
     assert pending["gate"] == "low_confidence"
-    assert "11" in arrows(state)
+    assert Transition.ESCALATION_NEEDED in transitions(state)
     # Got here by passing safety validation but failing the confidence check
     # — distinct from arriving here via a failed safety verdict instead.
     assert state["safety_passed"] is True
@@ -192,9 +192,9 @@ def test_a_gate_response_is_recorded_before_it_is_applied(graph, run, monkeypatc
         {"configurable": {"thread_id": thread}},
     ))
 
-    trail = arrows(resumed)
-    assert "12" in trail
-    assert trail.index("11") < trail.index("12")
+    trail = transitions(resumed)
+    assert Transition.ESCALATION_RECORDED in trail
+    assert trail.index(Transition.ESCALATION_NEEDED) < trail.index(Transition.ESCALATION_RECORDED)
 
 
 def test_a_refused_response_is_still_recorded(graph, run):
@@ -209,6 +209,6 @@ def test_a_refused_response_is_still_recorded(graph, run):
         {"configurable": {"thread_id": thread}},
     ))
 
-    trail = arrows(denied)
-    assert "12" in trail and "BLK" in trail
-    assert trail.index("12") < trail.index("BLK")
+    trail = transitions(denied)
+    assert Transition.ESCALATION_RECORDED in trail and Transition.BLK in trail
+    assert trail.index(Transition.ESCALATION_RECORDED) < trail.index(Transition.BLK)

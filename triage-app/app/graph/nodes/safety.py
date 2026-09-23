@@ -1,5 +1,6 @@
 """safety_validating and verdict_proposed — the deterministic safety verdict and
-the confidence gate over it (arrows 10, 10·fail, 11, 11·pass, AF·safety).
+the confidence gate over it (SAFETY_PASSED, SAFETY_FAILED, ESCALATION_NEEDED,
+CLEARED_TO_QUEUE, AF_SAFETY).
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from app.budgets import CONFIDENCE_THRESHOLD, confidence_ok
 from app.deterministic import audit
 from app.graph.nodes._shared import _bump
 from app.graph.state import TriageState
-from app.labels import Arrow
+from app.labels import Transition
 from app.schemas import SafetyVerdict
 from app.states import State
 from app.verification import verify_schema
@@ -31,7 +32,7 @@ def safety_validating(state: TriageState) -> dict[str, Any]:
             "retry_count": _bump(state, "safety_validation"),
             "audit_log": [audit(state.case_id, State.SAFETY_VALIDATING,
                                 "discard_output", "; ".join(check.violations),
-                                Arrow.V_RETRY_SAFETY)],
+                                Transition.V_RETRY_SAFETY)],
         }
 
     checked: SafetyVerdict = check.checked
@@ -44,13 +45,13 @@ def safety_validating(state: TriageState) -> dict[str, Any]:
         "audit_log": [audit(state.case_id, State.SAFETY_VALIDATING,
                             "emit_event_log" if passed else "invoke_human_escalation",
                             "safety passed" if passed else "safety failed, human decides",
-                            Arrow.SAFETY_PASSED if passed else Arrow.SAFETY_FAILED,
+                            Transition.SAFETY_PASSED if passed else Transition.SAFETY_FAILED,
                             reasons=checked.reasons)],
     }
 
 
 def safety_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
-    """AF·safety / V·exhausted·safety — validator down or unusable.
+    """AF_SAFETY / V_EXHAUSTED_SAFETY — validator down or unusable.
 
     Deliberately not a halt: route every case to a charge nurse so the
     no-approval-bypass invariant still holds while the validator is out.
@@ -65,17 +66,18 @@ def safety_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
                             "invoke_human_escalation",
                             "validator unusable, routing all cases to charge nurse"
                             + (f" ({reason})" if reason else ""),
-                            Arrow.V_EXHAUSTED_SAFETY)],
+                            Transition.V_EXHAUSTED_SAFETY)],
     }
 
 
 def verdict_proposed(state: TriageState) -> dict[str, Any]:
     """A clean verdict, deciding whether a human should still confirm it.
 
-    The spec gives this state no on-entry arrow of its own — only 11 and 11·pass
-    on the way out — so the "verdict recorded" line carries no arrow rather than
-    reusing arrow 10 and putting a second arrow-10 record in a trail meant to diff
-    against the Transitions table line by line.
+    The spec gives this state no on-entry transition of its own — only
+    ESCALATION_NEEDED and CLEARED_TO_QUEUE on the way out — so the "verdict
+    recorded" line carries no transition rather than reusing SAFETY_PASSED and
+    putting a second SAFETY_PASSED record in a trail meant to match the
+    Transitions table row by row.
     """
     records = [audit(state.case_id, State.VERDICT_PROPOSED, "emit_event_log",
                      "verdict recorded")]
@@ -84,7 +86,7 @@ def verdict_proposed(state: TriageState) -> dict[str, Any]:
         records.append(
             audit(state.case_id, State.VERDICT_PROPOSED, "invoke_human_escalation",
                   f"confidence {state.confidence} below {CONFIDENCE_THRESHOLD}; "
-                  "charge nurse confirms", Arrow.ESCALATION_NEEDED)
+                  "charge nurse confirms", Transition.ESCALATION_NEEDED)
         )
         return {
             "control_state": State.VERDICT_PROPOSED.value,

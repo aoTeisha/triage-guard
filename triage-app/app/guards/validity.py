@@ -8,7 +8,7 @@ from .injection import detect_injection
 
 def not_input_is_valid(payload: dict) -> tuple[bool, str]:
     """¬`input_is_valid` = ¬schema_matches ∨ injection_detected(free_text) —
-    the guard on arrow 18.
+    the guard on INVALID_INPUT.
 
     Injection is checked first and its reason wins outright: a payload that is
     both malformed and hostile is reported as "injection", never
@@ -24,7 +24,7 @@ def not_input_is_valid(payload: dict) -> tuple[bool, str]:
 
 
 def required_fields_complete_and_valid(payload: dict) -> tuple[bool, str]:
-    """`required_fields_complete` ∧ `input_is_valid` — the guard on arrow 4."""
+    """`required_fields_complete` ∧ `input_is_valid` — the guard on SUBMISSION_VALID."""
     flagged, reason = not_input_is_valid(payload)
     if flagged:
         return False, reason
