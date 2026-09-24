@@ -1,6 +1,6 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-18 (SQLite retired everywhere — checkpoints, timers, and CRM stub all moved to a shared Postgres — see *Recent changes*)
+**Last updated:** 2026-09-24 (full project scan — see *What's left (scan 2026-09-24)*)
 
 ---
 
@@ -67,14 +67,10 @@ A dead sweeper shows as "monitor degraded" on the board (heartbeat, `board/api.p
       was missing before this: it now refuses a case parked at the re-filing pause
       instead of silently corrupting it.
 
-      Known, unrelated: `intake-channel/tests/test_api.py::test_a_clean_submission_runs_the_whole_pipeline`
-      and `::test_a_charge_nurse_can_resolve_the_gate_and_the_case_completes` fail today
-      because the already-merged waiting-room monitor made `/submit`'s reported
-      `status` become `"awaiting_human_approval"` for *any* pending pause, not just a
-      human gate — `app/views.py`'s `case_view()` never got updated for that. Predates
-      this fix, no file it touched overlaps. Needs its own decision (what should a
-      non-human waiting-room pause report as `status`?) before those two tests can be
-      fixed correctly rather than papered over.
+      The two intake-channel tests once listed here as failing
+      (`test_a_clean_submission_runs_the_whole_pipeline`,
+      `test_a_charge_nurse_can_resolve_the_gate_and_the_case_completes`) pass as of
+      2026-09-24.
 
 - [x] **The board** that shows staff the current queue. *Built read-only (`board/`, :8002,
       milestones M0 + M1 of `2026-09-11-board-service-design.md`): it lists every case,
@@ -84,6 +80,62 @@ A dead sweeper shows as "monitor degraded" on the board (heartbeat, `board/api.p
       only `formal_validation` still renders empty, waiting on item 4's full execution
       machine. The two manual moves exist as a minimal version (2026-09-17, no Tool
       Gateway/idempotency/reconciliation) — see item 5c below.*
+
+---
+
+## What's left (scan 2026-09-24)
+
+Every test suite is green: triage-app 281, board 50, intake-channel 48, crm-stub 15.
+Done since the last update: symbolic engines in the waiting-room monitor (Prolog for
+gate authorization, OPA for move/release, BPpy for dispatch/notify, Datalog for the
+temporal sweeper pass), safety invariants I1–I18, release from any pause, the
+correction loop escalating to a shift lead, and the Arrow → Transition rename.
+
+**Core pieces still fake**
+
+- [ ] **Safety validator.** `app/actors/safety.py` returns a canned "pass" from
+      `mocks/safety_validator.json`. Needs the actual rules, and a decision on which
+      engine enforces which rule (Prolog / Datalog / Z3 / OPA). Top priority.
+- [ ] **Privacy check.** `app/deterministic.py:verify_no_identifiers` is a hardcoded
+      list of five key names. Should be an OPA/Rego policy.
+- [ ] **Output checker.** `app/verification.py` validates shape only, not whether the
+      values make sense together.
+- [ ] **Real LLM.** The acuity classifier defaults to the mock; live mode
+      (`TRIAGE_LLM=live`) is written but needs a real run and a test that calls it.
+- [ ] **Z3 unused.** I4 (acuity gap ≥ 0) is marked "to be proven with Z3" in
+      `app/deterministic.py`; nothing proves it yet.
+
+**Not built at all**
+
+- [ ] **Treatment-move execution machine** (item 4 below): Tool Gateway, idempotency
+      key, `PENDING/CONFIRMED/FAILED/UNKNOWN` states, check-before-retry
+      reconciliation. Design first.
+- [ ] **`formal_validation` board column** has no writer (`app/views.py`). Blocked on
+      the treatment-move machine.
+- [ ] **CRM write-back.** `patch_patient` exists in `app/crm_client.py` but nothing
+      calls it; the deferred write-back and its reconciliation (I17) are missing.
+
+**Spec holes and decisions**
+
+- [ ] "Policy hit" in `escalation_needed` has no definition and is not wired
+      (`app/graph/routers.py`).
+- [ ] Correction scope: `CORRECTABLE_FIELDS = {"acuity"}` (`app/graph/nodes/gate.py`),
+      but the spec also allows `clinical_status` and `safety_verdict`.
+- [ ] Actor authorization checks role only. The spec (I14) also wants jurisdiction and
+      data class, but no store holds shift, ward or clearance facts.
+- [ ] The spec lags the code: the Waiting Room Monitor's tech is still "(to confirm)",
+      and the `senior_reminder` / `reassessment_reminder` timers are missing from the
+      state-variable table.
+- [ ] The structured intake field list is still "roughly ten" — not specified.
+
+**Placeholder numbers** (`app/budgets.py`) — retry budget, `MAX_CORRECTION_ROUNDS=3`,
+`CONFIDENCE_THRESHOLD=0.70`, reminder timings, reassessment interval per acuity band.
+See *Four loose ends* below.
+
+**Housekeeping**
+
+- [ ] Stale branches `feat-board`, `feat/langgraph-migration`, `langfuce`, `spec` —
+      check whether each is merged, then delete.
 
 ---
 
