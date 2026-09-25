@@ -106,7 +106,7 @@ A dead sweeper shows as "monitor degraded" on the board (heartbeat, `board/api.p
 
 ## What's left (scan 2026-09-24)
 
-Every test suite is green: triage-app 366 (plus 1 deselected), board 50, intake-channel
+Every test suite is green: triage-app 368 (plus 1 deselected), board 50, intake-channel
 48, crm-stub 15. Two triage-app tests (`test_a_crm_outage_degrades_and_continues`,
 `test_clean_case_walks_the_documented_transitions_in_order`) fail only while the local
 CRM stub is running on :8000, because they expect the CRM to be unreachable. With
@@ -158,17 +158,6 @@ correction loop escalating to a shift lead, and the Arrow → Transition rename.
 `CONFIDENCE_THRESHOLD=0.70`, reminder timings, reassessment interval per acuity band.
 See *Four loose ends* below.
 
-**Observability loose ends**
-
-- [ ] The six saved table views listed in `langfuse/README.md` have to be made by hand.
-      Langfuse keeps them per user, so the seed can't create them.
-- [ ] Error text from a failing node goes to Langfuse unmasked. No exception in the app
-      echoes input values today, but a Pydantic validation error could.
-- [ ] The board flushes Langfuse inside every board action's request, which adds a
-      network call to each click. The sweeper never flushes when it shuts down.
-- [ ] The mask redacts any run of nine digits, so a UUID-like string can lose part of
-      itself in telemetry. The case data itself is not touched.
-
 **Housekeeping**
 
 - [ ] Stale branches `feat-board`, `feat/langgraph-migration`, `langfuce`, `spec` —
@@ -209,6 +198,11 @@ find one patient's cases. Now:
   The seed runs on every launch and restores the dashboard if it was deleted. The
   catch is that edits made to it in the UI are overwritten, so lasting changes belong
   in the SQL file.
+- The same seed adds three saved views to the Views dropdown on the Tracing page:
+  "Trace-check failures", "Guardrail blocks" and "Live LLM runs"
+  (`langfuse/seed/triage-views.sql`). Each shows one row per case run. Langfuse's own
+  "Errors Only" view covers failing steps. Looking up one case or one patient is done
+  on the Sessions and Users pages, since those need a different id every time.
 - A new skill, `skills/reset-langfuse-data`, wipes all Langfuse data for a clean demo.
   The API keys keep working afterwards.
 
@@ -230,8 +224,22 @@ The code is in `triage-app/app/observability.py` (tests in
 `app/monitor/fire.py` and `board/board/api.py` is wrapped in it. intake-channel's old
 `intake-submission` span is gone, since the case trace replaces it. How to search,
 filter and read the dashboard is in `langfuse/README.md`. The plan and review notes are
-in `docs/superpowers/plans/2026-09-25-langfuse-organization/`. Open items are under
-*Observability loose ends* above.
+in `docs/superpowers/plans/2026-09-25-langfuse-organization/`.
+
+The review's loose ends are closed too:
+
+- Error text is masked. A failing node's error message used to reach Langfuse as is,
+  because the mask only covers input, output and metadata. The node spans and the case
+  run's root span now redact it the same way. The code that called the graph still gets
+  the original error.
+- Services no longer flush Langfuse on every request. The board and intake-channel did,
+  which added a network call to each click. The SDK already sends data in the
+  background and flushes when the process exits. The sweeper now treats a stop signal
+  as a normal exit, so its last spans are sent too.
+- The mask still redacts any run of nine digits, even one that isn't an ID. That is
+  deliberate: a nurse can type an ID with no spaces around it, and a hidden number in
+  telemetry costs far less than a leaked one. It only affects what Langfuse shows;
+  the case data is untouched.
 
 **2026-09-18 — SQLite is gone; one shared Postgres backs checkpoints, timers,
 and the CRM stub.** `db/docker-compose.yml` (new) runs Postgres 17 on host port

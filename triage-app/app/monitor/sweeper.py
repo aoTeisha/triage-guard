@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 import os
+import signal
+import sys
 import time
 from datetime import datetime, timezone
 
@@ -107,6 +109,9 @@ def run_once(conn: psycopg.Connection, *, worker_id: str, graph=None) -> list[di
 
 
 def main() -> None:
+    # SIGTERM (a stop from VS Code or docker) would kill the process without
+    # running exit handlers; as a normal exit, Langfuse flushes its last spans.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     worker_id = os.environ.get("SWEEPER_WORKER_ID", f"sweeper-{os.getpid()}")
     # Reuse `timers.connection()`: it owns the connection settings (autocommit).
     # A second `psycopg.connect` here once drifted and left claims uncommitted.

@@ -140,7 +140,7 @@ services:
     volumes:
       - langfuse_postgres_data:/var/lib/postgresql/data
 
-  # One-shot: seeds the "Triage Guard" dashboard (seed/triage-dashboard.sql) once
+  # One-shot: seeds the "Triage Guard" dashboard and saved views (seed/*.sql) once
   # langfuse-web has migrated the database and created the project. Safe to re-run.
   langfuse-seed:
     image: docker.io/postgres:${POSTGRES_VERSION:-17}
@@ -164,6 +164,7 @@ services:
           echo "waiting for langfuse-web to create project $$PROJECT_ID"; sleep 5
         done
         psql -v ON_ERROR_STOP=1 -v project="$$PROJECT_ID" -f /seed/triage-dashboard.sql
+        psql -v ON_ERROR_STOP=1 -v project="$$PROJECT_ID" -f /seed/triage-views.sql
 
 volumes:
   langfuse_postgres_data:

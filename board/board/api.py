@@ -57,7 +57,7 @@ from app.budgets import HEARTBEAT_STALE_MULTIPLIER
 from app.labels import Transition
 from app.monitor import timers
 from app.monitor.sweeper import SWEEP_INTERVAL_SECONDS
-from app.observability import case_trace, flush, record_outcome
+from app.observability import case_trace, record_outcome
 from app.runner import config_for, history
 from app.budgets import BOARD_FEED_WINDOW_MINUTES, BOARD_RED_AFTER_MINUTES
 from app.states import AcuityBucket, ClinicalStatus, State
@@ -406,7 +406,6 @@ def _resume_waiting_case(case_id: str, resume: dict, any_pause: bool = False) ->
         with case_trace(case_id, "board-action", snapshot.values) as span:
             result = g.invoke(Command(resume=resume), config)
             record_outcome(span, snapshot.values, result)
-    flush()
 
     after_log = result.get("audit_log") or []
     if len(after_log) <= before:

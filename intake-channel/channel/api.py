@@ -33,7 +33,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import app.runner as runner
-from app.observability import flush
 from app.runner import config_for, resume_case, snapshot, start_case
 from app.guards import NURSE_SUPPLIED_FIELDS
 from app.states import State
@@ -109,7 +108,6 @@ def submit(body: SubmitRequest):
         state, pending = start_case(case)
     except runner.CaseClosedError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    flush()
 
     return _view(state, pending)
 
@@ -123,7 +121,6 @@ def _answer_pause(case_id: str, decision: dict) -> dict:
         state, pending = resume_case(case_id, decision)
     except Exception as exc:
         raise HTTPException(status_code=409, detail=f"cannot resume {case_id}: {exc}")
-    flush()
     return _view(state, pending)
 
 

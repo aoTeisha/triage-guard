@@ -78,16 +78,21 @@ or `[REDACTED_EMAIL]` before they leave the app.
 - By patient: `cd triage-app && uv run python -m app.observability <patient id>`
   prints `pt-…`; paste it in Users, or filter Tracing by User ID.
 
-### Saved views (Tracing → set the filter → My Views → Save)
+### Saved views (seeded)
 
-| View | Filter |
-|---|---|
-| Case lookup | Session ID = `<case id>` |
-| Patient lookup | User ID = `<pt-… from the command above>` |
-| Trace-check failures | Scores: `trace_check` = 0 |
-| Guardrail blocks | Scores: `guardrail_blocks` > 0 |
-| Live LLM only | Tags contains `llm-live` |
-| Errors | Level = ERROR |
+The same `langfuse-seed` service also loads `seed/triage-views.sql`. It adds three views
+to the **Views** dropdown on the Tracing page. Each one shows one row per case run
+(root observations only), not every graph node.
+
+| View | Filter | Use it to |
+|---|---|---|
+| Trace-check failures | trace score `trace_check` = false | Find runs that broke a safety ordering rule. Should stay empty. |
+| Guardrail blocks | trace score `guardrail_blocks` > 0 | See which actions a guard refused. |
+| Live LLM runs | trace tag `llm-live` | Look only at runs that called the real model. |
+
+For failing steps, use Langfuse's built-in **Errors Only** view. To look up one case,
+paste its id on the Sessions page. For one patient, paste their `pt-…` ref on the Users
+page. These need a different id every time, so they are not saved views.
 
 ### The "Triage Guard" dashboard (seeded)
 

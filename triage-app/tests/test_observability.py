@@ -187,3 +187,24 @@ def test_case_trace_keeps_the_graph_error_when_closing_fails(monkeypatch):
         with obs.case_trace("case-1", "case-start", {}):
             raise ValueError("graph failed")
     assert fake.cm.exited is not None   # span closed even though the inner exit broke
+
+
+def test_node_error_messages_are_masked():
+    handler_cls = obs._masking_handler_class()
+    handler = object.__new__(handler_cls)   # the method reads no handler state
+    level, message = handler._get_error_level_and_status_message(
+        ValueError("bad value for 300000001, call 0521234567"))
+    assert level == "ERROR"
+    assert "300000001" not in message and "0521234567" not in message
+
+
+def test_case_trace_masks_the_error_the_span_records(monkeypatch):
+    fake = _FakeClient()
+    _tracing_on(monkeypatch, fake)
+    monkeypatch.setattr("langfuse.propagate_attributes", lambda **_: _FakeSpanCM())
+    with pytest.raises(ValueError, match="300000001"):   # the caller still gets the real error
+        with obs.case_trace("case-1", "case-start", {}):
+            raise ValueError("no patient 300000001")
+    recorded = fake.cm.exited[1]
+    assert "300000001" not in str(recorded)
+    assert "ValueError" in str(recorded)

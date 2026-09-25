@@ -145,11 +145,27 @@ def client():
 
 
 @lru_cache(maxsize=1)
-def _handler():
+def _masking_handler_class():
+    """The LangGraph handler, with node error text redacted. `mask` covers
+    input, output and metadata only; a failing node's exception message goes
+    out as the span's status message, which `mask` never sees.
+    """
     from langfuse.langchain import CallbackHandler
 
+    from app.guards.identifiers import redact_identifiers
+
+    class MaskingCallbackHandler(CallbackHandler):
+        def _get_error_level_and_status_message(self, error):
+            level, message = super()._get_error_level_and_status_message(error)
+            return level, redact_identifiers(message)
+
+    return MaskingCallbackHandler
+
+
+@lru_cache(maxsize=1)
+def _handler():
     client()
-    return CallbackHandler()
+    return _masking_handler_class()()
 
 
 def langfuse_callbacks() -> list[Any]:
@@ -194,10 +210,20 @@ def case_trace(case_id: str, operation: str, values: dict[str, Any]):
         return
     try:
         yield span
-    except BaseException:
-        _close(stack, sys.exc_info())   # the span is marked failed; the error propagates
+    except BaseException as exc:
+        _close(stack, _masked_exc_info(exc))   # the span is marked failed; the error propagates
         raise
     _close(stack, (None, None, None))
+
+
+def _masked_exc_info(exc: BaseException) -> tuple:
+    """What the root span records about a failed invoke: the error's type and
+    redacted message. The caller still gets the original exception.
+    """
+    from app.guards.identifiers import redact_identifiers
+
+    masked = RuntimeError(f"{type(exc).__name__}: {redact_identifiers(str(exc))}")
+    return type(masked), masked, exc.__traceback__
 
 
 def _close(stack: ExitStack, exc_info: tuple) -> None:
@@ -242,6 +268,10 @@ class _NullSpan:
 
 
 def flush() -> None:
+    """For one-shot scripts only. Long-running services (board, intake-channel,
+    sweeper) don't call it: the SDK exports in the background every second or
+    so, and flushes on normal process exit.
+    """
     if tracing_enabled():
         try:
             client().flush()
