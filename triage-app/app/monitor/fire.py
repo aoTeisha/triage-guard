@@ -25,6 +25,7 @@ from app.budgets import (
     RECONCILE_BUDGET,
 )
 from app.monitor import bthreads, timers
+from app.observability import case_trace, record_outcome
 from app.runner import config_for
 from app.states import State
 from app.symbolic import opa, prolog
@@ -161,7 +162,9 @@ def dispatch(conn, timer: dict[str, Any], *, graph) -> str:
     # No timeout: `graph.invoke` is in-process. If the process dies mid-call the
     # row's lock runs out, `claim_retryable` picks it up, and `reconcile` sorts it out.
     try:
-        graph.invoke(Command(resume=resume), config)
+        with case_trace(case_id, "timer-fire", current) as span:
+            result = graph.invoke(Command(resume=resume), config)
+            record_outcome(span, current, result)
     except Exception as exc:  # noqa: BLE001 — record the failure, never crash the sweeper
         timers.set_state(conn, timer["timer_id"], "FAILED", last_error=str(exc))
         return "FAILED"

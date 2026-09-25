@@ -33,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import app.runner as runner
-from app.observability import agent_span, flush
+from app.observability import flush
 from app.runner import config_for, resume_case, snapshot, start_case
 from app.guards import NURSE_SUPPLIED_FIELDS
 from app.states import State
@@ -99,20 +99,16 @@ def lookup(stable_patient_id: str):
 def submit(body: SubmitRequest):
     """Build a case from the form and run it through the graph.
 
-    The span covers only the work this service does outside the graph; the
-    graph's own nodes are traced by the Langfuse callback handler that
-    `app.runner` attaches.
+    Tracing happens in `start_case`: its `case-start` span is the root of
+    this case's trace.
     """
     lookup_result = fetch_patient(body.stable_patient_id)
     case = build_case(lookup_result, body.stable_patient_id, body.submission_type)
 
-    with agent_span("intake-submission", case_id=case["case_id"]) as span:
-        span.update(input=case)
-        try:
-            state, pending = start_case(case)
-        except runner.CaseClosedError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
-        span.update(output={"control_state": state.get("control_state")})
+    try:
+        state, pending = start_case(case)
+    except runner.CaseClosedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     flush()
 
     return _view(state, pending)

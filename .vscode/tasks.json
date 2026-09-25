@@ -10,6 +10,14 @@
       "problemMatcher": []
     },
     {
+      "label": "langfuse: up",
+      "type": "shell",
+      "command": "docker compose up -d",
+      "options": { "cwd": "${workspaceFolder}/langfuse" },
+      "presentation": { "reveal": "silent", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
       "label": "uv sync: crm-stub",
       "type": "shell",
       "command": "uv sync",
@@ -49,7 +57,7 @@
     },
     {
       "label": "prelaunch: sync + postgres",
-      "dependsOn": ["uv sync: all", "postgres: up"],
+      "dependsOn": ["uv sync: all", "postgres: up", "langfuse: up"],
       "dependsOrder": "sequence",
       "problemMatcher": []
     }

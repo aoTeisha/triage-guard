@@ -22,7 +22,7 @@ from langgraph.types import Command
 
 from app.actors import human_bridge
 from app.graph import TriageState, build_graph
-from app.observability import langfuse_callbacks
+from app.observability import case_trace, langfuse_callbacks, record_outcome
 from app.states import State
 
 # Shared Postgres checkpoint store — same DSN the timers module writes to
@@ -178,14 +178,16 @@ def start_case(
         existing = graph().get_state(config_for(thread)).values
         if existing.get("control_state") == State.CASE_CLOSED.value:
             raise CaseClosedError(f"case {thread} is closed; its fields cannot change")
-        result = graph().invoke(
-            {
-                "case_id": case["case_id"],
-                "raw_payload": dict(case),
-                "nurse_proposed_acuity": case.get("nurse_proposed_acuity"),
-            },
-            config_for(thread),
-        )
+        with case_trace(case["case_id"], "case-start", case) as span:
+            result = graph().invoke(
+                {
+                    "case_id": case["case_id"],
+                    "raw_payload": dict(case),
+                    "nurse_proposed_acuity": case.get("nurse_proposed_acuity"),
+                },
+                config_for(thread),
+            )
+            record_outcome(span, existing, result)
     return hydrate(result), _pending(result)
 
 
@@ -194,7 +196,10 @@ def resume_case(
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Answer a gate. `decision` needs at least `decision` and `resolver_role`."""
     with case_lock(case_id):
-        result = graph().invoke(Command(resume=decision), config_for(case_id))
+        before = graph().get_state(config_for(case_id)).values
+        with case_trace(case_id, "case-resume", before) as span:
+            result = graph().invoke(Command(resume=decision), config_for(case_id))
+            record_outcome(span, before, result)
     return hydrate(result), _pending(result)
 
 

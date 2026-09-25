@@ -140,6 +140,31 @@ services:
     volumes:
       - langfuse_postgres_data:/var/lib/postgresql/data
 
+  # One-shot: seeds the "Triage Guard" dashboard (seed/triage-dashboard.sql) once
+  # langfuse-web has migrated the database and created the project. Safe to re-run.
+  langfuse-seed:
+    image: docker.io/postgres:${POSTGRES_VERSION:-17}
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-postgres}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PGDATABASE: ${POSTGRES_DB:-postgres}
+      PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-}
+    volumes:
+      - ./seed:/seed:ro
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        [ -n "$$PROJECT_ID" ] || { echo "LANGFUSE_INIT_PROJECT_ID not set, nothing to seed"; exit 0; }
+        until psql -tAc "select 1 from projects where id = '$$PROJECT_ID'" 2>/dev/null | grep -q 1; do
+          echo "waiting for langfuse-web to create project $$PROJECT_ID"; sleep 5
+        done
+        psql -v ON_ERROR_STOP=1 -v project="$$PROJECT_ID" -f /seed/triage-dashboard.sql
+
 volumes:
   langfuse_postgres_data:
     driver: local

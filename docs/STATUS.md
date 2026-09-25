@@ -1,7 +1,8 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-25 (treatment-move execution machine marked dropped, per the
-2026-09-19 decision; last full project scan 2026-09-24)
+**Last updated:** 2026-09-25 (Langfuse traces now carry case, patient and outcome, and
+the "Triage Guard" dashboard is seeded; treatment-move execution machine marked dropped,
+per the 2026-09-19 decision; last full project scan 2026-09-24)
 
 ---
 
@@ -105,7 +106,11 @@ A dead sweeper shows as "monitor degraded" on the board (heartbeat, `board/api.p
 
 ## What's left (scan 2026-09-24)
 
-Every test suite is green: triage-app 281, board 50, intake-channel 48, crm-stub 15.
+Every test suite is green: triage-app 366 (plus 1 deselected), board 50, intake-channel
+48, crm-stub 15. Two triage-app tests (`test_a_crm_outage_degrades_and_continues`,
+`test_clean_case_walks_the_documented_transitions_in_order`) fail only while the local
+CRM stub is running on :8000, because they expect the CRM to be unreachable. With
+`CRM_BASE_URL=http://127.0.0.1:1` they pass.
 Done since the last update: symbolic engines in the waiting-room monitor (Prolog for
 gate authorization, OPA for move/release, BPpy for dispatch/notify, Datalog for the
 temporal sweeper pass), safety invariants I1–I18, release from any pause, the
@@ -153,6 +158,17 @@ correction loop escalating to a shift lead, and the Arrow → Transition rename.
 `CONFIDENCE_THRESHOLD=0.70`, reminder timings, reassessment interval per acuity band.
 See *Four loose ends* below.
 
+**Observability loose ends**
+
+- [ ] The six saved table views listed in `langfuse/README.md` have to be made by hand.
+      Langfuse keeps them per user, so the seed can't create them.
+- [ ] Error text from a failing node goes to Langfuse unmasked. No exception in the app
+      echoes input values today, but a Pydantic validation error could.
+- [ ] The board flushes Langfuse inside every board action's request, which adds a
+      network call to each click. The sweeper never flushes when it shuts down.
+- [ ] The mask redacts any run of nine digits, so a UUID-like string can lose part of
+      itself in telemetry. The case data itself is not touched.
+
 **Housekeeping**
 
 - [ ] Stale branches `feat-board`, `feat/langgraph-migration`, `langfuce`, `spec` —
@@ -161,6 +177,61 @@ See *Four loose ends* below.
 ---
 
 ## Recent changes
+
+**2026-09-25 — Langfuse now shows each case, its patient and its outcome.** Before this,
+every trace was called `LangGraph`, the Sessions page was empty, and there was no way to
+find one patient's cases. Now:
+
+- Each graph run on a case is one named trace: `case-start`, `case-resume`, `timer-fire`
+  or `board-action`. The session id is the case id, so the Sessions page lists every
+  case, and opening one shows its whole history in order.
+- The patient appears as a user, but never under their real ID. The user id is a keyed
+  hash such as `pt-0a96428e9c4b211a`, built with `TRIAGE_TRACE_SALT`. To find a
+  patient, run `uv run python -m app.observability <patient id>` in `triage-app/`, then
+  paste the result into the Users page or a filter. With no salt set, traces carry no
+  user id at all.
+- Tags and metadata record the operation, LLM mode (mock or live), intake channel and
+  submission type. Environment and release come from `LANGFUSE_TRACING_ENVIRONMENT` and
+  `LANGFUSE_RELEASE`. All of these can be filtered on.
+- Nothing identifying leaves the process. Every input, output and metadata value passes
+  through a mask that reuses `app/guards/identifiers.py` to redact national IDs, phone
+  numbers and emails, including inside the LangGraph node spans and resume commands. In
+  a live check, no raw ID reached Langfuse.
+- Each trace's output lists the decisions that run made, taken from the audit log. It
+  also gets five scores: `control_state` (where the case ended up), `acuity`,
+  `acuity_gap` (nurse against model), `guardrail_blocks` (refusals added by this run
+  only, so a refusal is not counted again on every later resume) and `trace_check`
+  (whether the post-run safety check passed).
+- A "Triage Guard" dashboard with 12 widgets comes with the project. It is defined in
+  `langfuse/seed/triage-dashboard.sql` and loaded by a one-shot `langfuse-seed` service
+  in `langfuse/docker-compose.yml`. The VS Code "All services" launch now starts
+  Langfuse as well, so anyone who clones the repo gets the dashboard on first launch.
+  The seed runs on every launch and restores the dashboard if it was deleted. The
+  catch is that edits made to it in the UI are overwritten, so lasting changes belong
+  in the SQL file.
+- A new skill, `skills/reset-langfuse-data`, wipes all Langfuse data for a clean demo.
+  The API keys keep working afterwards.
+
+Three new keys go in `.env` (repo root, and `triage-app/.env` if you keep one). Both
+`.env.example` files list them. An existing `.env` does not pick them up by itself.
+
+| Key | Example | What it does |
+|---|---|---|
+| `TRIAGE_TRACE_SALT` | a long random string (`openssl rand -hex 32`) | Secret key for the patient hash. Keep it stable, because changing it splits every patient's history in two. Leave it unset and traces carry no patient. |
+| `LANGFUSE_TRACING_ENVIRONMENT` | `dev` | Shown as Environment in Langfuse, so dev runs can be filtered away from demo runs. |
+| `LANGFUSE_RELEASE` | `triage-guard-0.1.0` | Version stamped on every trace. Bump it when prompts or the graph change. |
+
+The dashboard seed also needs `LANGFUSE_INIT_PROJECT_ID` in `langfuse/.env`, which
+`langfuse/.env.example` already sets to `triage-guard`. Without it the seed skips
+itself and logs why.
+
+The code is in `triage-app/app/observability.py` (tests in
+`triage-app/tests/test_observability.py`), and each graph invoke in `app/runner.py`,
+`app/monitor/fire.py` and `board/board/api.py` is wrapped in it. intake-channel's old
+`intake-submission` span is gone, since the case trace replaces it. How to search,
+filter and read the dashboard is in `langfuse/README.md`. The plan and review notes are
+in `docs/superpowers/plans/2026-09-25-langfuse-organization/`. Open items are under
+*Observability loose ends* above.
 
 **2026-09-18 — SQLite is gone; one shared Postgres backs checkpoints, timers,
 and the CRM stub.** `db/docker-compose.yml` (new) runs Postgres 17 on host port
