@@ -42,7 +42,7 @@ cp triage-app/.env.example triage-app/.env      # optional — mock mode needs n
 cd triage-app
 uv sync
 uv run triage-guard            # clean / missing / failed / injection
-uv run pytest                  # 148 tests, offline
+uv run pytest                  # 345 tests, offline
 uv run sweeper                 # waiting-room monitor — fires reassessment timers
 ```
 
@@ -50,6 +50,12 @@ Each run prints the final state and the full audit trail, labelled with
 transition names from the Transitions table (the spec maps each to its
 diagram number). With Langfuse configured it also sends one trace per
 run, with a span per node.
+
+It ends with `trace_safety`: an independent re-read of the audit log that reports any
+case which reached the queue or treatment without passing safety and any required
+human approval, continued after a safety failure without a correction, looped past
+the correction limit without a senior, started treatment twice, changed after it was
+closed, or wrote a malformed audit record.
 
 `sweeper` is its own long-running process, separate from any single `triage-guard`
 run — without it, a case that reaches `monitoring` schedules a reassessment timer

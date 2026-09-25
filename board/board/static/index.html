@@ -172,6 +172,11 @@
     .gate-resolve.severe button:hover:not([disabled]) { border-color: var(--emergent); background: #3a1a1a; }
     .gate-resolve button[disabled] { opacity: 0.5; cursor: not-allowed; }
     .gate-resolve .msg { margin-top: 0.6rem; }
+    .trace-alert { border-top: none; margin-top: 1.2rem; background: #2c1414; border: 1px solid #5c1f1f;
+            border-left: 3px solid var(--emergent); border-radius: 8px; padding: 0.8rem 0.9rem; }
+    .trace-alert h3 { color: var(--emergent); font-size: 0.8rem; margin: 0 0 0.4rem; }
+    .trace-alert h3::before { content: "⚠ "; }
+    .trace-alert ul { margin: 0; padding-left: 1.1rem; font-size: 0.78rem; line-height: 1.5; }
   </style>
 </head>
 <body>

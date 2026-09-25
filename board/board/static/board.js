@@ -325,6 +325,18 @@ function readable(text) {
     (s, [token, label]) => s.split(token).join(label), text || "");
 }
 
+// The after-run trace check re-reads this case's own audit log and reports a
+// rule it found broken. It only ever reports — it never blocked or changed
+// the case — so seeing this means a guard elsewhere had a bug.
+function traceAlert(violations) {
+  const box = el("div", "section trace-alert");
+  box.append(el("h3", null, "Trace check found a problem"));
+  const list = el("ul");
+  (violations || []).forEach((v) => list.append(el("li", null, v)));
+  box.append(list);
+  return box;
+}
+
 function trail(records) {
   const table = el("table", "trail");
   records.slice().reverse().forEach((r) => {
@@ -663,6 +675,7 @@ async function openPanel(caseId) {
   body.append(movesSection(caseId, card));
   if (view.status === "awaiting_human_approval") body.append(gatePanel(caseId, view, card));
   if (view.control_state === "reassessment_required") body.append(refilePanel(caseId));
+  if (view.trace_safety === false) body.append(traceAlert(view.trace_violations));
 
   const trailBox = el("div", "section");
   trailBox.append(el("h3", null, "Audit trail — everything that happened to this case"),

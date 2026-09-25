@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from app.views import card_from_state
+from app.views import card_from_state, case_view
 
 NOW = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
 
@@ -61,3 +61,31 @@ def test_patient_released_counts_from_released_at():
     }
     card = card_from_state(state, now=NOW)
     assert card.waited_min == 3
+
+
+# ---- case_view: trace_safety --------------------------------------------------
+
+def test_case_view_reports_a_clean_trace_as_safe():
+    state = {"case_id": "c1", "audit_log": [
+        {"at": _iso(1), "case_id": "c1", "control_state": "x", "action": "a",
+         "explanation": "e", "transition": None},
+    ]}
+    view = case_view(state, None)
+    assert view["trace_safety"] is True
+    assert view["trace_violations"] == []
+
+
+def test_case_view_reports_violations_from_a_broken_trace():
+    state = {"case_id": "c1", "audit_log": [
+        {"at": _iso(1), "case_id": "c1", "control_state": "x", "action": "a",
+         "explanation": "e", "transition": "cleared_to_queue"},
+    ]}
+    view = case_view(state, None)
+    assert view["trace_safety"] is False
+    assert any("no bypass" in v for v in view["trace_violations"])
+
+
+def test_case_view_with_no_audit_log_is_safe():
+    view = case_view({"case_id": "c1"}, None)
+    assert view["trace_safety"] is True
+    assert view["trace_violations"] == []

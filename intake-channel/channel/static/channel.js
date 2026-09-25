@@ -95,7 +95,21 @@ function render(body) {
             arrives with the missing-fields return path.`)
     );
   }
+  if (body.trace_safety === false) submitResultEl.appendChild(traceAlert(body.trace_violations));
   submitResultEl.appendChild(trail(body.audit_log || []));
+}
+
+// The after-run trace check re-reads this case's own audit log and reports a
+// rule it found broken. It only ever reports — it never blocked or changed
+// the case — so seeing this means a guard elsewhere had a bug.
+function traceAlert(violations) {
+  const el = document.createElement("div");
+  el.id = "trace-alert";
+  el.innerHTML =
+    "⚠ Trace check found a problem<ul>" +
+    (violations || []).map((v) => `<li>${v}</li>`).join("") +
+    "</ul>";
+  return el;
 }
 
 function summary(body) {

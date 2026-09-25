@@ -254,6 +254,8 @@ def test_a_case_can_be_read_back_after_the_request_that_created_it():
 
     assert fetched["case_id"] == submitted["case_id"]
     assert fetched["control_state"] == "monitoring"
+    assert fetched["trace_safety"] is True
+    assert fetched["trace_violations"] == []
 
 
 def test_reading_an_unknown_case_is_a_404():

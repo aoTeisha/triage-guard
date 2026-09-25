@@ -24,6 +24,7 @@ from typing import Any, Optional
 from pydantic import BaseModel
 
 from app.states import ClinicalStatus, State
+from app.verification import check_trace
 
 # crm_status → what a human reads on a card. Not a name: identifier-class fields
 # stay behind the CRM gate, and a card that showed one would make
@@ -55,7 +56,13 @@ def pause_status(pending: dict[str, Any] | None) -> str:
 
 
 def case_view(state: dict[str, Any], pending: dict[str, Any] | None) -> dict[str, Any]:
-    """What the browser needs: the outcome, the gate if any, and the trail."""
+    """What the browser needs: the outcome, the gate if any, and the trail.
+
+    Also re-reads that trail with the after-run trace check on every call, so
+    a nurse opening or acting on a case sees whether it broke a safety rule
+    without anyone having to go looking for it.
+    """
+    trace = check_trace(state.get("audit_log", []))
     return {
         "case_id": state.get("case_id"),
         "status": pause_status(pending),
@@ -73,6 +80,8 @@ def case_view(state: dict[str, Any], pending: dict[str, Any] | None) -> dict[str
         "flags": state.get("flags", []),
         "gate": pending,
         "audit_log": state.get("audit_log", []),
+        "trace_safety": trace.passed,
+        "trace_violations": list(trace.violations),
     }
 
 

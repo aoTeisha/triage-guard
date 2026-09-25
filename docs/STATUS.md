@@ -30,7 +30,10 @@ Those five:
       `app/actors/normalizer.py:score_urgency`. **Switched off, 2026-09-13.** See
       *Recent changes*.
 - [ ] the privacy check — currently a hardcoded list of forbidden field names, where it
-      should be a real policy engine — `app/deterministic.py:verify_no_identifiers`
+      should be a real policy engine — `app/deterministic.py:verify_no_identifiers`.
+      Now also scans values: national ID, phone and email typed into free text are
+      redacted from the model payload (`app/guards/identifiers.py`), and the verifier
+      halts if any survive. Still regex, not a policy engine.
 - [ ] the output checker — it validates the shape of what an agent returns, but not yet
       whether the values make sense together — `app/verification.py`
 
@@ -49,6 +52,15 @@ Those five:
       single-execution-writer invariant was dropped for the same reason. The design
       stays in `SYSTEM_MODELING.md`, marked "Future design", in case a real downstream
       system ever appears.
+
+**Post-run trace check (2026-09-25).** `app/verification.py:check_trace` re-reads a
+case's audit log and reports any break of I5 (no bypass), I6 (single treatment start),
+I7 (correct, then revalidate), I8 (bounded correction loop), I18 (audit record
+structure) or I20 (nothing changes after close), naming the exact record. It only
+reports; the demo run prints it as `trace_safety`. Every open case view runs it now
+too, not only the demo run: intake-channel's submit and resume responses and the
+board's case detail panel all carry `trace_safety` and `trace_violations` on every
+fetch, and both pages show a red banner naming each violation when one turns up.
 
 **The waiting-room monitor is built.** `docs/plans/2026-09-15-waiting-room-service-design.md`
 is now implemented, not just agreed: durable per-case timers, the sweeper that fires

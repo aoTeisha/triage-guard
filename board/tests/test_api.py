@@ -104,6 +104,7 @@ def test_a_case_suspended_at_the_gate_is_on_the_board(checkpoint_db):
 
     detail = client.get(f"/api/case/{case['case_id']}").json()
     assert detail["view"]["status"] == "awaiting_human_approval"
+    assert detail["view"]["trace_safety"] is True
 
 
 def test_unknown_case_is_404(checkpoint_db):

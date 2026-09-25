@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.guards.identifiers import redact_identifiers
+
 # Structured identifier fields. These never enter the model-facing payload; they
 # stay on the case record, where the nurse and the graph can still read them.
 IDENTIFIER_KEYS = frozenset(
@@ -33,9 +35,14 @@ def build_model_payload(
     parsed_fields: dict[str, Any],
     history: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Identifier-free, case_id-keyed payload, with history merged in."""
-    payload = drop_identifiers(parsed_fields)
+    """Identifier-free, case_id-keyed payload, with history merged in.
+
+    Two passes: identifier *fields* are dropped by name, then identifiers typed
+    inside the remaining text are redacted. Only this model-facing copy is
+    redacted; the case record keeps what the nurse wrote.
+    """
+    payload = redact_identifiers(drop_identifiers(parsed_fields))
     if history:
-        payload["history"] = drop_identifiers(history)
+        payload["history"] = redact_identifiers(drop_identifiers(history))
     payload["case_id"] = case_id
     return payload

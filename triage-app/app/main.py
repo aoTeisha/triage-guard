@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 from app.mock_cases import DEMO_CASES
 from app.observability import flush
 from app.runner import run_to_completion
+from app.verification import check_trace
 
 
 def kickoff(which: str = "clean") -> dict:
@@ -71,6 +72,11 @@ def _report(which: str, state: dict, gates: list[dict]) -> None:
     for row in get("audit_log", []):
         print(f"  [{str(row.get('transition') or '—'):>22}] "
               f"{row['action']:<26} {row['explanation']}")
+
+    trace = check_trace(get("audit_log", []))
+    print(f"\ntrace_safety        : {'safe' if trace.passed else 'VIOLATIONS'}")
+    for v in trace.violations:
+        print(f"  {v}")
 
 
 def plot() -> None:

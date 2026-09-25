@@ -444,7 +444,7 @@ When an error or timeout occurs, the Flow retries up to the agent's own retry bu
 
 > **Principle:** non-critical, continue via fallback and notify; critical-open, degrade to human and notify; critical-closed, halt and notify, then resume on recovery.
 >
-> **On the PII filter:** intake carries no free-text field, so identifier handling is entirely deterministic schema-drop (the critical-closed row). There is no probabilistic redactor and therefore no degrade path for one. Removing free text is what makes this true — a prose box would reintroduce identifiers that schema-drop cannot catch.
+> **On the PII filter:** identifier handling is entirely deterministic (the critical-closed row). Identifier fields are dropped by name, and identifiers typed into any text field, from intake or from CRM history, are redacted by fixed patterns before the model sees them (see *After-run trace check and identifier redaction*). There is no probabilistic redactor, and therefore no degrade path for one. An identifier that survives both steps halts the case.
 
 ---
 
@@ -737,7 +737,79 @@ All T values live in one table in `triage-app/app/budgets.py`.
 
 Each invariant's temporal rule is in the **Temporal rule** column of the Safety invariants table above: the same rule, written over the case's event trace (its audit log). Propositions ending in `_this_triage` are enriched state: set when the event happens, reset when a new triage begins.
 
-> **How they are checked.** Single-step rules are enforced as guards and policies before a step writes state (OPA, Prolog, the model-input schema). Z3 proves the gap bands (I4) and the output contradiction rules (I13) at design time. Datalog checks provenance (I3) and information flow (I11). The temporal monitor reads each case's audit log in order and flags the exact record where any rule breaks, including the deadlines (I15–I17). No rule uses `X` ("next step") for routing: real paths insert extra steps (for example `safety_fallback`), so ordering rules use `U` or `F≤T` instead.
+> **How they are checked.** Single-step rules are enforced as guards and policies before a step writes state (OPA, Prolog, the model-input schema). Z3 proves the gap bands (I4) and the output contradiction rules (I13) at design time. Datalog checks provenance (I3) and information flow (I11). The temporal monitor reads each case's audit log in order and flags the exact record where any rule breaks, including the deadlines (I15–I17). No rule uses `X` ("next step") for routing: real paths insert extra steps (for example `safety_fallback`), so ordering rules use `U` or `F≤T` instead. For the *No bypass*, *Single treatment start*, *Correct, then revalidate*, *Bounded correction loop*, *Audit* and *Case immutability after close* invariants, this reading of the finished log is the after-run trace check (see *After-run trace check and identifier redaction*).
+
+---
+
+## After-run trace check and identifier redaction
+
+### After-run trace check
+
+The guards and policies enforce each rule while a case runs. As a second, independent
+line of defence, the system must re-read every case's audit log from start to finish
+after the run, and report each record where one of these rules broke:
+
+- **No bypass:** a case entered the queue or treatment without passing safety
+  validation in its current triage, or without a charge nurse's answer when something
+  in that triage required one (a major acuity gap, low classifier confidence, a failed
+  or unavailable safety check).
+- **Single treatment start:** treatment was started more than once.
+- **Correct, then revalidate:** after a failed or unavailable safety check, the case
+  entered the queue without a correction followed by a new safety pass.
+- **Bounded correction loop:** more corrections were sent back to safety validation
+  than the correction-round limit allows, without the case being handed to a shift
+  lead. Corrections made after the hand-off do not count.
+- **Audit:** a record is missing one of the fixed fields (time, case, control state,
+  action, explanation, transition), belongs to a different case, or records a refusal
+  without naming the layer that refused.
+- **Case immutability after close:** anything other than a refused attempt was
+  recorded after the case was released.
+
+A re-filed case starts a new triage. What the previous triage established (a safety
+pass, a charge nurse's answer, a queue entry, correction rounds) no longer counts.
+
+The check must only report. It must never block, change or route a case: enforcement
+belongs to the runtime guards, and this check exists to catch a fault in them. It must
+not reuse the guards' decision logic, so a bug in a guard cannot hide itself. Each
+violation must name the exact audit record where the rule broke.
+
+Opening a case, or taking any action on one, must run this check against that case's
+own audit log and carry the result along with everything else the interface shows
+about the case. A clean trace needs no visible sign. A violation must show as a
+visible warning naming each one, so staff learn about a broken rule without having to
+go looking for it.
+
+### Identifier redaction
+
+No patient identifier may reach the model, including one typed by hand into any text
+field, whether it comes from this visit's intake or from the patient's CRM history.
+Building the model-facing payload must take three steps, in order:
+
+1. **Drop:** remove identifier fields (name, phone, patient record number, date of
+   birth) by name.
+2. **Redact:** scan every remaining text value in the payload, at any depth, and
+   replace each identifier with a fixed marker: `[REDACTED_ID]`, `[REDACTED_PHONE]` or
+   `[REDACTED_EMAIL]`. The case then continues normally.
+3. **Verify:** check both field names and text values again. If any identifier
+   remains, the case halts as a structural violation and is never retried.
+
+Identifiers that must be recognised:
+- **National ID:** nine digits, or nine digits written with the check digit split off
+  (`12345678-9`, `12-345678-9`).
+- **Phone:** Israeli mobile, VoIP and landline numbers, written with a leading `0`,
+  `972` or `+972`, with or without dashes or spaces.
+- **Email address.**
+
+Text that must not be redacted: clinical values such as blood pressure (`120/80`),
+doses, dates, times, decimals, and numbers longer than nine digits. A number is never
+treated as an ID just because it has eight digits: matching those would also redact
+ordinary numbers.
+
+Recognition must be deterministic pattern matching, never a model: a value is removed
+because it matches a pattern, not because something guessed it looked like an
+identifier. Only the model-facing copy is redacted. The case record keeps what the nurse
+wrote, because authorised staff screens may show identifiers (see the *Identifier
+storage* invariant).
 
 ---
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from app.guards.identifiers import find_identifiers
 from app.labels import Transition
 from app.states import AcuityBucket, AcuitySource, State
 from app.symbolic import opa, prolog
@@ -116,20 +117,22 @@ def audit_denial(case_id: str, control_state: State, why: str,
 
 
 # ---- symbolic-layer predicates ---------------------------------------------
-# `verify_no_identifiers` is still the Python skeleton (redaction/I11 is
-# outside the monitor's scope); the three guards below it are answered by the
-# real engines in `app.symbolic`.
+# `verify_no_identifiers` is plain Python (key blocklist + value scan), not yet
+# an engine (identifier handling is outside the monitor's scope); the three guards
+# below it are answered by the real engines in `app.symbolic`.
 
 
 def verify_no_identifiers(payload: dict) -> tuple[bool, str]:
-    """OPA no-identifiers invariant. Skeleton: a hard-coded key blocklist.
+    """OPA no-identifiers invariant: no identifier key, and no identifier
+    written inside any value, at any depth.
 
-    Real deployment: an OPA/Rego policy over the payload's information-flow graph
-    (Datalog). A present name/ID/DOB/phone key is a structural violation — not
-    retryable, halts the case (V_HALT_PII).
+    The payload builder already redacted values, so a hit here means redaction
+    missed something: a structural violation, not retryable, halts the case
+    (V_HALT_PII).
     """
     banned = {"name", "stable_patient_id", "date_of_birth", "dob", "phone"}
     leaked = sorted(banned & set(payload))
+    leaked += [f"{kind} in {path}" for path, kind in find_identifiers(payload)]
     if leaked:
         return False, f"identifier leaked into redacted payload: {', '.join(leaked)}"
     return True, "no identifiers in model input"
