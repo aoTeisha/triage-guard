@@ -1,6 +1,7 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-24 (full project scan — see *What's left (scan 2026-09-24)*)
+**Last updated:** 2026-09-25 (treatment-move execution machine marked dropped, per the
+2026-09-19 decision; last full project scan 2026-09-24)
 
 ---
 
@@ -33,14 +34,21 @@ Those five:
 - [ ] the output checker — it validates the shape of what an agent returns, but not yet
       whether the values make sense together — `app/verification.py`
 
-**One thing doesn't exist at all.** Not stubbed — simply absent.
+**One thing was deliberately dropped.** Not stubbed, not pending: decided against.
 
-- [ ] **The treatment move.** What happens when the system actually moves a patient into
-      treatment. `docs/SYSTEM_MODELING.md` spends its entire second half on this: what
-      if you send the instruction and never hear back? Did the move happen or not? The
-      docs are emphatic that you must *check* before trying again, because retrying
-      blindly could start treatment on the same patient twice. There is currently no
-      code for any of it.
+- [x] ~~**The treatment-move execution machine.**~~ **Won't build (decided 2026-09-19,
+      recorded here 2026-09-25).** `docs/SYSTEM_MODELING.md` §4–5 describe a machine
+      (Tool Gateway, idempotency key, `PENDING/CONFIRMED/FAILED/UNKNOWN`, reconcile
+      before retry) whose only job is to cope with an external ward system that might
+      never answer an order: did treatment start or not? This project has no such
+      system and never will. Starting treatment is a nurse's click that moves the case
+      to the `treatment_started` column, inside our own graph and database. That can't
+      get lost in transit, so there's no `UNKNOWN` and nothing to reconcile. The real
+      risks are already covered by **I5 No bypass** (no treatment without safety and
+      any required approval) and **I6 Single treatment start** (at most once). The
+      single-execution-writer invariant was dropped for the same reason. The design
+      stays in `SYSTEM_MODELING.md`, marked "Future design", in case a real downstream
+      system ever appears.
 
 **The waiting-room monitor is built.** `docs/plans/2026-09-15-waiting-room-service-design.md`
 is now implemented, not just agreed: durable per-case timers, the sweeper that fires
@@ -77,8 +85,8 @@ A dead sweeper shows as "monitor degraded" on the board (heartbeat, `board/api.p
       sorts by the persisted `order_key`, shows queue position and the arrow trail. Five of
       its six columns have a writer today (`waiting`, `human_review`,
       `reassessment_required`, `treatment_started`, `patient_released` as of 2026-09-17);
-      only `formal_validation` still renders empty, waiting on item 4's full execution
-      machine. The two manual moves exist as a minimal version (2026-09-17, no Tool
+      only `formal_validation` still renders empty, waiting on a `TREATMENT_COMPLETE`
+      writer (see *What's left*). The two manual moves exist as a minimal version (2026-09-17, no Tool
       Gateway/idempotency/reconciliation) — see item 5c below.*
 
 ---
@@ -107,11 +115,12 @@ correction loop escalating to a shift lead, and the Arrow → Transition rename.
 
 **Not built at all**
 
-- [ ] **Treatment-move execution machine** (item 4 below): Tool Gateway, idempotency
-      key, `PENDING/CONFIRMED/FAILED/UNKNOWN` states, check-before-retry
-      reconciliation. Design first.
-- [ ] **`formal_validation` board column** has no writer (`app/views.py`). Blocked on
-      the treatment-move machine.
+- [ ] **`formal_validation` board column** has no writer. Needs a "Treatment complete"
+      board button that resumes the paused case, and a graph step that handles the
+      `TREATMENT_COMPLETE` event (`app/events.py`, spec row `FV`) by moving
+      `treatment_started` → `formal_validation`. Not blocked on anything. Planned for
+      later. (The comment in `app/views.py` above `BOARD_COLUMNS` still says it waits on
+      the execution machine. That's out of date.)
 - [ ] **CRM write-back.** `patch_patient` exists in `app/crm_client.py` but nothing
       calls it; the deferred write-back and its reconciliation (I17) are missing.
 
@@ -256,11 +265,9 @@ Replacing the five fake pieces is straightforward work. The place each one plugs
 already exists and is already tested from both sides. Work can start tomorrow and
 nothing needs redesigning first.
 
-But the treatment-move piece is different in kind. It isn't filling in a blank — it's a
-second machine with its own states and its own rules, and it's the one place where an
-ordinary bug becomes a patient-safety problem. It deserves the same kind of design
-conversation we just had about LangGraph, before anyone writes code. The risk is that it
-gets treated as a leftover and discovered late.
+The treatment-move execution machine, once the one piece that needed its own design
+conversation, is off the list: there's no downstream ward system for it to guard (see
+*Where things stand*). Starting treatment stays a guarded column change (I5, I6).
 
 ---
 
@@ -274,7 +281,8 @@ gets treated as a leftover and discovered late.
       it needs an API key and one test that actually calls it.
 - [ ] **3. Make the privacy and output checks real.** Related to step 1, same kind of
       work.
-- [ ] **4. Design and build the treatment-move machine.** Its own project. Design first.
+- [x] ~~**4. Design and build the treatment-move machine.**~~ Dropped, decided
+      2026-09-19: no downstream ward system exists. See *Where things stand*.
 - [ ] **5a.** The waiting-room timers. Design agreed
       (`docs/plans/2026-09-15-waiting-room-service-design.md`); M0/M1 unblocked today.
 - [x] **5b.** The release / discharge step. **Minimal version, 2026-09-17:** a charge
@@ -282,15 +290,15 @@ gets treated as a leftover and discovered late.
       `release_authorized`, re-entering the waiting-room pause with `Command(resume=...)`
       — no Tool Gateway, no idempotency key, no `PENDING/CONFIRMED/FAILED/UNKNOWN`
       execution states, no reconciliation. Those exist to protect against a downstream
-      hospital system this project doesn't have; item 4's full execution machine below is
-      still not built. Only wired from the waiting-room pause, not the human-approval gate
-      or the reassessment re-file pause — see
+      hospital system this project doesn't have, which is why item 4 was dropped. Only
+      wired from the waiting-room pause, not the human-approval gate or the reassessment
+      re-file pause — see
       `docs/superpowers/plans/2026-09-17-treatment-move-and-release/findings.md`.
 - [x] **5c.** The board. Read-only board built (`board/`, :8002). Its write half —
       `POST /api/case/{case_id}/move-to-treatment` and `/release` — now exists (2026-09-17,
       minimal version, see item 5b above), re-entering the paused graph run rather than
-      writing case state directly. Item 4's full treatment-move execution machine is still
-      not built.
+      writing case state directly. This is the final shape, not a stopgap: item 4 was
+      dropped.
 
 ---
 
