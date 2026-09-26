@@ -1,8 +1,8 @@
 """Queue ordering — and the deliberate absence of any ordering logic.
 
-The board has no sort rules of its own. `order_key` is `(acuity,
-arrival_time)`, written by `app.deterministic.assign_order_key` and re-keyed only
-when acuity changes. Everything here is `sorted()` plus one derivation.
+The board has no sort rules of its own. `order_key` is `(acuity, arrival as
+epoch seconds)`, written by `app.deterministic.assign_order_key` and re-keyed
+only when acuity changes. Everything here is `sorted()` plus one derivation.
 
 Three spec rules live in this file:
 
@@ -28,10 +28,11 @@ QUEUEING_STATUSES = frozenset(
     }
 )
 
-# Real keys are (acuity 1-5, arrival_time); (6, "") sorts after all of them.
-# A case with no nurse acuity yet has no order_key, so it shows at the bottom
-# rather than pretending to a position.
-_UNKEYED = (6, "")
+# Real keys are (acuity 1-5, epoch seconds); (6, -inf) sorts after all of them
+# on the first element, which is the only one that matters here. A case with no
+# nurse acuity yet has no order_key, so it shows at the bottom rather than
+# pretending to a position.
+_UNKEYED = (6, float("-inf"))
 
 
 def sort_cards(cards: list[CaseCard]) -> list[CaseCard]:

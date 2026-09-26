@@ -92,7 +92,7 @@ class TriageState(BaseModel):
     treatment_started_at: Optional[str] = None
     released_at: Optional[str] = None
     acuity_bucket: Optional[AcuityBucket] = None
-    order_key: Optional[tuple[int, str]] = None
+    order_key: Optional[tuple[int, float]] = None
     arrival_time: Optional[str] = None
     # How many times a reassessment timer has fired for this case. Incremented
     # on every fire, and passed straight to `timers.schedule` as the new

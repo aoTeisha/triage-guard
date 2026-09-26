@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.deterministic import resolve_acuity
+from app.deterministic import assign_order_key, resolve_acuity
 from app.labels import Transition
 from app.symbolic import z3_proofs
 
@@ -42,3 +42,40 @@ def test_the_proven_thresholds_are_the_ones_the_code_uses():
     assert resolve_acuity(3, 3)[2] is Transition.ACUITY_AGREE
     assert resolve_acuity(3, 4)[2] is Transition.ACUITY_GAP_MINOR
     assert resolve_acuity(3, 5)[2] is Transition.ACUITY_GAP_MAJOR
+
+
+# ---- I1: the queue order ----------------------------------------------------
+
+
+def test_sorting_by_arrival_before_acuity_is_caught():
+    """The fairest-looking bug in triage: first come first served, full stop.
+    A more acute patient who arrived a minute later ends up behind.
+    """
+    proved, counterexample = z3_proofs.more_acute_is_never_behind(time_first=True)
+    assert not proved
+    assert counterexample
+
+
+def test_a_reversed_tie_break_is_caught():
+    proved, counterexample = z3_proofs.at_the_same_level_the_earlier_patient_is_ahead(
+        newest_first=True)
+    assert not proved
+    assert counterexample
+
+
+def test_a_reversed_tie_break_hides_from_the_acuity_property():
+    """Why I1 needs both halves proved. Reversing the tie-break leaves "a more
+    acute patient is never behind" perfectly true — the damage is entirely
+    inside one level, where that property says nothing.
+    """
+    assert z3_proofs.more_acute_is_never_behind(newest_first=True)[0] is True
+
+
+def test_the_real_key_orders_the_way_the_proof_assumes():
+    """The tie between model and code: the proofs reason about a pair built from
+    (acuity, arrival), and this is `assign_order_key` actually doing that.
+    """
+    early, late = "2026-09-19T10:00:00+00:00", "2026-09-19T10:05:00+00:00"
+    assert assign_order_key(2, late) < assign_order_key(3, early)      # acuity wins
+    assert assign_order_key(3, early) < assign_order_key(3, late)      # then arrival
+    assert isinstance(assign_order_key(3, early)[1], float)           # numeric, not text

@@ -636,7 +636,7 @@ This section lists the data the machine keeps for each case: the acuity model (`
 | `clinical_status`                     | World   | enum (see World plane)                                    | Flow step                          | board column                                                                                                                                           |
 | `acuity_bucket`                       | Data    | enum(emergent[1–2], queued[3–5])                          | derived from final `acuity`        | display label on the board only; **not** a sort key                                                                                                    |
 | `arrival_time`                        | Data    | timestamp                                                 | intake                             | tiebreaker within the same acuity                                                                                                                      |
-| `order_key`                           | World   | (acuity, arrival_time)                                    | `assign_order_key`                 | **assigned at system entry**; persists across state changes                                                                                            |
+| `order_key`                           | World   | (acuity, arrival as epoch seconds)                        | `assign_order_key`                 | **assigned at system entry**; persists across state changes                                                                                            |
 | `release_reason`                      | Data    | enum(discharge, ama, transfer, admit)                     | nurse                              | recorded at close                                                                                                                                      |
 | `reassessment_timer`                  | World   | timer                                                     | Waiting Room Monitor               | the single per-patient timer; interval set by acuity band; started on entry to `monitoring`; drives `REASSESSMENT_TIMEOUT`                             |
 | `gate_timer`                          | World   | timer                                                     | Waiting Room Monitor               | separate per-gated-case timer; drives the `GATE_TIMER_*` approval-reminder ladder (not a reassessment timer)                                           |
@@ -651,7 +651,11 @@ This section explains how the waiting queue is sorted, and what does **not** aff
 `order_key` sorts the waiting queue by two keys, in order:
 
 1. **Acuity:** lower ESI first, so a more acute patient is always ahead (I1).
-2. **Arrival time:** within the same acuity, earlier arrival first.
+2. **Arrival time:** within the same acuity, earlier arrival first. Held as epoch
+   seconds, not as the ISO string: text order matches time order only while every
+   timestamp has the same shape and zone, and `10:00+03:00` reads later than
+   `09:00+00:00` while being an hour earlier. `arrival_time` itself stays ISO, for
+   display and the wait clock.
 
 Consequences:
 
@@ -693,7 +697,7 @@ These are the properties enforced by the symbolic layer (OPA, Z3, Prolog, Datalo
 
 | #   | Property | Family | Statement | Temporal rule | Checked by |
 | --- | -------- | ------ | --------- | ------------- | ---------- |
-| I1 | Acuity ordering | Safety | No patient is ordered ahead of a more acute one. | `G(in_queue(a) ∧ in_queue(b) ∧ acuity(a) < acuity(b) → key(a) < key(b))` | tests; temporal monitor |
+| I1 | Acuity ordering | Safety | No patient is ordered ahead of a more acute one. | `G(in_queue(a) ∧ in_queue(b) ∧ acuity(a) < acuity(b) → key(a) < key(b))`; `G(in_queue(a) ∧ in_queue(b) ∧ acuity(a) = acuity(b) ∧ arrived(a) < arrived(b) → key(a) < key(b))` | Z3 (design time); tests; temporal monitor |
 | I2 | Stable queue key | Safety | Once a patient has entered the system, their `order_key` changes only when their acuity changes. | `G(key_changed → acuity_changed)` | tests; temporal monitor |
 | I3 | Acuity write-authority | Safety | Acuity is set only by the automatic settle (gap 0 or 1), a charge nurse at the human gate (acuity choice or safety correction), a re-triage, or the nurse's own value when the classifier is down. | `G(acuity_written → auto_settle ∨ charge_at_gate ∨ retriage ∨ nurse_fallback)` | Datalog (provenance); temporal monitor |
 | I4 | Gap bands | Safety | For every gap between the nurse's and the model's acuity, exactly one outcome applies: 0 keeps the agreed level, 1 takes the nurse's level, 2 or more goes to the charge nurse. | `G(gap_known → ((gap=0 → keep) ∧ (gap=1 → nurse_level) ∧ (gap≥2 → at_gate)))` | Z3 (design time); per-gap tests |

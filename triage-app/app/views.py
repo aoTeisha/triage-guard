@@ -103,7 +103,7 @@ class CaseCard(BaseModel):
     system_proposed_acuity: Optional[int] = None
     arrival_time: Optional[str] = None
     waited_min: int = 0
-    order_key: Optional[tuple[int, str]] = None
+    order_key: Optional[tuple[int, float]] = None
     flags: list[str] = []
     degraded: list[str] = []
     gate_pending: bool = False

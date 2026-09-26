@@ -101,10 +101,85 @@ def settled_acuity_stays_in_range() -> tuple[bool, str]:
     return _refute(Implies(And(esi, gap <= MINOR_GAP), And(LOW <= settled, settled <= HIGH)))
 
 
+# ---- I1: the queue order ----------------------------------------------------
+# The claims here are about how `assign_order_key` *builds* the key, so the build
+# is parameterised and the tests feed wrong builds in. Proving "a lower acuity
+# sorts first" against a key whose first element is the acuity proves nothing —
+# it restates the premise, the same trap as exclusivity over an if-chain.
+
+
+Key = tuple[ArithRef, ArithRef]
+
+
+def _key(acuity: ArithRef, arrived: ArithRef, *,
+         time_first: bool = False, newest_first: bool = False) -> Key:
+    """`assign_order_key`'s (acuity, arrival) pair, with two ways to get it wrong.
+
+    `time_first` sorts by arrival before acuity — the fairest-looking bug in
+    triage. `newest_first` reverses the tie-break inside a level.
+    """
+    when = -arrived if newest_first else arrived
+    return (when, acuity) if time_first else (acuity, when)
+
+
+def _before(left: Key, right: Key) -> BoolRef:
+    """Python's tuple comparison, spelled out: first element, then the second."""
+    (la, lb), (ra, rb) = left, right
+    return Or(la < ra, And(la == ra, lb < rb))
+
+
+def _two_patients() -> tuple[ArithRef, ArithRef, ArithRef, ArithRef, BoolRef]:
+    """Two queued patients: an ESI level and an arrival instant each."""
+    a_acuity, b_acuity = Int("a_acuity"), Int("b_acuity")
+    a_arrived, b_arrived = Int("a_arrived"), Int("b_arrived")     # epoch seconds
+    esi = And(LOW <= a_acuity, a_acuity <= HIGH, LOW <= b_acuity, b_acuity <= HIGH)
+    return a_acuity, a_arrived, b_acuity, b_arrived, esi
+
+
+def more_acute_is_never_behind(**build) -> tuple[bool, str]:
+    """I1: a more acute patient is ahead, whenever either of them arrived.
+
+    The arrival instants are free, which covers what the per-pair test could not
+    reach — the more acute patient arriving later.
+    """
+    a_acuity, a_arrived, b_acuity, b_arrived, esi = _two_patients()
+    a, b = _key(a_acuity, a_arrived, **build), _key(b_acuity, b_arrived, **build)
+    return _refute(Implies(And(esi, a_acuity < b_acuity), _before(a, b)))
+
+
+def at_the_same_level_the_earlier_patient_is_ahead(**build) -> tuple[bool, str]:
+    """I1's other half: within one level, whoever arrived first goes first.
+
+    Nothing tested this. `tests/test_queue_order.py` filtered to `a < b`, which
+    drops every same-acuity pair — and the tie-break exists only for those. A key
+    that sorted newest-first inside a level passed the whole suite while letting
+    a new arrival jump an hour-old queue.
+    """
+    a_acuity, a_arrived, b_acuity, b_arrived, esi = _two_patients()
+    a, b = _key(a_acuity, a_arrived, **build), _key(b_acuity, b_arrived, **build)
+    return _refute(Implies(And(esi, a_acuity == b_acuity, a_arrived < b_arrived),
+                           _before(a, b)))
+
+
+def the_order_is_a_total_order(**build) -> tuple[bool, str]:
+    """Any two patients who differ are ordered, one way or the other.
+
+    Without this the queue could hold a pair with no order between them, and
+    "the next patient" would depend on which list they landed in.
+    """
+    a_acuity, a_arrived, b_acuity, b_arrived, esi = _two_patients()
+    a, b = _key(a_acuity, a_arrived, **build), _key(b_acuity, b_arrived, **build)
+    differ = Not(And(a_acuity == b_acuity, a_arrived == b_arrived))
+    return _refute(Implies(And(esi, differ), Or(_before(a, b), _before(b, a))))
+
+
 PROOFS = {
     "I4 bands partition every gap": bands_partition_every_gap,
     "I4 resolve_acuity obeys the bands": code_obeys_the_bands,
     "I13 a settled acuity stays in 1-5": settled_acuity_stays_in_range,
+    "I1 a more acute patient is never behind": more_acute_is_never_behind,
+    "I1 within a level the earlier patient is ahead": at_the_same_level_the_earlier_patient_is_ahead,
+    "I1 the queue order is total": the_order_is_a_total_order,
 }
 
 

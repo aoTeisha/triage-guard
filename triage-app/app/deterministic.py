@@ -27,18 +27,27 @@ def bucket_for(acuity: int) -> AcuityBucket:
     return AcuityBucket.EMERGENT if acuity <= 2 else AcuityBucket.QUEUED
 
 
-def assign_order_key(acuity: int, arrival_time: str) -> tuple[int, str]:
-    """The single writer of order_key: (acuity, arrival_time).
+def assign_order_key(acuity: int, arrival_time: str) -> tuple[int, float]:
+    """The single writer of order_key: (acuity, arrival as epoch seconds).
 
-    Lower ESI sorts first, so a more acute patient is always ahead;
-    arrival_time breaks ties. Re-keyed whenever acuity changes, never by the timer.
+    Lower ESI sorts first, so a more acute patient is always ahead; arrival
+    breaks ties. Re-keyed whenever acuity changes, never by the timer.
+
+    The tie-break is a number, not the ISO string. Comparing timestamps as text
+    agrees with comparing them as moments only while every string has the same
+    shape and zone: "…T10:00+03:00" sorts after "…T09:00+00:00" while being an
+    hour earlier. The case still stores `arrival_time` as ISO, for display.
 
     Refuses a missing arrival time: substituting "now" would silently send the
-    patient to the back of their level (I2).
+    patient to the back of their level (I2). Refuses a naive one for the same
+    reason — a timestamp with no zone cannot be placed on a shared clock.
     """
     if not arrival_time:
         raise ValueError("order_key needs the arrival time stamped at intake")
-    return (acuity, arrival_time)
+    arrived = datetime.fromisoformat(arrival_time)
+    if arrived.tzinfo is None:
+        raise ValueError(f"order_key needs a timezone-aware arrival time: {arrival_time!r}")
+    return (acuity, arrived.timestamp())
 
 
 # ---- acuity-gap resolution at the gate -----------------------------------
