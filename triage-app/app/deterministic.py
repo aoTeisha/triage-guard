@@ -44,6 +44,13 @@ def assign_order_key(acuity: int, arrival_time: str) -> tuple[int, str]:
 # ---- acuity-gap resolution at the gate -----------------------------------
 
 
+# The gap bands (I4), named once. `app/symbolic/z3_proofs.py` imports these to
+# prove the bands total and exclusive, so changing a threshold here moves the
+# proof with it instead of leaving it proving the old rule.
+AGREE_GAP = 0       # nurse and system agree
+MINOR_GAP = 1       # settled automatically, to the nurse's level; above this, the charge nurse
+
+
 def compute_acuity_gap(nurse: int, system: int) -> int:
     return abs(nurse - system)
 
@@ -58,15 +65,15 @@ def resolve_acuity(
         gap >=2 -> charge nurse decides        (ACUITY_GAP_MAJOR, unresolved)
 
     The bands must be total and exclusive, so exactly one arm fires for every
-    gap >= 0 (I4; to be proven with Z3). The ACUITY_GAP_MAJOR arm returns None
+    gap >= 0 — proven in app/symbolic/z3_proofs.py. The ACUITY_GAP_MAJOR arm returns None
     rather than a sentinel number: there is no final acuity yet, and a
     placeholder integer here would be indistinguishable from a real ESI level
     downstream.
     """
     gap = compute_acuity_gap(nurse, system)
-    if gap == 0:
+    if gap == AGREE_GAP:
         return nurse, AcuitySource.HUMAN_CONFIRMED, Transition.ACUITY_AGREE
-    if gap == 1:
+    if gap == MINOR_GAP:
         # The nurse holds a gap of 1. Was `min(nurse, system)` until 2026-09-13;
         # changed because the classifier over-triages systematically and would
         # otherwise win every close call unseen. Both inputs are logged at
@@ -130,7 +137,7 @@ def verify_no_identifiers(payload: dict) -> tuple[bool, str]:
     missed something: a structural violation, not retryable, halts the case
     (V_HALT_PII).
     """
-    banned = {"name", "stable_patient_id", "date_of_birth", "dob", "phone"}
+    banned = {"name", "national_id", "stable_patient_id", "date_of_birth", "dob", "phone"}
     leaked = sorted(banned & set(payload))
     leaked += [f"{kind} in {path}" for path, kind in find_identifiers(payload)]
     if leaked:

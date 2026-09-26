@@ -19,6 +19,9 @@ dependencies = [
     "pyswip>=0.3.3",     # Prolog — needs SWI-Prolog (`swipl`) installed on the host
     "pyDatalog>=0.22",   # Datalog — pure Python
     "bppy>=1.0.4",       # Behavioral programming — pure Python
+    # SMT solver for the design-time proofs (app/symbolic/z3_proofs.py). Arrives
+    # anyway as a bppy dependency; declared because we import it ourselves.
+    "z3-solver>=5.1",
 ]
 
 [project.scripts]

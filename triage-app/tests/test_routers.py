@@ -7,6 +7,8 @@ graph actually calls, with no graph, no checkpointer and no I/O.
 
 from __future__ import annotations
 
+from itertools import product
+
 import pytest
 
 from app.budgets import MAX_CORRECTION_ROUNDS
@@ -86,16 +88,25 @@ def test_gap_two_or_more_settles_nothing(nurse, system):
     assert transition is Transition.ACUITY_GAP_MAJOR
 
 
-@pytest.mark.parametrize("gap,band", [
-    (0, Transition.ACUITY_AGREE), (1, Transition.ACUITY_GAP_MINOR),
-    (2, Transition.ACUITY_GAP_MAJOR), (3, Transition.ACUITY_GAP_MAJOR),
-    (4, Transition.ACUITY_GAP_MAJOR),
-])
-def test_each_gap_lands_in_its_band(gap, band):
-    """I4: checks the right band per gap. The old version only checked that some
-    band was returned, which every code path does, so it could not fail.
+@pytest.mark.parametrize("nurse,system", list(product(range(1, 6), repeat=2)))
+def test_every_acuity_pair_lands_in_its_band(nurse, system):
+    """I4 over all 25 ESI pairs, band and settled level both.
+
+    The earlier version varied only the gap, always with the nurse at 1, so a
+    rule whose bands depended on the *level* — "gap of 1 takes the nurse, unless
+    the nurse said 4 or 5" — passed it. Z3 found that pair; this keeps it caught
+    inside the fast suite. app/symbolic/z3_proofs.py proves the general claim.
     """
-    assert resolve_acuity(1, 1 + gap)[2] is band
+    gap = abs(nurse - system)
+    final, source, transition = resolve_acuity(nurse, system)
+    if gap == 0:
+        assert (transition, final, source) == (
+            Transition.ACUITY_AGREE, nurse, AcuitySource.HUMAN_CONFIRMED)
+    elif gap == 1:
+        assert (transition, final, source) == (
+            Transition.ACUITY_GAP_MINOR, nurse, AcuitySource.AUTO_RESOLVED)
+    else:
+        assert (transition, final, source) == (Transition.ACUITY_GAP_MAJOR, None, None)
 
 
 def test_a_case_with_no_system_acuity_escalates_rather_than_guessing():

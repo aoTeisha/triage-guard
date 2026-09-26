@@ -51,3 +51,10 @@ sudo apt-get install swi-prolog                       # Prolog (pyswip links to 
 curl -sL -o ~/.local/bin/opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
 chmod +x ~/.local/bin/opa                             # OPA; or point OPA_BIN at it
 ```
+
+On Windows, install SWI-Prolog from swi-prolog.org and fetch the `.exe` build of
+OPA — the Linux static binary above will not run:
+
+```bash
+curl -sSL -o ~/.local/bin/opa.exe https://openpolicyagent.org/downloads/latest/opa_windows_amd64.exe
+```
