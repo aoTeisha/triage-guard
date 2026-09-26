@@ -98,12 +98,11 @@ A dead sweeper shows as "monitor degraded" on the board (heartbeat, `board/api.p
 
 - [x] **The board** that shows staff the current queue. *Built read-only (`board/`, :8002,
       milestones M0 + M1 of `2026-09-11-board-service-design.md`): it lists every case,
-      sorts by the persisted `order_key`, shows queue position and the arrow trail. Five of
-      its six columns have a writer today (`waiting`, `human_review`,
-      `reassessment_required`, `treatment_started`, `patient_released` as of 2026-09-17);
-      only `formal_validation` still renders empty, waiting on a `TREATMENT_COMPLETE`
-      writer (see *What's left*). The two manual moves exist as a minimal version (2026-09-17, no Tool
-      Gateway/idempotency/reconciliation) — see item 5c below.*
+      sorts by the persisted `order_key`, shows queue position and the arrow trail. All six
+      columns have a writer (`formal_validation` since 2026-09-26, via "Treatment complete";
+      it reads "Treated — awaiting discharge" on the board, because no check runs at that
+      stage — the name is historical). The two manual moves exist as a minimal version
+      (2026-09-17, no Tool Gateway/idempotency/reconciliation) — see item 5c below.*
 
 ---
 

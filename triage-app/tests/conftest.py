@@ -55,7 +55,14 @@ def opa_sidecar():
     if binary is None:
         yield
         return
-    addr = "127.0.0.1:18181"
+    # A free port per session, not a fixed one: two suites running at once
+    # would otherwise share a server and the first to finish would kill it
+    # under the other, turning every policy decision into a deny.
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        addr = f"127.0.0.1:{probe.getsockname()[1]}"
     proc = subprocess.Popen([binary, "run", "--server", "--addr", addr, str(opa.POLICY.parent)],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     url = f"http://{addr}"

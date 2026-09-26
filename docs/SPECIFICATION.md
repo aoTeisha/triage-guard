@@ -288,7 +288,7 @@ This section shows what the nurse actually sees: the kanban column for each pati
 | `human_review`          | system               | flagged uncertainty; charge nurse must resolve         | acuity gap ≥2 / safety fail / low confidence              |
 | `reassessment_required` | system               | vitals/condition changed, re-triage                    | any status, on deterioration/timeout                      |
 | `treatment_started`     | human                | active care begun                                      | `waiting` (manual)                                        |
-| `formal_validation`     | system               | final sign-off before close                            | `treatment_started`                                       |
+| `formal_validation`     | nurse                | treatment complete, disposition pending; shown on the board as "Treated — awaiting discharge"; release from here. The name is historical: no check runs at this stage — the record checks (`check_trace`, `history_invariants`) run on every view | `treatment_started`                                       |
 | `patient_released`      | **human (required)** | discharged, leaves the board                           | **any active state** (discharge / AMA / transfer / admit) |
 
 > **Release rule:** `patient_released` is reachable from **any** live state, not only the treatment path. Every release **requires a charge-role sign-off** (`actor_is_charge`) plus a valid `release_reason`. "Left the ward vs. left the hospital" is out of scope; both close the card.

@@ -28,16 +28,14 @@ const COLUMN_LABELS = {
   human_review: "Human review",
   reassessment_required: "Reassessment required",
   treatment_started: "Treatment started",
-  formal_validation: "Formal validation",
+  formal_validation: "Treated — awaiting discharge",
   patient_released: "Released",
 };
-// Nothing writes formal_validation yet — this minimal version releases
-// straight from treatment_started, skipping it (see findings.md). The
-// column is rendered anyway, with the reason — an empty column is the
-// honest state.
-const NOT_YET_WRITTEN = {
-  formal_validation: "not in use yet — this version releases without a formal sign-off step",
-};
+// A column with no writer shows why it is empty instead of hiding. Every
+// column has a writer since 2026-09-26 ("Treatment complete" fills the last
+// one), so this is empty; it stays for the next status that arrives on
+// paper before it arrives in code.
+const NOT_YET_WRITTEN = {};
 
 // The state fields say why a case is unusual; these say it in words.
 const DEGRADED_LABELS = { crm: "patient history unavailable" };
@@ -450,7 +448,7 @@ function movesSection(caseId, card) {
   completeBtn.title = completeBtn.disabled ? "only a patient in treatment can be signed off" : "";
   completeBtn.onclick = () => postCaseAction(
     completeBtn, msg, `/api/case/${encodeURIComponent(caseId)}/treatment-complete`,
-    { actor_role: "nurse" }, "signing off…", "moved to formal validation",
+    { actor_role: "nurse" }, "marking treated…", "treated — awaiting discharge",
     () => setTimeout(() => openPanel(caseId), 300),
   );
 
