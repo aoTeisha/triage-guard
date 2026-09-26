@@ -111,6 +111,20 @@ def awaiting_reassessment(state: TriageState) -> dict[str, Any]:
                                  "move to treatment confirmed", Transition.MOVE_CONFIRMED)],
         }
 
+    if event == Event.TREATMENT_COMPLETE.value:
+        # Spec arrow FV: treatment done, on to the sign-off column. Only from
+        # treatment — a patient still waiting has nothing to sign off, and a
+        # replay for one already signed off must not re-stamp the record.
+        if state.clinical_status != ClinicalStatus.TREATMENT_STARTED.value:
+            return denied("sign-off refused: patient is not in treatment", layer="monitor (state check)")
+        return {
+            "actor_role": actor_role,
+            "clinical_status": ClinicalStatus.FORMAL_VALIDATION.value,
+            "audit_log": [audit(state.case_id, State.MONITORING, "emit_event_log",
+                                 "treatment complete, awaiting formal sign-off",
+                                 Transition.FORMAL_VALIDATION)],
+        }
+
     if is_release(fired):
         return release_case(state, fired, State.MONITORING)
 

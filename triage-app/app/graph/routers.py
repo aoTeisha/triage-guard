@@ -160,7 +160,10 @@ def route_wait_resume(state: TriageState) -> Route:
     released_or_refused = release_route(state)
     if released_or_refused:
         return released_or_refused
-    if state.clinical_status == ClinicalStatus.TREATMENT_STARTED.value:
+    # Signed off (formal_validation) for the same reason: past treatment, a
+    # patient only ever leaves by release.
+    if state.clinical_status in (ClinicalStatus.TREATMENT_STARTED.value,
+                                 ClinicalStatus.FORMAL_VALIDATION.value):
         return Route.MOVED
     return Route.PROCEED
 

@@ -74,6 +74,11 @@ def case_view(state: dict[str, Any], pending: dict[str, Any] | None) -> dict[str
         "acuity_source": state.get("acuity_source"),
         "acuity_gap": state.get("acuity_gap"),
         "safety_passed": state.get("safety_passed"),
+        # The validator's reasons, verbatim: a charge nurse answering a safety
+        # failure has to know what to correct (I7), not only that it failed.
+        "safety_reasons": list(getattr(state.get("safety_verdict"), "reasons", None)
+                               or (state.get("safety_verdict") or {}).get("reasons", [])
+                               if state.get("safety_verdict") else []),
         "approved": state.get("approved"),
         "release_reason": state.get("release_reason"),
         "degraded": state.get("degraded", []),
@@ -189,6 +194,4 @@ def card_from_state(
 
 
 # The six World-plane statuses, in spec order. `case_closed` is not one of them.
-# Only `formal_validation` has no writer yet (STATUS.md item 4's full execution
-# machine) and renders empty — the board shows the gap rather than hiding it.
 BOARD_COLUMNS = [s.value for s in ClinicalStatus]

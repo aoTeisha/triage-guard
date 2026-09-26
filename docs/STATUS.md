@@ -147,12 +147,11 @@ correction loop escalating to a shift lead, and the Arrow → Transition rename.
 
 **Not built at all**
 
-- [ ] **`formal_validation` board column** has no writer. Needs a "Treatment complete"
-      board button that resumes the paused case, and a graph step that handles the
-      `TREATMENT_COMPLETE` event (`app/events.py`, spec row `FV`) by moving
-      `treatment_started` → `formal_validation`. Not blocked on anything. Planned for
-      later. (The comment in `app/views.py` above `BOARD_COLUMNS` still says it waits on
-      the execution machine. That's out of date.)
+- [x] **`formal_validation` board column.** Done 2026-09-26: a "Treatment complete"
+      button on the board, `POST /api/case/{id}/treatment-complete`, and the waiting-room
+      pause handling `TREATMENT_COMPLETE` (spec row `FV`) — `treatment_started` →
+      `formal_validation`, refused for a patient not in treatment. Release works from
+      there as from any pause.
 - [x] **CRM write-back.** Done 2026-09-26 (I17): written at release, retried by the
       sweeper through a `crm_writeback` timer when the CRM is down. Lesson learned the
       hard way: the first version wrote visits with no acuity, and the privacy policy
@@ -169,9 +168,11 @@ correction loop escalating to a shift lead, and the Arrow → Transition rename.
       `actor_role` to `"nurse"`, and every request states its own role. I14 wants the
       role read from the server's staff records: a `nurse_id` on each request and a
       roster table Prolog can query.
-- [ ] **UI gaps.** A case paused at `awaiting_intake_fix` is not visible as such on the
-      board; the safety-correction form has no input for the corrected value, so a
-      charge nurse cannot actually answer a safety failure from the UI.
+- [x] **UI gaps.** The safety-correction input exists on both gate panels since
+      2026-09-26, with the validator's reasons shown beside it. A case paused at
+      `awaiting_intake_fix` reaches the board as a notification (`MISSING_FIELDS` is in
+      `NOTIFY_TRANSITIONS`); it cannot be a card, because it has no clinical status and
+      so no column — that was never a gap, only an undocumented fact.
 
 **Spec holes and decisions**
 

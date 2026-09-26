@@ -435,6 +435,17 @@ def move_to_treatment(case_id: str, report: MoveToTreatmentReport):
     )
 
 
+@app.post("/api/case/{case_id}/treatment-complete")
+def treatment_complete(case_id: str, report: MoveToTreatmentReport):
+    """Treatment is done: `treatment_started` -> `formal_validation` (spec arrow
+    FV), the sign-off column before release. Same shape as `/move-to-treatment`;
+    the pause node refuses it for a patient who is not in treatment.
+    """
+    return _resume_waiting_case(
+        case_id, {"event": "TREATMENT_COMPLETE", "actor_role": report.actor_role}
+    )
+
+
 @app.post("/api/case/{case_id}/release")
 def release(case_id: str, report: ReleaseReport):
     """Nurse-initiated release, from any pause of an open case (I9). Same

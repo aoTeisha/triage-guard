@@ -73,13 +73,15 @@ submitBtn.addEventListener("click", async () => {
   }
 });
 
-async function resolveGate(caseId, decision, resolverRole) {
+async function resolveGate(caseId, decision, resolverRole, corrections) {
   submitResultEl.innerHTML = "Resolving…";
   try {
+    const body = { decision, resolver_role: resolverRole };
+    if (corrections) body.corrections = corrections;    // a safety correction: what changed (I7)
     const res = await fetch(`/resume/${encodeURIComponent(caseId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decision, resolver_role: resolverRole }),
+      body: JSON.stringify(body),
     });
     render(await res.json());
   } catch {
@@ -137,14 +139,29 @@ function gatePanel({ case_id, gate }) {
   el.className = "gate";
   el.setAttribute("role", "alert");
 
+  const safetyFail = gate.gate === "safety_fail";
   const heading = gate.gate === "discrepancy"
     ? `Acuity discrepancy — nurse proposed ${gate.nurse_proposed_acuity},
        system proposed ${gate.system_proposed_acuity} (gap ${gate.acuity_gap}).`
     : "Safety validation failed — a charge nurse must correct and revalidate.";
+  // The validator says exactly what contradicts what (I7): show it, and take
+  // the corrected level here. "Corrected" without a change is refused by the gate.
+  const reasons = safetyFail && gate.safety_verdict && gate.safety_verdict.reasons
+    ? `<ul class="reasons">${gate.safety_verdict.reasons.map((r) => `<li>${r}</li>`).join("")}</ul>`
+    : "";
+  const correction = safetyFail
+    ? `<label>Corrected acuity
+        <select class="correction">
+          <option value="">select ESI level</option>
+          ${[1, 2, 3, 4, 5].map((n) => `<option value="${n}">ESI ${n}</option>`).join("")}
+        </select>
+      </label>`
+    : "";
 
   el.innerHTML = `
     <strong>Paused — awaiting ${gate.required_role}</strong>
     <p>${heading}</p>
+    ${reasons}
     <label>Resolver role
       <select class="role">
         <option value="charge_nurse">charge_nurse</option>
@@ -152,14 +169,21 @@ function gatePanel({ case_id, gate }) {
         <option value="nurse">nurse (not authorized — will be refused)</option>
       </select>
     </label>
+    ${correction}
     <div class="options"></div>`;
 
   const role = el.querySelector(".role");
+  const correctionSelect = el.querySelector(".correction");
   const options = el.querySelector(".options");
   gate.options.forEach((option) => {
     const btn = document.createElement("button");
     btn.textContent = option;
-    btn.addEventListener("click", () => resolveGate(case_id, option, role.value));
+    btn.addEventListener("click", () => {
+      const corrections = option === "corrected" && correctionSelect && correctionSelect.value
+        ? { acuity: Number(correctionSelect.value) }
+        : undefined;
+      resolveGate(case_id, option, role.value, corrections);
+    });
     options.appendChild(btn);
   });
 

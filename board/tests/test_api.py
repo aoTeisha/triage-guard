@@ -176,6 +176,7 @@ def test_the_board_issues_writes_only_through_named_exceptions(seeded):
     assert post_paths == {
         "/api/case/{case_id}/deteriorated",
         "/api/case/{case_id}/move-to-treatment",
+        "/api/case/{case_id}/treatment-complete",
         "/api/case/{case_id}/release",
     }
 

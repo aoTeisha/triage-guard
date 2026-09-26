@@ -444,7 +444,17 @@ function movesSection(caseId, card) {
     () => setTimeout(() => openPanel(caseId), 300),
   );
 
-  const canRelease = card && ["waiting", "treatment_started"].includes(card.status);
+  // Treatment done: the case moves to the sign-off column (spec arrow FV).
+  const completeBtn = el("button", "move-btn", "Treatment complete");
+  completeBtn.disabled = card ? card.status !== "treatment_started" : true;
+  completeBtn.title = completeBtn.disabled ? "only a patient in treatment can be signed off" : "";
+  completeBtn.onclick = () => postCaseAction(
+    completeBtn, msg, `/api/case/${encodeURIComponent(caseId)}/treatment-complete`,
+    { actor_role: "nurse" }, "signing off…", "moved to formal validation",
+    () => setTimeout(() => openPanel(caseId), 300),
+  );
+
+  const canRelease = card && ["waiting", "treatment_started", "formal_validation"].includes(card.status);
 
   const reasonSelect = el("select", "reason-select");
   [["", "release reason"], ["discharge", "Discharge"], ["ama", "AMA"],
@@ -475,7 +485,7 @@ function movesSection(caseId, card) {
   const releaseGroup = el("div", "release-group");
   releaseGroup.append(reasonSelect, releaseBtn);
 
-  controls.append(moveBtn, releaseGroup);
+  controls.append(moveBtn, completeBtn, releaseGroup);
   box.append(controls, msg);
   return box;
 }
@@ -516,19 +526,44 @@ function gatePanel(caseId, view, card) {
     escalate_further: "Escalate further",
   };
 
+  // A safety failure names what contradicts what (I7). Show it, and take the
+  // corrected level here: "Corrected" with nothing changed is refused by the gate.
+  const reasons = severe && view.safety_reasons && view.safety_reasons.length
+    ? el("ul", "reasons") : null;
+  if (reasons) view.safety_reasons.forEach((r) => reasons.append(el("li", null, r)));
+  let correction = null;
+  if (severe) {
+    correction = el("select");
+    const placeholder = el("option", null, "corrected acuity — select ESI level");
+    placeholder.value = "";
+    correction.append(placeholder);
+    [1, 2, 3, 4, 5].forEach((n) => {
+      const opt = el("option", null, `ESI ${n}`);
+      opt.value = String(n);
+      correction.append(opt);
+    });
+  }
+
   const msg = el("div", "msg");
   const options = el("div", "controls");
   (GATE_OPTIONS[reason] || []).forEach((decision) => {
     const btn = el("button", null, decisionLabels[decision] || decision);
     btn.onclick = async () => {
+      if (decision === "corrected" && correction && !correction.value) {
+        msg.className = "msg err";
+        msg.textContent = "choose the corrected acuity first";
+        return;
+      }
       options.querySelectorAll("button").forEach((b) => (b.disabled = true));
       msg.className = "msg";
       msg.textContent = "resolving…";
+      const body = { decision, resolver_role: role.value };
+      if (decision === "corrected" && correction) body.corrections = { acuity: Number(correction.value) };
       try {
         const res = await fetch(`${INTAKE_CHANNEL_ORIGIN}/resume/${encodeURIComponent(caseId)}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ decision, resolver_role: role.value }),
+          body: JSON.stringify(body),
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -550,7 +585,10 @@ function gatePanel(caseId, view, card) {
     options.append(btn);
   });
 
-  box.append(el("label", null, "Resolver role"), role, options, msg);
+  if (reasons) box.append(reasons);
+  box.append(el("label", null, "Resolver role"), role);
+  if (correction) box.append(el("label", null, "Corrected acuity"), correction);
+  box.append(options, msg);
   return box;
 }
 

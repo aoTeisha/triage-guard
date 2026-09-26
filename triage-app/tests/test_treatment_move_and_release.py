@@ -137,3 +137,40 @@ def test_a_duplicate_move_requested_after_treatment_started_is_denied(graph, run
     assert Transition.BLK in transitions(result)
     snapshot = graph.get_state(config_for(thread))
     assert snapshot.next, "must stay parked, not silently re-confirm or end the run"
+
+
+# ---- FV: treatment complete -> formal validation ------------------------------
+
+
+def test_treatment_complete_moves_the_case_to_formal_validation(graph, run):
+    case = DEMO_CASES["clean"]
+    _, _, thread = run(case)
+    _resume(graph, thread, event="MOVE_REQUESTED", actor_role="nurse")
+
+    result = _resume(graph, thread, event="TREATMENT_COMPLETE", actor_role="nurse")
+
+    assert result["clinical_status"] == "formal_validation"
+    assert Transition.FORMAL_VALIDATION in transitions(result)
+    assert graph.get_state(config_for(thread)).next == ("awaiting_reassessment",)   # still parked, releasable
+
+
+def test_treatment_complete_is_refused_for_a_patient_still_waiting(graph, run):
+    case = DEMO_CASES["clean"]
+    _, _, thread = run(case)
+
+    result = _resume(graph, thread, event="TREATMENT_COMPLETE", actor_role="nurse")
+
+    assert result["clinical_status"] == "waiting"
+    assert transitions(result)[-1] == Transition.BLK
+    assert "not in treatment" in result["audit_log"][-1]["explanation"]
+
+
+def test_a_signed_off_patient_can_be_released(graph, run):
+    case = DEMO_CASES["clean"]
+    _, _, thread = run(case)
+    _resume(graph, thread, event="MOVE_REQUESTED", actor_role="nurse")
+    _resume(graph, thread, event="TREATMENT_COMPLETE", actor_role="nurse")
+
+    result = _resume(graph, thread, event="RELEASE_REQUESTED", reason="discharge", actor_role="charge_nurse")
+
+    assert result["control_state"] == State.CASE_CLOSED.value
