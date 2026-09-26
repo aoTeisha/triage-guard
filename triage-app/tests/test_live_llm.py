@@ -14,12 +14,16 @@ from dotenv import load_dotenv
 from app.actors import acuity_classifier
 from app.schemas import AcuityProposal
 
-# The redacted shape the classifier really sees: no name, no stable_patient_id.
+# The shape the classifier really sees: what policy/privacy.rego allows and
+# nothing else — a complaint code, numbers, an age band, history as labels and
+# (date, acuity). No prose, no identifier, and not the nurse's own level.
 CASE = {
     "case_id": "case-live-0001",
-    "chief_complaint": "chest tightness for 2 hours",
+    "chief_complaint": "chest_pain",
     "vitals": {"hr": 104, "bp": "148/92", "spo2": 95, "temp_c": 37.1},
-    "free_text": "Patient reports pressure in the chest, worse on exertion.",
+    "age_band": "over_18_years",
+    "history": {"known_conditions": ["hypertension", "type 2 diabetes"],
+                "prior_visits": [{"date": "2026-01-15", "acuity": 2}]},
 }
 
 

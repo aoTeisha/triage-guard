@@ -137,8 +137,13 @@ correction loop escalating to a shift lead, and the Arrow → Transition rename.
 - [ ] **Output checker.** `app/verification.py` still validates shape and ranges only.
       The safety validator now covers contradictions for the *acuity* decision (I13);
       the classifier's and parser's other outputs get no equivalent check.
-- [ ] **Real LLM.** The acuity classifier defaults to the mock; live mode
-      (`TRIAGE_LLM=live`) is written but needs a real run and a test that calls it.
+- [x] **Real LLM.** Run for real on 2026-09-26 against `openai/gpt-4o` via OpenRouter,
+      end to end: on the allow-listed payload (`age_band`, complaint code, vitals,
+      history as labels and date+acuity — no prose, not the nurse's level) the model
+      proposed ESI 2 at 0.9 for the clean demo case; the nurse's 3 won the gap-1
+      settle, decision point D annotated `hr>100`, the case reached the queue.
+      `tests/test_live_llm.py` (marked `integration`, deselected by default) now sends
+      that same shape. `.env` sets `TRIAGE_LLM=live`, so the demo runs live by default.
 - [x] **Z3.** Six design-time proofs in `app/symbolic/z3_proofs.py`: I4's bands
       (partition + the if-chain obeying them), I13's range half, and I1 three times
       (acuity order, the arrival tie-break, totality). Each has a mutation test that
