@@ -13,7 +13,7 @@ from langgraph.types import interrupt
 from app.actors import intake
 from app.deterministic import assign_order_key, audit, now_iso
 from app.graph.nodes._shared import _bump, is_release, release_case
-from app.guards import NURSE_SUPPLIED_FIELDS
+from app.guards import NURSE_SUPPLIED_FIELDS, is_esi_level
 from app.graph.state import TriageState
 from app.labels import Transition
 from app.states import State
@@ -39,7 +39,10 @@ def intake_received(state: TriageState) -> dict[str, Any]:
     # and "never inferred: absent means MISSING_FIELDS, never a guessed value". So when it
     # is absent the case gets no queue position — it is heading for
     # missing_fields_requested and will be keyed on the way back through.
-    if state.nurse_proposed_acuity is not None:
+    # An unusable value is keyed no more than a missing one: the parser will send
+    # the case back to the nurse, and (7, arrival) would have filed them behind
+    # every real patient in the meantime.
+    if is_esi_level(state.nurse_proposed_acuity):
         update["order_key"] = assign_order_key(state.nurse_proposed_acuity, arrival)
 
     return update
@@ -65,7 +68,7 @@ def parsing(state: TriageState) -> dict[str, Any]:
         "intake_reason": parsed.reason,
         "missing_fields": parsed.missing_fields,
         "parsed_fields": parsed.parsed_fields,
-        "stable_patient_id": parsed.parsed_fields.get("stable_patient_id"),
+        "national_id": parsed.parsed_fields.get("national_id"),
         "nurse_proposed_acuity": parsed.parsed_fields.get("nurse_proposed_acuity"),
         "audit_log": [
             audit(state.case_id, State.PARSING, "invoke_intake_parser",
@@ -100,10 +103,14 @@ def awaiting_intake_fix(state: TriageState) -> dict[str, Any]:
                            "missing_fields": state.missing_fields})
     if is_release(submitted):
         return release_case(state, submitted, state.control_state)
-    # Only empty form fields may be filled. Overwriting one that already has a
-    # value could swap the patient's identity (`stable_patient_id`) mid-case.
+    # Only what the parser asked for: a field it named absent or unusable, or one
+    # still empty. Anything else is ignored, so a resubmission cannot swap the
+    # patient's identity (`stable_patient_id`) mid-case. An unusable value must be
+    # replaceable, or a mistyped acuity would be unfixable.
+    fillable = set(state.missing_fields) | {
+        f for f in NURSE_SUPPLIED_FIELDS if state.raw_payload.get(f) is None}
     accepted = {k: v for k, v in (submitted or {}).items()
-                if k in NURSE_SUPPLIED_FIELDS and state.raw_payload.get(k) is None}
+                if k in NURSE_SUPPLIED_FIELDS and k in fillable}
     ignored = sorted(set(submitted or {}) - set(accepted))
     return {
         "raw_payload": {**state.raw_payload, **accepted},

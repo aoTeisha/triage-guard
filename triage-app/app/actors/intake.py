@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.events import IntakeOutcome
-from app.guards import detect_injection, missing_fields, nothing_usable
+from app.guards import detect_injection, missing_fields, nothing_usable, unusable_fields
 from app.guards.validity import not_input_is_valid
 from app.schemas import ParseResult
 
@@ -38,12 +38,20 @@ def parse_intake(raw_payload: dict[str, Any]) -> ParseResult:
             reason="submission carried no clinical content",
         )
 
-    gaps = missing_fields(raw_payload)
-    if gaps:
+    # Absent and unusable are one outcome: both need the nurse, and both are
+    # fixable in place. An out-of-range acuity is not routed to INVALID_INPUT —
+    # that ends the run, and the patient is still standing at the desk (I10).
+    absent, unusable = missing_fields(raw_payload), unusable_fields(raw_payload)
+    if absent or unusable:
+        reason = "; ".join(
+            part for part in (f"required fields missing: {', '.join(absent)}" if absent else "",
+                              f"unusable values: {', '.join(unusable)}" if unusable else "")
+            if part
+        )
         return ParseResult(
             outcome=IntakeOutcome.MISSING_FIELDS_DETECTED,
-            missing_fields=gaps,
-            reason=f"required fields missing: {', '.join(gaps)}",
+            missing_fields=absent + unusable,
+            reason=reason,
         )
 
     return ParseResult(

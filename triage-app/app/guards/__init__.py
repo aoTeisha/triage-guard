@@ -7,7 +7,8 @@ presence checks only. No LLM, no network, no clock — these protect invariants,
 and an invariant cannot depend on a probabilistic model.
 """
 
-from .fields import NURSE_SUPPLIED_FIELDS, REQUIRED_FIELDS, missing_fields, nothing_usable, not_required_fields_complete
+from .fields import (ACUITY_LEVELS, NURSE_SUPPLIED_FIELDS, REQUIRED_FIELDS, is_esi_level,
+                     missing_fields, nothing_usable, not_required_fields_complete, unusable_fields)
 from .injection import detect_injection
 from .validity import not_input_is_valid, required_fields_complete_and_valid
 
@@ -21,16 +22,19 @@ def classify_intake_payload(payload: dict) -> str:
         return "INVALID_INPUT_DETECTED"
     if nothing_usable(payload):
         return "SUBMISSION_FAILED"
-    if missing_fields(payload):
+    if missing_fields(payload) or unusable_fields(payload):
         return "MISSING_FIELDS_DETECTED"
     return "DATA_PARSED"
 
 
 __all__ = [
+    "ACUITY_LEVELS",
     "NURSE_SUPPLIED_FIELDS",
     "REQUIRED_FIELDS",
+    "is_esi_level",
     "missing_fields",
     "nothing_usable",
+    "unusable_fields",
     "not_required_fields_complete",
     "detect_injection",
     "not_input_is_valid",

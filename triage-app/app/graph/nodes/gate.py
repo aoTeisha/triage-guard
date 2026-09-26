@@ -13,6 +13,7 @@ from app.budgets import GATE_REMINDER_DELAY_MINUTES, SENIOR_REMINDER_DELAY_MINUT
 from app.deterministic import assign_order_key, audit, audit_denial, bucket_for
 from app.graph.nodes._shared import is_release, release_case
 from app.graph.state import TriageState
+from app.guards import is_esi_level
 from app.labels import Transition
 from app.monitor import timers
 from app.states import AcuitySource, ClinicalStatus, State
@@ -121,7 +122,7 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
     # fails the same way (I7); refusing it uses up no round.
     changes = {k: v for k, v in ((response or {}).get("corrections") or {}).items()
                if k in CORRECTABLE_FIELDS and v != getattr(state, k)}
-    if "acuity" in changes and not (type(changes["acuity"]) is int and 1 <= changes["acuity"] <= 5):
+    if "acuity" in changes and not is_esi_level(changes["acuity"]):
         del changes["acuity"]
     if not changes:
         why = f"correction required: change at least one of {sorted(CORRECTABLE_FIELDS)}"
