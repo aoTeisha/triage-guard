@@ -19,36 +19,39 @@ from app.mock_cases import DEMO_CASES
 from app.states import State
 
 
-def _stub_found(monkeypatch, stable_patient_id: str):
-    """Force `resolving_identity`'s CRM lookup to report `"found"` for
-    `stable_patient_id`, regardless of what (if anything) is listening on
-    `CRM_BASE_URL`. Patched at `app.graph.nodes.identity.fetch_patient` —
-    that module imports the name directly, so patching `app.crm_client`'s
-    copy would not take effect.
+def _stub_found(monkeypatch, national_id: str, internal_id: str = "P-i19"):
+    """Force `resolving_identity`'s CRM lookup to resolve `national_id` to
+    `internal_id`, regardless of what (if anything) is listening on
+    `CRM_BASE_URL`. Patched at
+    `app.graph.nodes.identity.fetch_patient_by_national_id` — that module
+    imports the name directly, so patching `app.crm_client`'s copy would not
+    take effect.
     """
     from app.graph.nodes import identity as identity_module
 
-    def fake_fetch_patient(patient_id, *, timeout=1.0):
-        if patient_id == stable_patient_id:
-            return PatientLookupResult(status="found", record={"age_band": "adult"})
+    def fake_lookup(nid, *, timeout=1.0):
+        if nid == national_id:
+            return PatientLookupResult(
+                status="found",
+                record={"stable_patient_id": internal_id, "age_band": "adult"})
         return PatientLookupResult(status="not_found", record=None)
 
-    monkeypatch.setattr(identity_module, "fetch_patient", fake_fetch_patient)
+    monkeypatch.setattr(identity_module, "fetch_patient_by_national_id", fake_lookup)
 
 
 def test_i19_second_intake_for_the_same_found_patient_is_rejected(checkpoint_db, monkeypatch):
-    _stub_found(monkeypatch, "P-i19")
+    _stub_found(monkeypatch, "300000199")
 
     case_a = dict(DEMO_CASES["clean"])
     case_a["case_id"] = "case-i19-a"
-    case_a["stable_patient_id"] = "P-i19"
+    case_a["national_id"] = "300000199"
     state_a, _ = runner.start_case(case_a)
     assert state_a["crm_status"] == "found"
     assert state_a["control_state"] != State.INPUT_REJECTED.value
 
     case_b = dict(DEMO_CASES["clean"])
     case_b["case_id"] = "case-i19-b"
-    case_b["stable_patient_id"] = "P-i19"
+    case_b["national_id"] = "300000199"
     state_b, _ = runner.start_case(case_b)
 
     assert state_b["control_state"] == State.INPUT_REJECTED.value
@@ -63,14 +66,14 @@ def test_i19_two_concurrent_intakes_for_the_same_patient_only_one_wins(checkpoin
     call (not just the check inside `resolving_identity`), both could pass
     `all_case_summaries` before either becomes visible to it.
     """
-    _stub_found(monkeypatch, "P-i19-race")
+    _stub_found(monkeypatch, "300000198", internal_id="P-i19-race")
     barrier = threading.Barrier(2)
     results = {}
 
     def submit(key, case_id):
         case = dict(DEMO_CASES["clean"])
         case["case_id"] = case_id
-        case["stable_patient_id"] = "P-i19-race"
+        case["national_id"] = "300000198"
         barrier.wait()
         state, _ = runner.start_case(case)
         results[key] = state
@@ -89,16 +92,16 @@ def test_i19_two_concurrent_intakes_for_the_same_patient_only_one_wins(checkpoin
 
 
 def test_i19_a_new_intake_for_a_different_patient_is_not_rejected(checkpoint_db, monkeypatch):
-    _stub_found(monkeypatch, "P-i19-other")
+    _stub_found(monkeypatch, "300000197", internal_id="P-i19-other")
 
     case_a = dict(DEMO_CASES["clean"])
     case_a["case_id"] = "case-i19-c"
-    case_a["stable_patient_id"] = "P-i19-other"
+    case_a["national_id"] = "300000197"
     runner.start_case(case_a)
 
     case_b = dict(DEMO_CASES["clean"])
     case_b["case_id"] = "case-i19-d"
-    case_b["stable_patient_id"] = "P-different"
+    case_b["national_id"] = "300000196"
     state_b, _ = runner.start_case(case_b)
 
     assert state_b["control_state"] != State.INPUT_REJECTED.value

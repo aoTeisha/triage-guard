@@ -79,11 +79,11 @@ def test_the_verifier_still_halts_on_an_identifier_key():
 
 
 def test_the_payload_builder_redacts_before_the_verifier_sees_it():
-    fields = {"chief_complaint": "patient 123456789 chest pain", "stable_patient_id": "300000001"}
+    fields = {"chief_complaint": "patient 123456789 chest pain", "national_id": "300000001"}
     payload = build_model_payload("c1", fields, {"visits": [{"note": "dana@example.com"}]})
     assert payload["chief_complaint"] == "patient [REDACTED_ID] chest pain"
     assert payload["history"] == {"visits": [{"note": "[REDACTED_EMAIL]"}]}
-    assert "stable_patient_id" not in payload
+    assert "national_id" not in payload
     assert verify_no_identifiers(payload)[0]
 
 

@@ -19,11 +19,11 @@ def repo(db_dsn):
     conn.execute(SCHEMA)
     conn.execute(
         """INSERT INTO patients
-           (stable_patient_id, name, date_of_birth,
+           (stable_patient_id, national_id, name, date_of_birth,
             known_conditions, prior_visits, last_updated)
-           VALUES (%s, %s, %s, %s, %s, %s)""",
+           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
         (
-            "P-1001", "Alon Mizrahi", "1958-03-12",
+            "P-1001", "300000001", "Alon Mizrahi", "1958-03-12",
             json.dumps(["hypertension", "type 2 diabetes"]),
             json.dumps([{"date": "2025-11-02", "acuity": 3, "notes": "chest tightness"}]),
             _now_iso(),
@@ -110,3 +110,30 @@ def test_db_error_via_env(repo, monkeypatch):
     monkeypatch.setenv("CRM_SIMULATE_DOWN", "true")
     assert repo.fetch_patient_data("P-1001").status is FetchStatus.DB_ERROR
     assert repo.is_available() is False
+
+
+# -- resolving the id a patient carries into the internal one ----------------
+
+def test_fetch_by_national_id_returns_the_internal_id(repo):
+    """The one crossing point between the two identifiers: intake has only the
+    number the patient carries, and asks for the internal id rather than
+    inventing one.
+    """
+    result = repo.fetch_by_national_id("300000001")
+    assert result.status is FetchStatus.FOUND
+    assert result.record.stable_patient_id == "P-1001"
+    assert result.record.national_id == "300000001"
+
+
+def test_fetch_by_national_id_not_found_is_a_new_patient(repo):
+    result = repo.fetch_by_national_id("999999999")
+    assert result.status is FetchStatus.NOT_FOUND
+    assert result.record is None
+    assert result.db_reachable is True      # unregistered, not a failure
+
+
+def test_fetch_by_national_id_db_error_when_down(repo):
+    repo._simulate_down = True
+    result = repo.fetch_by_national_id("300000001")
+    assert result.status is FetchStatus.DB_ERROR
+    assert result.record is None

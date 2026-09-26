@@ -18,56 +18,58 @@ import psycopg
 
 from .repository import SCHEMA, _now_iso
 
-# (id, name, dob, conditions, prior_visits[])
+# (id, national_id, name, dob, conditions, prior_visits[])
+# The national id is the number the patient carries; 3000000NN pairs with P-10NN
+# so the demo submissions in triage-app/app/mock_cases.py resolve to a real record.
 PATIENTS = [
-    ("P-1001", "Alon Mizrahi", "1958-03-12",
+    ("P-1001", "300000001", "Alon Mizrahi", "1958-03-12",
      ["hypertension", "type 2 diabetes"],
      [{"date": "2025-11-02", "acuity": 3, "notes": "chest tightness, discharged stable"},
       {"date": "2026-01-15", "acuity": 2, "notes": "shortness of breath"}]),
-    ("P-1002", "Noa Cohen", "1991-07-22", [], []),  # first-time, healthy
-    ("P-1003", "Yusuf Haddad", "1972-11-30",
+    ("P-1002", "300000002", "Noa Cohen", "1991-07-22", [], []),  # first-time, healthy
+    ("P-1003", "300000003", "Yusuf Haddad", "1972-11-30",
      ["asthma"],
      [{"date": "2025-12-20", "acuity": 2, "notes": "acute asthma exacerbation"}]),
-    ("P-1004", "Maya Levi", "2015-05-04",
+    ("P-1004", "300000004", "Maya Levi", "2015-05-04",
      ["peanut allergy"],
      [{"date": "2026-02-01", "acuity": 4, "notes": "minor allergic reaction, observed"}]),
-    ("P-1005", "David Friedman", "1949-09-18",
+    ("P-1005", "300000005", "David Friedman", "1949-09-18",
      ["atrial fibrillation", "hypertension", "CKD stage 3"],
      [{"date": "2025-10-10", "acuity": 2, "notes": "palpitations"},
       {"date": "2026-01-28", "acuity": 1, "notes": "syncope, admitted"}]),
-    ("P-1006", "Rania Khalil", "1988-02-14", ["migraine"],
+    ("P-1006", "300000006", "Rania Khalil", "1988-02-14", ["migraine"],
      [{"date": "2025-09-05", "acuity": 4, "notes": "severe headache, resolved"}]),
-    ("P-1007", "Tomer Azoulay", "2001-12-01", [], []),  # first-time young adult
-    ("P-1008", "Sarah Goldberg", "1965-06-25",
+    ("P-1007", "300000007", "Tomer Azoulay", "2001-12-01", [], []),  # first-time young adult
+    ("P-1008", "300000008", "Sarah Goldberg", "1965-06-25",
      ["breast cancer (in remission)", "hypothyroidism"],
      [{"date": "2025-08-19", "acuity": 3, "notes": "post-chemo fatigue"}]),
-    ("P-1009", "Ibrahim Nasser", "1954-04-08",
+    ("P-1009", "300000009", "Ibrahim Nasser", "1954-04-08",
      ["COPD", "type 2 diabetes"],
      [{"date": "2025-11-22", "acuity": 2, "notes": "COPD exacerbation"},
       {"date": "2026-02-10", "acuity": 2, "notes": "productive cough, low O2 sat"}]),
-    ("P-1010", "Ella Katz", "1997-10-16", ["epilepsy"],
+    ("P-1010", "300000010", "Ella Katz", "1997-10-16", ["epilepsy"],
      [{"date": "2025-12-30", "acuity": 2, "notes": "breakthrough seizure"}]),
-    ("P-1011", "Omar Suleiman", "1980-01-27", ["lower back pain (chronic)"],
+    ("P-1011", "300000011", "Omar Suleiman", "1980-01-27", ["lower back pain (chronic)"],
      [{"date": "2026-01-05", "acuity": 4, "notes": "back pain flare"}]),
-    ("P-1012", "Hila Barak", "2019-08-11", [], []),  # young child, first visit
-    ("P-1013", "Moshe Klein", "1943-03-03",
+    ("P-1012", "300000012", "Hila Barak", "2019-08-11", [], []),  # young child, first visit
+    ("P-1013", "300000013", "Moshe Klein", "1943-03-03",
      ["coronary artery disease", "hypertension", "type 2 diabetes"],
      [{"date": "2025-07-14", "acuity": 1, "notes": "STEMI, cath lab"},
       {"date": "2025-12-02", "acuity": 2, "notes": "angina, observed"}]),
-    ("P-1014", "Layla Mansour", "1993-05-29", ["pregnancy (2nd trimester)"],
+    ("P-1014", "300000014", "Layla Mansour", "1993-05-29", ["pregnancy (2nd trimester)"],
      [{"date": "2026-02-05", "acuity": 3, "notes": "abdominal pain, monitored"}]),
-    ("P-1015", "Daniel Peretz", "1976-09-09", ["anxiety disorder"],
+    ("P-1015", "300000015", "Daniel Peretz", "1976-09-09", ["anxiety disorder"],
      [{"date": "2025-10-30", "acuity": 4, "notes": "panic episode"}]),
-    ("P-1016", "Amira Odeh", "1961-12-19",
+    ("P-1016", "300000016", "Amira Odeh", "1961-12-19",
      ["rheumatoid arthritis", "osteoporosis"],
      [{"date": "2025-11-11", "acuity": 3, "notes": "joint swelling"}]),
-    ("P-1017", "Gilad Shapiro", "2008-06-07", ["ADHD"], []),  # teen, no ED history
-    ("P-1018", "Fatima Zahra", "1985-04-21", ["sickle cell disease"],
+    ("P-1017", "300000017", "Gilad Shapiro", "2008-06-07", ["ADHD"], []),  # teen, no ED history
+    ("P-1018", "300000018", "Fatima Zahra", "1985-04-21", ["sickle cell disease"],
      [{"date": "2025-09-28", "acuity": 2, "notes": "vaso-occlusive crisis"},
       {"date": "2026-01-19", "acuity": 2, "notes": "pain crisis, IV fluids"}]),
-    ("P-1019", "Yael Rosen", "1969-11-05", ["hypertension"],
+    ("P-1019", "300000019", "Yael Rosen", "1969-11-05", ["hypertension"],
      [{"date": "2025-12-12", "acuity": 3, "notes": "elevated BP, adjusted meds"}]),
-    ("P-1020", "Khaled Barghouti", "1957-08-30",
+    ("P-1020", "300000020", "Khaled Barghouti", "1957-08-30",
      ["type 2 diabetes", "diabetic neuropathy", "hypertension"],
      [{"date": "2025-10-01", "acuity": 3, "notes": "foot ulcer"},
       {"date": "2026-02-14", "acuity": 2, "notes": "cellulitis, IV antibiotics"}]),
@@ -81,17 +83,18 @@ def seed(dsn: str = "postgresql://triage:triage@localhost:5434/crm", reset: bool
         if reset:
             conn.execute("DELETE FROM patients")
         n = 0
-        for pid, name, dob, conditions, visits in PATIENTS:
+        for pid, nid, name, dob, conditions, visits in PATIENTS:
             conn.execute(
                 """INSERT INTO patients
-                   (stable_patient_id, name, date_of_birth,
+                   (stable_patient_id, national_id, name, date_of_birth,
                     known_conditions, prior_visits, last_updated)
-                   VALUES (%s, %s, %s, %s, %s, %s)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (stable_patient_id) DO UPDATE SET
+                     national_id = excluded.national_id,
                      name = excluded.name, date_of_birth = excluded.date_of_birth,
                      known_conditions = excluded.known_conditions,
                      prior_visits = excluded.prior_visits, last_updated = excluded.last_updated""",
-                (pid, name, dob, json.dumps(conditions), json.dumps(visits), _now_iso()),
+                (pid, nid, name, dob, json.dumps(conditions), json.dumps(visits), _now_iso()),
             )
             n += 1
         conn.commit()

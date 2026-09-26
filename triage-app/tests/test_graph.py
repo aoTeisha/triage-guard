@@ -135,22 +135,49 @@ def test_missing_fields_pause_and_the_same_case_continues(graph, run):
 
 
 def test_completing_intake_cannot_overwrite_the_patient_id(graph, run):
-    """Review fix 1: /fields fills only empty fields. An attempt to change an
-    existing identity is ignored and recorded, never applied.
+    """A fields resubmission fills what the parser asked for and nothing else.
+    An identity the parser never asked about is ignored and recorded, so a
+    second submission cannot re-point a case at another patient.
     """
     from langgraph.types import Command
 
     from app.runner import config_for, hydrate
 
-    first, _, thread = run(DEMO_CASES["missing"])
-    original_id = first["raw_payload"]["stable_patient_id"]
+    _, _, thread = run(DEMO_CASES["missing"])
 
     result = hydrate(graph.invoke(
-        Command(resume={"stable_patient_id": "SOMEONE-ELSE", "nurse_proposed_acuity": 3,
+        Command(resume={"national_id": "999999999", "nurse_proposed_acuity": 3,
                         "vitals": {"hr": 90, "bp": "120/80", "spo2": 98, "temp_c": 36.8}}),
         config_for(thread),
     ))
 
-    assert result["raw_payload"]["stable_patient_id"] == original_id
     fix = next(r for r in result["audit_log"] if r["action"] == "fields_submitted")
-    assert fix["ignored_fields"] == ["stable_patient_id"]
+    assert fix["ignored_fields"] == ["national_id"]
+    # Neither applied nor written down anywhere, and the case is not carrying a
+    # national id at all by the time identity resolution has run (I11).
+    assert "999999999" not in repr(result)
+    assert result["national_id"] is None
+
+
+def test_a_mistyped_acuity_is_fixable_in_place(graph, run):
+    """I4/I13 at the front door: an acuity of 7 is present but unusable, so the
+    case waits for the nurse rather than being rejected, and their corrected
+    number replaces it. The fix pause used to accept only *empty* fields, which
+    left a mistyped value unfixable.
+    """
+    from langgraph.types import Command
+
+    from app.runner import config_for, hydrate
+
+    first, pending, thread = run({**DEMO_CASES["clean"], "nurse_proposed_acuity": 7})
+
+    assert pending["intake_fix_pending"] is True
+    assert first["missing_fields"] == ["nurse_proposed_acuity"]
+    assert first["order_key"] is None                 # never keyed at a level that does not exist
+
+    result = hydrate(graph.invoke(
+        Command(resume={"nurse_proposed_acuity": 2}), config_for(thread)))
+
+    assert result["raw_payload"]["nurse_proposed_acuity"] == 2
+    assert result["arrival_time"] == first["arrival_time"]
+    assert tuple(result["order_key"])[0] == 2

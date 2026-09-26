@@ -29,7 +29,7 @@ LookupStatus = Literal["found", "not_found", "db_error"]
 
 @dataclass
 class PatientLookupResult:
-    """Outcome of looking up one patient by stable_patient_id.
+    """Outcome of looking up one patient by the id they carry.
 
     `record` is populated only when status == "found". For "not_found" and
     "db_error" it is None — these are not failures the UI should treat as
@@ -40,14 +40,18 @@ class PatientLookupResult:
     record: Optional[dict] = None
 
 
-def fetch_patient(stable_patient_id: str, *, timeout: float = 5.0) -> PatientLookupResult:
-    """GET {CRM_BASE_URL}/patients/{id}, mapped to found / not_found / db_error.
+def fetch_patient(national_id: str, *, timeout: float = 5.0) -> PatientLookupResult:
+    """GET {CRM_BASE_URL}/patients/by-national-id/{id}, mapped to found /
+    not_found / db_error.
+
+    The desk only ever has the number the patient carries; the internal
+    `stable_patient_id` comes back inside the record.
 
     Any network-level failure (connection refused, timeout) is also reported
     as db_error — from the nurse's point of view an unreachable CRM and a
     CRM returning 503 look the same: continue without history, flag it.
     """
-    url = f"{CRM_BASE_URL}/patients/{stable_patient_id}"
+    url = f"{CRM_BASE_URL}/patients/by-national-id/{national_id}"
     try:
         response = httpx.get(url, timeout=timeout)
     except httpx.HTTPError:

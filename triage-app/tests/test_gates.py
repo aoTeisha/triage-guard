@@ -22,7 +22,7 @@ from tests.conftest import _drop_db, _throwaway_db, transitions
 GAP_CASE = {
     "case_id": "case-gap",
     "channel": "website",
-    "stable_patient_id": "300000009",
+    "national_id": "300000009",
     "nurse_proposed_acuity": 5,
     "chief_complaint": "chest pain radiating to the arm",
     "vitals": {"hr": 120, "bp": "160/100", "spo2": 94, "temp_c": 37.0},

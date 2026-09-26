@@ -159,8 +159,8 @@ def start_case(
     repeated runs of the same fixture do not accumulate onto one another's
     checkpointed audit trail.
 
-    Also takes a lock keyed by `stable_patient_id` (I19), held for the whole
-    invoke — not just `resolving_identity`'s own duplicate-case check.
+    Also takes a lock keyed by whichever id the submission carries (I19), held
+    for the whole invoke — not just `resolving_identity`'s own duplicate-case check.
     `all_case_summaries` only sees a case once its first checkpoint has
     committed, so two `start_case` calls for the same patient, neither of
     which has written a checkpoint yet, would otherwise both pass the check
@@ -170,10 +170,13 @@ def start_case(
     whatever it decided about a duplicate — has already committed.
     """
     thread = thread_id or case["case_id"]
-    stable_patient_id = case.get("stable_patient_id")
+    # A first submission carries the national id and no internal one yet, so the
+    # lock takes whichever is present. Both identify the same patient, and the key
+    # is a transient lock name — it is never stored on the case (I11).
+    patient_key = case.get("national_id") or case.get("stable_patient_id")
     with ExitStack() as stack:
-        if stable_patient_id:
-            stack.enter_context(case_lock(f"patient:{stable_patient_id}"))
+        if patient_key:
+            stack.enter_context(case_lock(f"patient:{patient_key}"))
         stack.enter_context(case_lock(thread))
         existing = graph().get_state(config_for(thread)).values
         if existing.get("control_state") == State.CASE_CLOSED.value:

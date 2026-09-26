@@ -1398,6 +1398,7 @@ dependencies = [
     { name = "pydatalog" },
     { name = "pyswip" },
     { name = "python-dotenv" },
+    { name = "z3-solver" },
 ]
 
 [package.metadata]
@@ -1413,6 +1414,7 @@ requires-dist = [
     { name = "pydatalog", specifier = ">=0.22" },
     { name = "pyswip", specifier = ">=0.3.3" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
+    { name = "z3-solver", specifier = ">=5.1" },
 ]
 
 [package.metadata.requires-dev]

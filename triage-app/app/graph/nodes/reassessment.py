@@ -71,6 +71,9 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
 
     fresh_payload = {
         **state.raw_payload,
+        # Identity is settled; the national id is long gone (I11). Carrying the
+        # internal id lets the front door see an identified patient.
+        "stable_patient_id": state.stable_patient_id,
         "nurse_proposed_acuity": submitted.get("nurse_proposed_acuity"),
         "chief_complaint": submitted.get("chief_complaint"),
         "vitals": submitted.get("vitals"),

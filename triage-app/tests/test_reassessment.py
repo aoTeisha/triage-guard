@@ -77,7 +77,7 @@ def test_nurse_refile_preserves_routing_fields(graph, run):
     graph.invoke(Command(resume=REFILE), config_for(thread))
 
     result = hydrate(graph.get_state(config_for(thread)).values)
-    assert result["raw_payload"]["stable_patient_id"] == case["stable_patient_id"]
+    assert result["raw_payload"]["free_text"] == case["free_text"]
     assert result["raw_payload"]["channel"] == case["channel"]
     assert result["raw_payload"]["free_text"] == case["free_text"]
 

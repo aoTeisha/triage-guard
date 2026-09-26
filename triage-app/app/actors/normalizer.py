@@ -18,7 +18,7 @@ from app.guards.identifiers import redact_identifiers
 # Structured identifier fields. These never enter the model-facing payload; they
 # stay on the case record, where the nurse and the graph can still read them.
 IDENTIFIER_KEYS = frozenset(
-    {"name", "stable_patient_id", "date_of_birth", "dob", "phone"}
+    {"name", "national_id", "stable_patient_id", "date_of_birth", "dob", "phone"}
 )
 
 

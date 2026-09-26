@@ -2,7 +2,7 @@
 
 Five endpoints:
 
-    GET  /lookup/{id}      thin CRM proxy, for enriching the form
+    GET  /lookup/{national_id}  thin CRM proxy, for enriching the form
     POST /submit           build a case and run it through the real graph
     POST /resume/{case_id} answer a human gate
     POST /reassess/{case_id} answer the reassessment re-filing pause
@@ -30,11 +30,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import app.runner as runner
 from app.runner import config_for, resume_case, snapshot, start_case
-from app.guards import NURSE_SUPPLIED_FIELDS
+from app.guards import ACUITY_LEVELS, NURSE_SUPPLIED_FIELDS, unusable_fields
 from app.states import State
 from app.views import case_view as _view
 
@@ -62,7 +62,7 @@ app.add_middleware(
 
 
 class SubmitRequest(BaseModel):
-    stable_patient_id: str
+    national_id: str            # what the patient carries; the CRM returns the internal id
     submission_type: SubmissionType
 
 
@@ -83,14 +83,14 @@ def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
-@app.get("/lookup/{stable_patient_id}")
-def lookup(stable_patient_id: str):
-    """Thin proxy to the CRM stub's GET /patients/{id}.
+@app.get("/lookup/{national_id}")
+def lookup(national_id: str):
+    """Thin proxy to the CRM stub's national-id lookup.
 
     Always 200 with a status field — found / not_found / db_error are all valid
     outcomes the UI must render distinctly, not HTTP errors to branch on.
     """
-    result = fetch_patient(stable_patient_id)
+    result = fetch_patient(national_id)
     return {"status": result.status, "record": result.record}
 
 
@@ -101,8 +101,8 @@ def submit(body: SubmitRequest):
     Tracing happens in `start_case`: its `case-start` span is the root of
     this case's trace.
     """
-    lookup_result = fetch_patient(body.stable_patient_id)
-    case = build_case(lookup_result, body.stable_patient_id, body.submission_type)
+    lookup_result = fetch_patient(body.national_id)
+    case = build_case(lookup_result, body.national_id, body.submission_type)
 
     try:
         state, pending = start_case(case)
@@ -161,7 +161,7 @@ class ReassessmentSubmission(BaseModel):
     the routing metadata that doesn't change for a case that already exists.
     """
 
-    nurse_proposed_acuity: int
+    nurse_proposed_acuity: int = Field(ge=min(ACUITY_LEVELS), le=max(ACUITY_LEVELS))
     chief_complaint: str
     vitals: dict
 
@@ -202,6 +202,9 @@ def fields(case_id: str, body: dict[str, Any]):
     unknown = sorted(set(body) - NURSE_SUPPLIED_FIELDS)
     if unknown:
         raise HTTPException(status_code=422, detail=f"not intake form fields: {unknown}")
+    unusable = unusable_fields(body)
+    if unusable:
+        raise HTTPException(status_code=422, detail=f"values outside their allowed range: {unusable}")
     _require_pause(case_id, "awaiting_intake_fix")
     return _answer_pause(case_id, body)
 

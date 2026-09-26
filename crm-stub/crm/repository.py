@@ -31,6 +31,10 @@ from .models import (
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS patients (
     stable_patient_id TEXT PRIMARY KEY,
+    -- What the patient carries and a nurse types at the desk. The internal id
+    -- above is what every other service holds; this column is the only place
+    -- the two are connected (SPECIFICATION.md § Identity).
+    national_id       TEXT UNIQUE,
     name              TEXT NOT NULL,
     date_of_birth     TEXT NOT NULL,
     known_conditions  TEXT NOT NULL DEFAULT '[]',   -- JSON array
@@ -96,6 +100,7 @@ class CRMRepository:
     def _row_to_record(row: dict) -> PatientRecord:
         return PatientRecord(
             stable_patient_id=row["stable_patient_id"],
+            national_id=row["national_id"],
             name=row["name"],
             date_of_birth=row["date_of_birth"],
             known_conditions=json.loads(row["known_conditions"]),
@@ -121,6 +126,29 @@ class CRMRepository:
                     (stable_patient_id,),
                 )
                 row = cur.fetchone()
+            finally:
+                conn.close()
+        except psycopg.Error:
+            return FetchResult(FetchStatus.DB_ERROR)
+
+        if row is None:
+            return FetchResult(FetchStatus.NOT_FOUND)
+        return FetchResult(FetchStatus.FOUND, self._row_to_record(row))
+
+    def fetch_by_national_id(self, national_id: str) -> FetchResult:
+        """Resolve the id a patient carries into the internal one.
+
+        The single crossing point between the two identifiers, and the reason
+        intake never invents a `stable_patient_id`: it asks for one.
+        """
+        if self._down():
+            return FetchResult(FetchStatus.DB_ERROR)
+        try:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM patients WHERE national_id = %s", (national_id,)
+                ).fetchone()
             finally:
                 conn.close()
         except psycopg.Error:

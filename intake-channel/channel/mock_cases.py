@@ -1,7 +1,7 @@
 """Builds the four mock intake payloads used to demo the Intake Parser's four
 outcomes (SPECIFICATION.md — "Document intake & demo data").
 
-The nurse always supplies stable_patient_id by typing it in — the lookup
+The nurse always supplies national_id by typing it in — the lookup
 result only enriches what's shown (name, DOB if found); it never decides the
 submission's identity. A case is built the same way whether the lookup was
 found, not_found, or db_error — SPECIFICATION.md's continue-on-intake-only-
@@ -36,7 +36,7 @@ def _new_case_id() -> str:
 
 def build_case(
     lookup_result: PatientLookupResult,
-    stable_patient_id: str,
+    national_id: str,
     submission_type: SubmissionType,
 ) -> dict:
     """Build one of the four mock intake payloads.
@@ -50,7 +50,7 @@ def build_case(
         return {
             "case_id": case_id,
             "channel": "website",
-            "stable_patient_id": stable_patient_id,
+            "national_id": national_id,
             "nurse_proposed_acuity": 3,
             "chief_complaint": "chest tightness for 2 hours",
             "vitals": {"hr": 104, "bp": "148/92", "spo2": 95, "temp_c": 37.1},
@@ -64,7 +64,7 @@ def build_case(
         return {
             "case_id": case_id,
             "channel": "website",
-            "stable_patient_id": stable_patient_id,
+            "national_id": national_id,
             "chief_complaint": "chest tightness for 2 hours",
             "free_text": "Patient reports pressure in the chest, worse on exertion.",
         }
@@ -84,7 +84,7 @@ def build_case(
         return {
             "case_id": case_id,
             "channel": "website",
-            "stable_patient_id": stable_patient_id,
+            "national_id": national_id,
             "nurse_proposed_acuity": 5,
             "chief_complaint": "chest pain radiating to the left arm",
             "vitals": {"hr": 122, "bp": "162/98", "spo2": 94, "temp_c": 37.0},
@@ -95,7 +95,7 @@ def build_case(
         return {
             "case_id": case_id,
             "channel": "website",
-            "stable_patient_id": stable_patient_id,
+            "national_id": national_id,
             "nurse_proposed_acuity": 3,
             "chief_complaint": "mild discomfort",
             "vitals": {"hr": 78, "bp": "118/76", "spo2": 99, "temp_c": 36.8},

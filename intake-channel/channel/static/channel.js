@@ -42,7 +42,10 @@ lookupBtn.addEventListener("click", async () => {
 function renderLookupResult({ status, record }) {
   lookupResultEl.className = `status-${status}`;
   if (status === "found") {
-    lookupResultEl.textContent = `✓ ${record.name} · ${record.date_of_birth}`;
+    // The internal id is shown because the nurse will see it on the board; the
+    // national id they typed is never stored on the case (I11).
+    lookupResultEl.textContent =
+      `✓ ${record.name} · ${record.date_of_birth} · ${record.stable_patient_id}`;
   } else if (status === "not_found") {
     lookupResultEl.textContent = "⚠ New patient — no record found. Continuing is fine.";
   } else {
@@ -62,7 +65,7 @@ submitBtn.addEventListener("click", async () => {
     const res = await fetch("/submit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ stable_patient_id: id, submission_type: submissionType }),
+      body: JSON.stringify({ national_id: id, submission_type: submissionType }),
     });
     render(await res.json());
   } catch {

@@ -53,16 +53,16 @@ def offline(monkeypatch):
 
 
 def _crm(status: int = 200, body: dict | None = None):
-    return respx.get(f"{CRM_BASE_URL}/patients/P-1005").mock(
+    return respx.get(f"{CRM_BASE_URL}/patients/by-national-id/300000005").mock(
         return_value=httpx.Response(
             status, json=body or {"status": "found", "record": {"stable_patient_id": "P-1005"}}
         )
     )
 
 
-def _submit(kind: str, patient: str = "P-1005"):
+def _submit(kind: str, patient: str = "300000005"):
     return client.post(
-        "/submit", json={"stable_patient_id": patient, "submission_type": kind}
+        "/submit", json={"national_id": patient, "submission_type": kind}
     ).json()
 
 
@@ -73,7 +73,7 @@ def _submit(kind: str, patient: str = "P-1005"):
 def test_lookup_found_returns_200_with_status_found():
     _crm(200, {"status": "found", "record": {"stable_patient_id": "P-1005", "name": "David Friedman"}})
 
-    r = client.get("/lookup/P-1005")
+    r = client.get("/lookup/300000005")
 
     assert r.status_code == 200
     assert r.json()["status"] == "found"
@@ -85,11 +85,11 @@ def test_lookup_not_found_still_returns_200():
     """not_found is a normal outcome, not an HTTP error — the caller must not have
     to branch on status codes to render it.
     """
-    respx.get(f"{CRM_BASE_URL}/patients/P-9999").mock(
+    respx.get(f"{CRM_BASE_URL}/patients/by-national-id/999999999").mock(
         return_value=httpx.Response(404, json={"detail": "not_found"})
     )
 
-    r = client.get("/lookup/P-9999")
+    r = client.get("/lookup/999999999")
 
     assert r.status_code == 200
     assert r.json()["status"] == "not_found"
@@ -100,7 +100,7 @@ def test_lookup_not_found_still_returns_200():
 def test_lookup_db_error_still_returns_200():
     _crm(503, {"detail": "db_error"})
 
-    r = client.get("/lookup/P-1005")
+    r = client.get("/lookup/300000005")
 
     assert r.json()["status"] == "db_error"
 

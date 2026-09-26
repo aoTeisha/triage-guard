@@ -1,4 +1,5 @@
-"""Tests for channel.patient_lookup — the 200/404/503 to found/not_found/db_error mapping.
+"""Tests for channel.patient_lookup — the national-id lookup, and its
+200/404/503 to found/not_found/db_error mapping.
 
 Uses respx to mock the CRM stub over HTTP rather than requiring a live CRM
 process, so this suite runs standalone.
@@ -12,7 +13,7 @@ from channel.patient_lookup import CRM_BASE_URL, fetch_patient
 
 @respx.mock
 def test_found_returns_record():
-    respx.get(f"{CRM_BASE_URL}/patients/P-1001").mock(
+    respx.get(f"{CRM_BASE_URL}/patients/by-national-id/300000001").mock(
         return_value=httpx.Response(
             200,
             json={
@@ -26,7 +27,7 @@ def test_found_returns_record():
         )
     )
 
-    result = fetch_patient("P-1001")
+    result = fetch_patient("300000001")
 
     assert result.status == "found"
     assert result.record["name"] == "Alon Mizrahi"
@@ -34,11 +35,11 @@ def test_found_returns_record():
 
 @respx.mock
 def test_not_found_returns_no_record():
-    respx.get(f"{CRM_BASE_URL}/patients/P-9999").mock(
+    respx.get(f"{CRM_BASE_URL}/patients/by-national-id/999999999").mock(
         return_value=httpx.Response(404, json={"detail": "not_found"})
     )
 
-    result = fetch_patient("P-9999")
+    result = fetch_patient("999999999")
 
     assert result.status == "not_found"
     assert result.record is None
@@ -46,11 +47,11 @@ def test_not_found_returns_no_record():
 
 @respx.mock
 def test_db_error_returns_no_record():
-    respx.get(f"{CRM_BASE_URL}/patients/P-1001").mock(
+    respx.get(f"{CRM_BASE_URL}/patients/by-national-id/300000001").mock(
         return_value=httpx.Response(503, json={"detail": "db_error"})
     )
 
-    result = fetch_patient("P-1001")
+    result = fetch_patient("300000001")
 
     assert result.status == "db_error"
     assert result.record is None
@@ -63,11 +64,11 @@ def test_network_failure_maps_to_db_error():
     down" note — both are non-blocking, but this is specifically the
     db_error branch, not not_found.
     """
-    respx.get(f"{CRM_BASE_URL}/patients/P-1001").mock(
+    respx.get(f"{CRM_BASE_URL}/patients/by-national-id/300000001").mock(
         side_effect=httpx.ConnectError("connection refused")
     )
 
-    result = fetch_patient("P-1001")
+    result = fetch_patient("300000001")
 
     assert result.status == "db_error"
     assert result.record is None
@@ -75,10 +76,10 @@ def test_network_failure_maps_to_db_error():
 
 @respx.mock
 def test_unexpected_status_is_conservative_db_error():
-    respx.get(f"{CRM_BASE_URL}/patients/P-1001").mock(
+    respx.get(f"{CRM_BASE_URL}/patients/by-national-id/300000001").mock(
         return_value=httpx.Response(500, json={"detail": "unexpected"})
     )
 
-    result = fetch_patient("P-1001")
+    result = fetch_patient("300000001")
 
     assert result.status == "db_error"

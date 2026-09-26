@@ -13,7 +13,7 @@ values, or add cases, to drive the pipeline down different paths.
 DEMO_CASE_1 = {
     "case_id": "case-0001",
     "channel": "website",
-    "stable_patient_id": "300000001",
+    "national_id": "300000001",
     "nurse_proposed_acuity": 3,
     "chief_complaint": "chest tightness for 2 hours",
     "vitals": {"hr": 104, "bp": "148/92", "spo2": 95, "temp_c": 37.1},
@@ -23,7 +23,7 @@ DEMO_CASE_1 = {
 DEMO_CASE_2 = {
     "case_id": "case-0002",
     "channel": "website",
-    "stable_patient_id": "300000002",
+    "national_id": "300000002",
     # nurse_proposed_acuity + vitals deliberately absent
     "chief_complaint": "ankle pain after a fall",
     "free_text": "Twisted ankle stepping off a curb.",
@@ -38,7 +38,7 @@ DEMO_CASE_3 = {
 DEMO_CASE_4 = {
     "case_id": "case-0004",
     "channel": "website",
-    "stable_patient_id": "300000004",
+    "national_id": "300000004",
     "nurse_proposed_acuity": 4,
     "chief_complaint": "headache",
     "vitals": {"hr": 78, "bp": "120/80", "spo2": 99, "temp_c": 36.8},

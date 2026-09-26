@@ -38,6 +38,7 @@ class PatientRecord:
     known_conditions: list[str] = field(default_factory=list)
     prior_visits: list[PriorVisit] = field(default_factory=list)
     last_updated: Optional[str] = None      # ISO timestamp, set on write-back
+    national_id: Optional[str] = None       # identifier-class, like name and DOB
 
 
 class FetchStatus(str, Enum):

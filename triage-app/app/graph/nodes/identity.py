@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.crm_client import fetch_patient
+from app.crm_client import fetch_patient, fetch_patient_by_national_id
 from app.deterministic import audit
 from app.graph.nodes._shared import _bump
 from app.graph.state import TriageState
@@ -15,11 +15,19 @@ from app.verification import verify_patient_record
 
 
 def resolving_identity(state: TriageState) -> dict[str, Any]:
-    """CRM lookup by stable patient ID. Non-critical and fail-open: a DB outage
-    degrades to intake-only data rather than stopping the line.
+    """Trade the national id the nurse typed for the internal one the CRM holds.
+
+    The only crossing point between the two identifiers. Non-critical and
+    fail-open: a DB outage degrades to intake-only data rather than stopping the
+    line, and a patient the CRM has no record of continues as a new patient with
+    no internal id (no history, and no duplicate check to run).
     """
     try:
-        result = fetch_patient(state.stable_patient_id or "", timeout=1.0)
+        # First pass: trade the typed number for the internal id. Later passes (a
+        # re-file) have no national id left, so they refresh by the internal one.
+        result = (fetch_patient_by_national_id(state.national_id, timeout=1.0)
+                  if state.national_id
+                  else fetch_patient(state.stable_patient_id or "", timeout=1.0))
         status, record = result.status, result.record
     except Exception:
         status, record = "db_error", None
@@ -55,7 +63,7 @@ def resolving_identity(state: TriageState) -> dict[str, Any]:
         from app.runner import all_case_summaries
 
         duplicate = find_duplicate_active_case(
-            state.stable_patient_id, all_case_summaries(exclude_case_id=state.case_id)
+            record.get("stable_patient_id"), all_case_summaries(exclude_case_id=state.case_id)
         )
         if duplicate:
             return {
@@ -63,13 +71,21 @@ def resolving_identity(state: TriageState) -> dict[str, Any]:
                 "audit_log": [audit(state.case_id, State.INPUT_REJECTED, "notify_user",
                                     f"case already open: {duplicate}", Transition.DUPLICATE_CASE)],
             }
+    internal_id = ((record or {}).get("stable_patient_id") if found
+                   else None) or state.stable_patient_id
     return {
         "control_state": State.RESOLVING_IDENTITY.value,
         "crm_status": status,
+        "stable_patient_id": internal_id,
+        # The national id has served its one purpose. Keeping it would put an
+        # identifier in every checkpoint and audit record (I11).
+        "national_id": None,
+        "raw_payload": {k: v for k, v in state.raw_payload.items() if k != "national_id"},
         "patient_history": check.checked if found else None,
         "audit_log": [audit(state.case_id, State.RESOLVING_IDENTITY,
                             "fetch_patient_data",
-                            "record found" if found else "new patient, no history",
+                            f"record found, resolved to {internal_id}" if found
+                            else "new patient, no history",
                             Transition.CRM_FOUND if found else Transition.CRM_NEW)],
     }
 

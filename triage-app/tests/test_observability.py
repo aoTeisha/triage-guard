@@ -64,7 +64,7 @@ def test_trace_attributes_values_fit_langfuse_limits():
 
 
 def test_mask_redacts_identifiers_in_nested_payloads():
-    masked = obs._mask(data={"raw_payload": {"stable_patient_id": "300000001",
+    masked = obs._mask(data={"raw_payload": {"national_id": "300000001",
                                              "notes": ["call 0521234567"]}})
     assert "300000001" not in repr(masked)
     assert "0521234567" not in repr(masked)
@@ -128,7 +128,7 @@ def test_mask_redacts_inside_models_and_resume_commands():
 
     from app.graph.state import TriageState
 
-    state = TriageState(case_id="case-1", stable_patient_id="300000001",
+    state = TriageState(case_id="case-1", national_id="300000001",
                         raw_payload={"free_text": "ID 123456789"})
     resume = Command(resume={"chief_complaint": "call 0521234567"})
     masked = repr(obs._mask(data={"input": state, "resume": resume}))

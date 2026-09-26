@@ -36,6 +36,16 @@ class PatientLookupResult:
     record: Optional[dict] = None
 
 
+def fetch_patient_by_national_id(national_id: str, *, timeout: float = 5.0) -> PatientLookupResult:
+    """GET {CRM_BASE_URL}/patients/by-national-id/{id} — resolve the number the
+    patient carries into their internal one.
+
+    Same three outcomes as `fetch_patient`, and the same fail-open reading of
+    them: `not_found` is an unregistered patient, not an error.
+    """
+    return _lookup(f"{CRM_BASE_URL}/patients/by-national-id/{national_id}", timeout)
+
+
 def fetch_patient(stable_patient_id: str, *, timeout: float = 5.0) -> PatientLookupResult:
     """GET {CRM_BASE_URL}/patients/{id}, mapped to found / not_found / db_error.
 
@@ -43,22 +53,22 @@ def fetch_patient(stable_patient_id: str, *, timeout: float = 5.0) -> PatientLoo
     as db_error — from the nurse's point of view an unreachable CRM and a
     CRM returning 503 look the same: continue without history, flag it.
     """
-    url = f"{CRM_BASE_URL}/patients/{stable_patient_id}"
+    return _lookup(f"{CRM_BASE_URL}/patients/{stable_patient_id}", timeout)
+
+
+def _lookup(url: str, timeout: float) -> PatientLookupResult:
+    """One mapping from HTTP to the three CRM outcomes, shared by both lookups."""
     try:
         response = httpx.get(url, timeout=timeout)
     except httpx.HTTPError:
         return PatientLookupResult(status="db_error")
 
     if response.status_code == 200:
-        body = response.json()
-        return PatientLookupResult(status="found", record=body.get("record"))
+        return PatientLookupResult(status="found", record=response.json().get("record"))
     if response.status_code == 404:
         return PatientLookupResult(status="not_found")
-    if response.status_code == 503:
-        return PatientLookupResult(status="db_error")
-
-    # Unexpected status from the CRM contract — treat conservatively as
-    # db_error rather than crashing the intake flow on an unmapped code.
+    # 503, and any status outside the CRM contract: conservatively db_error
+    # rather than crashing the intake flow on an unmapped code.
     return PatientLookupResult(status="db_error")
 
 

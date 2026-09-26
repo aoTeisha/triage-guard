@@ -57,6 +57,10 @@ class TriageState(BaseModel):
     missing_fields: list[str] = Field(default_factory=list)
 
     # ---- Identity / history (held on the case only — never sent to the model) --
+    # Typed by the nurse, and only until `resolving_identity` trades it for the
+    # internal id below. Identifiers live in the CRM (I11), so it is dropped there.
+    national_id: Optional[str] = None
+    # Returned by the CRM, never typed. None for a patient it has no record of.
     stable_patient_id: Optional[str] = None
     patient_history: Optional[dict[str, Any]] = None
     crm_status: Optional[str] = None

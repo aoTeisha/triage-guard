@@ -28,7 +28,7 @@ from tests.conftest import transitions
 SURE_CASE = {
     "case_id": "case-conf",
     "channel": "website",
-    "stable_patient_id": "300000011",
+    "national_id": "300000011",
     "nurse_proposed_acuity": 2,
     "chief_complaint": "chest tightness",
     "vitals": {"hr": 101, "bp": "146/90", "spo2": 96, "temp_c": 37.0},

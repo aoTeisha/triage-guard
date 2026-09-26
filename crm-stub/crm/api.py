@@ -46,6 +46,21 @@ def health():
     return {"available": repo.is_available()}
 
 
+@app.get("/patients/by-national-id/{national_id}")
+def get_patient_by_national_id(national_id: str):
+    """Resolve the number a patient carries into their internal id.
+
+    Declared before `/patients/{stable_patient_id}`: FastAPI matches routes in
+    order, and the generic one would otherwise swallow this path.
+    """
+    result = repo.fetch_by_national_id(national_id)
+    if result.status is FetchStatus.DB_ERROR:
+        raise HTTPException(status_code=503, detail="db_error")
+    if result.status is FetchStatus.NOT_FOUND:
+        raise HTTPException(status_code=404, detail="not_found")
+    return {"status": "found", "record": asdict(result.record)}
+
+
 @app.get("/patients/{stable_patient_id}")
 def get_patient(stable_patient_id: str):
     """fetch_patient_data: found -> record, not_found -> 404, db_error -> 503.

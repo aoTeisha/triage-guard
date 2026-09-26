@@ -18,7 +18,7 @@ from tests.conftest import transitions
 GAP_FREE_CASE = {
     "case_id": "case-plain",
     "channel": "website",
-    "stable_patient_id": "300000010",
+    "national_id": "300000010",
     "nurse_proposed_acuity": 2,
     "chief_complaint": "ankle sprain",
     "vitals": {"hr": 78, "bp": "118/76", "spo2": 99, "temp_c": 36.7},
@@ -118,8 +118,19 @@ def test_a_failing_verdict_never_reaches_monitoring_unattended(run, monkeypatch)
 # ---- AF_DB: CRM outage degrades, it does not stop the line ----------------
 
 
-def test_a_crm_outage_degrades_and_continues(run):
-    """The stub is not running in the test environment, which is the outage."""
+def _crm_unreachable(monkeypatch):
+    """Force the outage instead of relying on nothing listening on the CRM port.
+
+    These two tests used to pass only while the stub was down, so they went green
+    for the wrong reason the moment a developer started it.
+    """
+    from app import crm_client
+
+    monkeypatch.setattr(crm_client, "CRM_BASE_URL", "http://127.0.0.1:1")
+
+
+def test_a_crm_outage_degrades_and_continues(run, monkeypatch):
+    _crm_unreachable(monkeypatch)
     state, _, _ = run(DEMO_CASES["clean"])
 
     assert "crm" in state["degraded"]
@@ -129,7 +140,8 @@ def test_a_crm_outage_degrades_and_continues(run):
     assert state["control_state"] == State.MONITORING.value
 
 
-def test_a_degraded_case_carries_no_history_into_the_payload(run):
+def test_a_degraded_case_carries_no_history_into_the_payload(run, monkeypatch):
+    _crm_unreachable(monkeypatch)
     state, _, _ = run(DEMO_CASES["clean"])
     assert "history" not in state["redacted_payload"]
 
