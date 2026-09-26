@@ -305,6 +305,7 @@ def test_handle_refuses_when_prolog_is_unavailable(conn, graph, run, monkeypatch
 def test_dispatch_is_denied_when_opa_is_unavailable(conn, graph, run, monkeypatch):
     """Fail-closed: no engine, no resume. The case stays exactly where it was."""
     timer = _reach_monitoring(conn, graph, run)
+    monkeypatch.delenv("OPA_URL", raising=False)      # no sidecar either: nothing can answer
     monkeypatch.setenv("OPA_BIN", "/nonexistent/opa")
 
     assert fire.dispatch(conn, timer, graph=graph) == "FAILED"
@@ -318,6 +319,7 @@ def test_dispatch_is_denied_when_opa_is_unavailable(conn, graph, run, monkeypatc
 
 def test_notify_is_denied_when_opa_is_unavailable(conn, graph, run, monkeypatch):
     timer = _gate_timer(conn, graph, run)
+    monkeypatch.delenv("OPA_URL", raising=False)      # no sidecar either: nothing can answer
     monkeypatch.setenv("OPA_BIN", "/nonexistent/opa")
 
     assert fire.notify(conn, timer, graph=graph) == "FAILED"

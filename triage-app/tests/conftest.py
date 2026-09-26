@@ -36,6 +36,44 @@ def _drop_db(dsn: str) -> None:
         admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
 
 
+@pytest.fixture(scope="session", autouse=True)
+def opa_sidecar():
+    """One `opa run --server` for the whole suite, so each policy evaluation is
+    an HTTP call (~5 ms) rather than a process spawn (~250 ms on Windows).
+    Without the binary the suite falls back to subprocess and fails the same
+    way it always did. Tests that prove the deny path unset OPA_URL themselves.
+    """
+    import shutil
+    import subprocess
+    import time
+
+    import httpx
+
+    from app.symbolic import opa
+
+    binary = shutil.which(os.environ.get("OPA_BIN", "opa"))
+    if binary is None:
+        yield
+        return
+    addr = "127.0.0.1:18181"
+    proc = subprocess.Popen([binary, "run", "--server", "--addr", addr, str(opa.POLICY.parent)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    url = f"http://{addr}"
+    for _ in range(50):
+        try:
+            if httpx.get(f"{url}/health", timeout=0.5).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    os.environ["OPA_URL"] = url
+    try:
+        yield
+    finally:
+        os.environ.pop("OPA_URL", None)
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
     """Force mock mode, silence tracing, and isolate the shared timer store.

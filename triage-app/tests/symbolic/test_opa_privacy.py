@@ -134,6 +134,7 @@ def test_the_verifier_still_scans_inside_allowed_values():
 
 
 def test_a_missing_engine_is_a_refusal(monkeypatch):
+    monkeypatch.delenv("OPA_URL", raising=False)      # no sidecar either: nothing can answer
     monkeypatch.setenv("OPA_BIN", "/nonexistent/opa")
     ok, why = verify_no_identifiers(CLEAN)
     assert not ok

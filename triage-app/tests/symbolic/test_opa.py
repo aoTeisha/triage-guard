@@ -80,6 +80,7 @@ def test_charge_roles_match_prolog_charge_role():
 
 
 def test_a_missing_engine_is_a_deny_not_an_exception(monkeypatch):
+    monkeypatch.delenv("OPA_URL", raising=False)      # no sidecar either: nothing can answer
     monkeypatch.setenv("OPA_BIN", "/nonexistent/opa")
     decision = opa.evaluate({"action": "release", "reason": "discharge", "actor_role": "charge_nurse"})
     assert decision["allow"] is False

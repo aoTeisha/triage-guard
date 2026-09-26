@@ -58,3 +58,14 @@ OPA — the Linux static binary above will not run:
 ```bash
 curl -sSL -o ~/.local/bin/opa.exe https://openpolicyagent.org/downloads/latest/opa_windows_amd64.exe
 ```
+
+By default every policy decision spawns `opa eval` (~250 ms on Windows). For the
+demo and the sweeper, run OPA as a server once and point the apps at it — each
+decision becomes a ~5 ms HTTP call:
+
+```bash
+uv run opa-sidecar                       # opa run --server on 127.0.0.1:8181, both policies
+OPA_URL=http://127.0.0.1:8181 uv run triage-guard
+```
+
+The test suite starts its own sidecar (`tests/conftest.py::opa_sidecar`).
