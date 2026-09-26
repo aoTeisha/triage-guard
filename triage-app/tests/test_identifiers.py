@@ -78,18 +78,36 @@ def test_the_verifier_still_halts_on_an_identifier_key():
     assert "phone" in why
 
 
-def test_the_payload_builder_redacts_before_the_verifier_sees_it():
-    fields = {"chief_complaint": "patient 123456789 chest pain", "national_id": "300000001"}
-    payload = build_model_payload("c1", fields, {"visits": [{"note": "dana@example.com"}]})
-    assert payload["chief_complaint"] == "patient [REDACTED_ID] chest pain"
-    assert payload["history"] == {"visits": [{"note": "[REDACTED_EMAIL]"}]}
-    assert "national_id" not in payload
+def test_the_payload_builder_keeps_only_what_the_policy_names():
+    """Built from the allow-list: the nurse's prose, her proposed level, the
+    routing metadata and every identifier stay on the case record. The prior
+    visits' notes, which are prose from the CRM, are dropped too.
+    """
+    fields = dict(DEMO_CASES["clean"], free_text="patient 123456789, call 0521234567")
+    history = {"known_conditions": ["COPD"], "last_updated": "x",
+               "prior_visits": [{"date": "2025-01-01", "acuity": 2, "notes": "dana@example.com"}]}
+    payload = build_model_payload("c1", fields, history, "over_18_years")
+
+    assert sorted(payload) == ["age_band", "case_id", "chief_complaint", "history", "vitals"]
+    assert payload["history"] == {"known_conditions": ["copd"],
+                                  "prior_visits": [{"date": "2025-01-01", "acuity": 2}]}
     assert verify_no_identifiers(payload)[0]
 
 
-def test_a_case_with_an_id_in_its_complaint_still_reaches_the_queue(run):
+def test_an_id_typed_into_a_history_label_is_redacted_before_verification():
+    payload = build_model_payload("c1", DEMO_CASES["clean"],
+                                  {"known_conditions": ["copd, id 123456789"], "prior_visits": []})
+    assert payload["history"]["known_conditions"] == ["copd, id [REDACTED_ID]"]
+
+
+def test_an_id_typed_into_the_complaint_never_reaches_the_model(run):
+    """The complaint is a code now (I12). Prose with an id in it is an unusable
+    value: the case waits for the nurse at the intake fix pause, and no model
+    payload is ever built from it.
+    """
     case = dict(DEMO_CASES["clean"], case_id="case-id-in-text",
                 chief_complaint="chest tightness, patient id 123456789")
-    state, _, _ = run(case)
-    assert state["redacted_payload"]["chief_complaint"] == "chest tightness, patient id [REDACTED_ID]"
-    assert state["control_state"] == "monitoring"
+    state, pending, _ = run(case)
+    assert pending["intake_fix_pending"] is True
+    assert "chief_complaint" in state["missing_fields"]
+    assert not state.get("redacted_payload")

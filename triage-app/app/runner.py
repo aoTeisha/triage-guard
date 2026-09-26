@@ -220,6 +220,21 @@ def history(case_id: str) -> list[dict[str, Any]]:
     return [s.values for s in reversed(snapshots)]
 
 
+def case_history_check(case_id: str) -> dict[str, Any]:
+    """I2 and I21 over a case's whole checkpoint history, for a detail view:
+    `{"audit_log_append_only": [ok, why], "order_key_follows_acuity": [ok, why]}`.
+
+    The runtime guards decide each step; this re-reads what was persisted and
+    says whether the two rules only the history can answer held anyway — the
+    same stance as `verification.check_trace`, which reads the audit log.
+    """
+    # Imported here: app.symbolic.datalog is engine code, and this module is
+    # imported by every service before any engine is needed.
+    from app.symbolic.datalog import history_invariants
+
+    return {name: list(verdict) for name, verdict in history_invariants(history(case_id)).items()}
+
+
 def all_case_ids() -> list[str]:
     """Every case_id (LangGraph thread_id) that has at least one checkpoint.
 

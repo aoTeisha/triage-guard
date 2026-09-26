@@ -16,7 +16,7 @@ ALLOWED = {
     "case_id", "patient_id", "patient_label", "complaint", "status", "acuity", "bucket",
     "acuity_source", "nurse_proposed_acuity", "system_proposed_acuity",
     "arrival_time", "waited_min", "order_key", "flags", "degraded",
-    "gate_pending",
+    "gate_pending", "danger_zone_vitals",
 }
 
 # Identifier-class or model-facing fields. None of these may ever appear on a card.
@@ -34,7 +34,7 @@ def test_no_identifier_or_payload_field_reaches_the_card():
     state = make_state("c", 3, T0)
     state["patient_history"] = {"name": "Ada L.", "date_of_birth": "1950-01-01"}
     state["raw_payload"] = {"free_text": "chest pain", "name": "Ada L."}
-    state["redacted_payload"] = {"chief_complaint": "chest pain"}
+    state["redacted_payload"] = {"chief_complaint": "chest_pain"}
 
     dumped = card_from_state(state).model_dump()
     assert FORBIDDEN.isdisjoint(dumped)
@@ -46,10 +46,10 @@ def test_the_complaint_headline_comes_from_the_redacted_payload():
     one that already passed `verify_no_identifiers`.
     """
     state = make_state("c", 3, T0)
-    state["redacted_payload"] = {"chief_complaint": "chest tightness for 2 hours"}
+    state["redacted_payload"] = {"chief_complaint": "chest_pain"}
     state["parsed_fields"] = {"chief_complaint": "UNREDACTED", "name": "Ada L."}
 
-    assert card_from_state(state).complaint == "chest tightness for 2 hours"
+    assert card_from_state(state).complaint == "chest pain"
 
 
 def test_a_case_with_no_redacted_payload_has_no_complaint():

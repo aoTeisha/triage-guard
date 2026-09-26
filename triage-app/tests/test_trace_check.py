@@ -252,7 +252,7 @@ def test_an_exhausted_correction_loop_handed_to_a_senior_passes(graph, run, monk
 def test_a_refiled_case_moved_after_its_new_triage_passes(graph, run):
     _, _, thread = run(DEMO_CASES["clean"])
     _resume(graph, thread, {"event": "REASSESSMENT_TIMEOUT", "fire_id": "f1"})
-    _resume(graph, thread, {"nurse_proposed_acuity": 2, "chief_complaint": "worse chest pain",
+    _resume(graph, thread, {"nurse_proposed_acuity": 2, "chief_complaint": "chest_pain",
                             "vitals": {"hr": 118, "bp": "150/95", "spo2": 94, "temp_c": 37.4}})
     state = _resume(graph, thread, {"event": "MOVE_REQUESTED", "actor_role": "charge_nurse"})
     assert state["clinical_status"] == "treatment_started"

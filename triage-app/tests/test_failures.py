@@ -20,7 +20,7 @@ GAP_FREE_CASE = {
     "channel": "website",
     "national_id": "300000010",
     "nurse_proposed_acuity": 2,
-    "chief_complaint": "ankle sprain",
+    "chief_complaint": "limb_injury",
     "vitals": {"hr": 78, "bp": "118/76", "spo2": 99, "temp_c": 36.7},
     "free_text": "Rolled ankle on the stairs.",
 }
@@ -53,11 +53,20 @@ def test_an_unknown_agent_fails_closed():
 # ---- V_HALT_PII: structural, never retried -------------------------------
 
 
+def _leak(monkeypatch):
+    """Let one identifier survive the payload build. The builder is an allow-list
+    now, so a leak cannot be made by dropping nothing; it has to be smuggled in
+    after the build, which is what a bug in the builder would look like.
+    Returns the real builder so a test can put it back (the technician's fix)."""
+    real = normalizer.build_model_payload
+    monkeypatch.setattr(normalizer, "build_model_payload",
+                        lambda *a, **k: {**real(*a, **k), "name": "Ada L."})
+    return real
+
+
 def test_an_identifier_leak_halts_the_case(run, monkeypatch):
     """The redaction step is the one place the line stops rather than degrades."""
-    monkeypatch.setattr(
-        normalizer, "drop_identifiers", lambda fields: dict(fields)   # drop nothing
-    )
+    _leak(monkeypatch)
 
     state, _, _ = run(DEMO_CASES["clean"])
 
@@ -68,7 +77,7 @@ def test_an_identifier_leak_halts_the_case(run, monkeypatch):
 
 def test_a_leaked_payload_is_never_written_to_state(run, monkeypatch):
     """'A malformed or unsafe output is never written to state.'"""
-    monkeypatch.setattr(normalizer, "drop_identifiers", lambda fields: dict(fields))
+    _leak(monkeypatch)
 
     state, _, _ = run(DEMO_CASES["clean"])
 
@@ -77,7 +86,7 @@ def test_a_leaked_payload_is_never_written_to_state(run, monkeypatch):
 
 
 def test_a_halted_case_never_reaches_the_queue(run, monkeypatch):
-    monkeypatch.setattr(normalizer, "drop_identifiers", lambda fields: dict(fields))
+    _leak(monkeypatch)
 
     state, _, _ = run(DEMO_CASES["clean"])
 
@@ -156,12 +165,11 @@ def test_a_halted_case_waits_for_recovery_then_resumes_at_redaction(graph, run, 
 
     from app.runner import config_for, hydrate
 
-    real_drop = normalizer.drop_identifiers
-    monkeypatch.setattr(normalizer, "drop_identifiers", lambda fields: dict(fields))
+    real_build = _leak(monkeypatch)
     _, pending, thread = run(DEMO_CASES["clean"])
     assert pending["recovery_pending"] is True
 
-    monkeypatch.setattr(normalizer, "drop_identifiers", real_drop)  # the technician's fix
+    monkeypatch.setattr(normalizer, "build_model_payload", real_build)  # the technician's fix
     result = hydrate(graph.invoke(Command(resume={"event": "AGENT_RECOVERED"}),
                                   config_for(thread)))
 

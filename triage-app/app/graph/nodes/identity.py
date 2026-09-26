@@ -6,6 +6,7 @@ from typing import Any
 
 from app.crm_client import fetch_patient, fetch_patient_by_national_id
 from app.deterministic import audit
+from app.esi import age_band
 from app.graph.nodes._shared import _bump
 from app.graph.state import TriageState
 from app.labels import Transition
@@ -73,15 +74,28 @@ def resolving_identity(state: TriageState) -> dict[str, Any]:
             }
     internal_id = ((record or {}).get("stable_patient_id") if found
                    else None) or state.stable_patient_id
+    # What enters the case from the record: the internal id, the history with
+    # name and date of birth stripped, and the age band derived from that date
+    # (SPECIFICATION.md § Identity resolution). The date itself does not.
+    history = ({k: v for k, v in (record or {}).items()
+                if k not in ("name", "date_of_birth", "national_id", "stable_patient_id")}
+               if found else None)
+    band = None
+    if found and (record or {}).get("date_of_birth"):
+        try:
+            band = age_band(record["date_of_birth"])
+        except ValueError:
+            band = None      # an unreadable date: no band, and decision point D will say so
     return {
         "control_state": State.RESOLVING_IDENTITY.value,
         "crm_status": status,
         "stable_patient_id": internal_id,
+        "age_band": band,
         # The national id has served its one purpose. Keeping it would put an
         # identifier in every checkpoint and audit record (I11).
         "national_id": None,
         "raw_payload": {k: v for k, v in state.raw_payload.items() if k != "national_id"},
-        "patient_history": check.checked if found else None,
+        "patient_history": history,
         "audit_log": [audit(state.case_id, State.RESOLVING_IDENTITY,
                             "fetch_patient_data",
                             f"record found, resolved to {internal_id}" if found

@@ -55,6 +55,13 @@ def offline(monkeypatch):
     dsn = _throwaway_db()
     monkeypatch.setenv("TRIAGE_CHECKPOINT_DB", dsn)
     timers.connection.cache_clear()
+    # A release writes the visit to the CRM (I17). Lookups against the live stub
+    # are read-only and tolerated; writes are not — a test suite once filled
+    # P-1001's history with half-triaged visits and halted every later case at
+    # the privacy policy. Tests that want the outcome to differ patch this again.
+    from app import crm_client
+
+    monkeypatch.setattr(crm_client, "patch_patient", lambda *a, **k: "ok")
     yield
     timers.connection.cache_clear()
     _drop_db(dsn)

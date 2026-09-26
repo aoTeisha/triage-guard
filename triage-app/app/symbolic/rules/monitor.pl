@@ -44,8 +44,11 @@ action(T, dispatch)    :- timer(T, reassessment, S), \+ unacknowledged(S).
 action(T, cancel)      :- timer(T, K, _), reminder_kind(K), \+ pause_active(T).
 action(T, fail_budget) :- timer(T, K, _), reminder_kind(K), pause_active(T), budget_spent(T).
 action(T, notify)      :- timer(T, K, _), reminder_kind(K), pause_active(T), \+ budget_spent(T).
+%% The CRM write-back (I17) runs for a released case: nothing to pause on,
+%% nothing to acknowledge, retried until the CRM takes it.
+action(T, writeback)   :- timer(T, crm_writeback, _).
 %% An unrecognized kind has no pause to check, so it is cancelled rather than delivered blind.
-action(T, cancel)      :- timer(T, K, _), K \== reassessment, \+ reminder_kind(K).
+action(T, cancel)      :- timer(T, K, _), K \== reassessment, K \== crm_writeback, \+ reminder_kind(K).
 
 %% denial(Event, Timer, Why): the explanation behind every blocked event.
 denial(dispatch, T, blind_redispatch_from_unknown) :- timer(T, _, S), unacknowledged(S).

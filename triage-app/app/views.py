@@ -93,8 +93,10 @@ class CaseCard(BaseModel):
     patient_label: str = "Unknown"
     # What the case is actually about. Read from the *redacted* payload — the one
     # that already passed `verify_no_identifiers` — so the headline on a card is
-    # clinical, never identifying.
+    # clinical, never identifying. A code from the fixed set, shown as words.
     complaint: str = ""
+    # ESI decision point D, exactly as computed. Shown, never acted on by code.
+    danger_zone_vitals: list[str] = []
     status: str
     acuity: Optional[int] = None
     bucket: Optional[str] = None
@@ -169,7 +171,8 @@ def card_from_state(
         case_id=state.get("case_id") or "",
         patient_id=state.get("stable_patient_id"),
         patient_label=PATIENT_LABELS.get(state.get("crm_status") or "", "Unknown"),
-        complaint=(state.get("redacted_payload") or {}).get("chief_complaint") or "",
+        complaint=((state.get("redacted_payload") or {}).get("chief_complaint") or "").replace("_", " "),
+        danger_zone_vitals=list(state.get("danger_zone_vitals") or []),
         status=status,
         acuity=state.get("acuity"),
         bucket=getattr(state.get("acuity_bucket"), "value", state.get("acuity_bucket")),

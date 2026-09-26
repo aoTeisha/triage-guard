@@ -268,6 +268,13 @@ function renderCard(card, thresholds) {
       `ESI ${card.acuity} · ${card.bucket}`);
     chip.title = `acuity decided by: ${SOURCE_LABELS[card.acuity_source] || card.acuity_source}`;
     chips.append(chip, el("span", "chip", SOURCE_LABELS[card.acuity_source] || card.acuity_source));
+  }
+  // ESI decision point D: shown exactly as computed, and it changes no level —
+  // the nurse and the classifier weigh it (SPECIFICATION.md § Safety invariants).
+  if (card.danger_zone_vitals && card.danger_zone_vitals.length) {
+    const danger = el("span", "chip danger", `vitals: ${card.danger_zone_vitals.join(", ")}`);
+    danger.title = "outside the ESI danger-zone limits for this age band — annotation only";
+    chips.append(danger);
   } else {
     chips.append(el("span", "chip", "not yet triaged"));
   }
@@ -285,7 +292,12 @@ function renderCard(card, thresholds) {
   return node;
 }
 
+// The complaint vocabulary, from /api/board. Served rather than copied so the
+// re-file form cannot drift from what intake accepts.
+let chiefComplaints = [];
+
 function renderBoard(data) {
+  chiefComplaints = data.chief_complaints || chiefComplaints;
   const main = document.getElementById("columns");
   const byStatus = {};
   data.columns.forEach((c) => (byStatus[c] = []));
@@ -559,9 +571,16 @@ function refilePanel(caseId) {
     acuity.append(opt);
   });
 
-  const complaint = el("input");
-  complaint.type = "text";
-  complaint.placeholder = "chief complaint";
+  // A code from the fixed set, never typed prose (I12).
+  const complaint = el("select");
+  const complaintPlaceholder = el("option", null, "select chief complaint");
+  complaintPlaceholder.value = "";
+  complaint.append(complaintPlaceholder);
+  chiefComplaints.forEach((code) => {
+    const opt = el("option", null, code.replace(/_/g, " "));
+    opt.value = code;
+    complaint.append(opt);
+  });
 
   const hr = el("input"); hr.type = "number"; hr.placeholder = "HR";
   const bp = el("input"); bp.type = "text"; bp.placeholder = "BP (e.g. 120/80)";

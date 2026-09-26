@@ -21,7 +21,7 @@ def redacting_routing(state: TriageState) -> dict[str, Any]:
     never retried.
     """
     payload = normalizer.build_model_payload(
-        state.case_id, state.parsed_fields, state.patient_history,
+        state.case_id, state.parsed_fields, state.patient_history, state.age_band,
     )
 
     check = verify_redacted_payload(payload)

@@ -92,9 +92,28 @@ deny_reasons contains sprintf("release refused: role %q is not a charge role", [
 	not input.actor_role in charge_roles
 }
 
+# --- writeback: a released case's visit reaches the CRM (I17) ---------------
+# Only a closed case has a visit to write: the acuity is settled and the
+# release signed. Anything earlier would write a story that is still changing.
+allow if {
+	input.action == "writeback"
+	input.case.control_state == "case_closed"
+	input.case.stable_patient_id
+}
+
+deny_reasons contains "writeback refused: case is not closed" if {
+	input.action == "writeback"
+	input.case.control_state != "case_closed"
+}
+
+deny_reasons contains "writeback refused: no CRM record for this patient" if {
+	input.action == "writeback"
+	not input.case.stable_patient_id
+}
+
 # --- anything else ----------------------------------------------------------
 deny_reasons contains "unknown_action" if {
-	not input.action in {"dispatch", "notify", "move", "release"}
+	not input.action in {"dispatch", "notify", "move", "release", "writeback"}
 }
 
 decision := {"allow": allow, "deny_reasons": deny_reasons}

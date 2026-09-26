@@ -98,8 +98,12 @@ def test_no_identifier_reaches_the_model_payload(run):
     payload = state["redacted_payload"]
 
     assert payload["case_id"] == "case-0001"
-    for identifier in ("name", "stable_patient_id", "date_of_birth", "dob", "phone"):
+    for identifier in ("name", "national_id", "stable_patient_id", "date_of_birth", "dob", "phone"):
         assert identifier not in payload
+    # I12's other half, and I4's independence: no prose, and not the nurse's answer.
+    for not_for_the_model in ("free_text", "nurse_proposed_acuity", "channel"):
+        assert not_for_the_model not in payload
+    assert payload["chief_complaint"] == "chest_pain"
 
 
 def test_every_audit_record_carries_case_and_state(run):

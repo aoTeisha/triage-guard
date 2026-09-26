@@ -11,7 +11,7 @@ CLEAN = {
     "channel": "website",
     "national_id": "300000005",
     "nurse_proposed_acuity": 3,
-    "chief_complaint": "chest tightness for 2 hours",
+    "chief_complaint": "chest_pain",
     "vitals": {"hr": 104, "bp": "148/92", "spo2": 95, "temp_c": 37.1},
     "free_text": "Patient reports pressure in the chest, worse on exertion.",
 }
@@ -96,6 +96,18 @@ def test_an_acuity_outside_the_esi_levels_is_unusable(value):
 @pytest.mark.parametrize("value", [1, 2, 3, 4, 5])
 def test_every_real_esi_level_is_usable(value):
     assert guards.unusable_fields({**CLEAN, "nurse_proposed_acuity": value}) == []
+
+
+@pytest.mark.parametrize("code", guards.CHIEF_COMPLAINTS)
+def test_every_complaint_code_is_usable(code):
+    assert guards.unusable_fields({**CLEAN, "chief_complaint": code}) == []
+
+
+def test_a_complaint_that_is_not_a_code_is_unusable():
+    """Free text typed here would be refused by the privacy policy three nodes
+    later (I12); refusing it at the door sends it back to the nurse instead."""
+    assert guards.unusable_fields({**CLEAN, "chief_complaint": "chest tightness for 2 hours"}) \
+        == ["chief_complaint"]
 
 
 def test_an_unusable_acuity_goes_back_to_the_nurse_not_to_rejection():

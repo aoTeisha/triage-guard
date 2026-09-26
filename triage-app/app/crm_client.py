@@ -72,6 +72,19 @@ def _lookup(url: str, timeout: float) -> PatientLookupResult:
     return PatientLookupResult(status="db_error")
 
 
+def visit_record(values: dict[str, Any]) -> dict[str, Any]:
+    """What one visit leaves in the CRM (I17): when, how acute, and the
+    complaint code as words. No identifiers — they never left the CRM — and no
+    prose. Shared by the release step (the first attempt) and the sweeper's
+    retry, so the two can never write different stories.
+    """
+    released = values.get("released_at") or values.get("arrival_time") or ""
+    complaint = (values.get("redacted_payload") or {}).get("chief_complaint") or ""
+    return {"date": str(released)[:10],
+            "acuity": values.get("acuity"),
+            "notes": str(complaint).replace("_", " ")}
+
+
 def patch_patient(
     stable_patient_id: str, visit: dict, *, timeout: float = 5.0
 ) -> Literal["ok", "db_error"]:

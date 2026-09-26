@@ -33,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import app.runner as runner
-from app.runner import config_for, resume_case, snapshot, start_case
+from app.runner import case_history_check, config_for, resume_case, snapshot, start_case
 from app.guards import ACUITY_LEVELS, NURSE_SUPPLIED_FIELDS, unusable_fields
 from app.states import State
 from app.views import case_view as _view
@@ -179,6 +179,9 @@ def reassess(case_id: str, body: ReassessmentSubmission):
         raise HTTPException(status_code=404, detail=f"no case {case_id}")
     if values.get("control_state") != State.REASSESSMENT_REQUIRED.value:
         raise HTTPException(status_code=409, detail="case is not awaiting a reassessment re-file")
+    unusable = unusable_fields(body.model_dump())
+    if unusable:
+        raise HTTPException(status_code=422, detail=f"values outside their allowed set: {unusable}")
 
     return _answer_pause(case_id, body.model_dump())
 
@@ -220,11 +223,12 @@ def recover(case_id: str):
 
 @app.get("/case/{case_id}")
 def case(case_id: str):
-    """Current persisted state for a case. Reads the checkpoint, runs nothing."""
+    """Current persisted state for a case. Reads the checkpoint, runs nothing.
+    `history_safety` is I2 and I21 re-read over every checkpoint (`runner.case_history_check`)."""
     values = snapshot(case_id)
     if not values:
         raise HTTPException(status_code=404, detail=f"no case {case_id}")
-    return _view(values, None)
+    return _view(values, None) | {"history_safety": case_history_check(case_id)}
 
 
 def run() -> None:

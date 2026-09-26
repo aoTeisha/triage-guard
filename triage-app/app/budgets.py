@@ -182,3 +182,8 @@ BOARD_RED_AFTER_MINUTES: dict[str, int] = {
     "emergent": 15,
     "queued": 60,
 }
+
+# I17: a visit that could not reach the CRM at release is retried on this
+# cadence until it does. A placeholder like the others; it only needs to be
+# shorter than anyone's patience for a missing visit in the record.
+CRM_WRITEBACK_RETRY_MINUTES: int = 5

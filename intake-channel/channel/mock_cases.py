@@ -52,7 +52,7 @@ def build_case(
             "channel": "website",
             "national_id": national_id,
             "nurse_proposed_acuity": 3,
-            "chief_complaint": "chest tightness for 2 hours",
+            "chief_complaint": "chest_pain",
             "vitals": {"hr": 104, "bp": "148/92", "spo2": 95, "temp_c": 37.1},
             "free_text": "Patient reports pressure in the chest, worse on exertion.",
         }
@@ -65,7 +65,7 @@ def build_case(
             "case_id": case_id,
             "channel": "website",
             "national_id": national_id,
-            "chief_complaint": "chest tightness for 2 hours",
+            "chief_complaint": "chest_pain",
             "free_text": "Patient reports pressure in the chest, worse on exertion.",
         }
 
@@ -86,7 +86,7 @@ def build_case(
             "channel": "website",
             "national_id": national_id,
             "nurse_proposed_acuity": 5,
-            "chief_complaint": "chest pain radiating to the left arm",
+            "chief_complaint": "chest_pain",
             "vitals": {"hr": 122, "bp": "162/98", "spo2": 94, "temp_c": 37.0},
             "free_text": "Sudden crushing chest pain while climbing stairs.",
         }
@@ -97,7 +97,7 @@ def build_case(
             "channel": "website",
             "national_id": national_id,
             "nurse_proposed_acuity": 3,
-            "chief_complaint": "mild discomfort",
+            "chief_complaint": "abdominal_pain",
             "vitals": {"hr": 78, "bp": "118/76", "spo2": 99, "temp_c": 36.8},
             "free_text": _INJECTION_FREE_TEXT,
         }

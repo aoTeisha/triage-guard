@@ -133,25 +133,27 @@ def audit_denial(case_id: str, control_state: State, why: str,
 
 
 # ---- symbolic-layer predicates ---------------------------------------------
-# `verify_no_identifiers` is plain Python (key blocklist + value scan), not yet
-# an engine (identifier handling is outside the monitor's scope); the three guards
-# below it are answered by the real engines in `app.symbolic`.
+# All four are answered by the real engines in `app.symbolic`.
 
 
 def verify_no_identifiers(payload: dict) -> tuple[bool, str]:
-    """OPA no-identifiers invariant: no identifier key, and no identifier
-    written inside any value, at any depth.
+    """What the model may see (I11, I12), decided by OPA over
+    `app/symbolic/policy/privacy.rego`: only approved fields, each a closed value,
+    no identifier key at any depth. Then the regex scan for an identifier typed
+    *inside* an allowed value, which Rego's RE2 cannot express.
 
     The payload builder already redacted values, so a hit here means redaction
     missed something: a structural violation, not retryable, halts the case
-    (V_HALT_PII).
+    (V_HALT_PII). An engine that cannot answer is a halt too, never a pass.
     """
-    banned = {"name", "national_id", "stable_patient_id", "date_of_birth", "dob", "phone"}
-    leaked = sorted(banned & set(payload))
+    gate = opa.evaluate({"payload": payload}, policy=opa.PRIVACY_POLICY, query=opa.PRIVACY_QUERY)
+    leaked = list(gate["deny_reasons"])
+    if not gate["allow"] and not leaked:
+        leaked.append("the privacy policy did not allow the payload (no case_id?)")
     leaked += [f"{kind} in {path}" for path, kind in find_identifiers(payload)]
     if leaked:
-        return False, f"identifier leaked into redacted payload: {', '.join(leaked)}"
-    return True, "no identifiers in model input"
+        return False, f"payload refused for the model: {'; '.join(leaked)}"
+    return True, "payload approved for the model"
 
 
 def move_authorized(

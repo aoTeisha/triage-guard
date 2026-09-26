@@ -62,7 +62,12 @@ class TriageState(BaseModel):
     national_id: Optional[str] = None
     # Returned by the CRM, never typed. None for a patient it has no record of.
     stable_patient_id: Optional[str] = None
+    # The CRM's history with name and date of birth already stripped: what the
+    # spec says enters the case, and nothing identifier-class (I11).
     patient_history: Optional[dict[str, Any]] = None
+    # Derived from the date of birth at identity resolution and the only age fact
+    # the case holds. A seven-way bucket identifies nobody; a birth date does.
+    age_band: Optional[str] = None
     crm_status: Optional[str] = None
 
     # ---- The redacted payload actually sent to the acuity-classifying model ----
@@ -72,6 +77,9 @@ class TriageState(BaseModel):
     nurse_proposed_acuity: Optional[int] = None
     system_proposed_acuity: Optional[int] = None
     confidence: Optional[float] = None
+    # ESI decision point D, computed exactly against the age-banded table. An
+    # annotation for the card and the audit log; it never changes a level.
+    danger_zone_vitals: list[str] = Field(default_factory=list)
     acuity: Optional[int] = None            # final, settled acuity only
     acuity_gap: Optional[int] = None
     acuity_source: Optional[AcuitySource] = None

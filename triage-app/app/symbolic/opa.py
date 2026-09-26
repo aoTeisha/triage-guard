@@ -1,7 +1,11 @@
-"""The OPA runtime gate: `opa eval` over `policy/monitor.rego`, called right
-before a side effect happens (resuming a case, sending a reminder, moving or
-releasing a patient). Fail-closed by construction: anything that stops the
-engine from proving `allow` is a deny with a reason, never an exception.
+"""The OPA runtime gate: `opa eval` over a Rego policy, called right before
+something irreversible happens — a case resumes, a reminder goes out, a patient
+moves or is released, a payload is handed to the model. Fail-closed by
+construction: anything that stops the engine from proving `allow` is a deny with
+a reason, never an exception.
+
+Two policies: `policy/monitor.rego` (who may act, I5/I9 and the monitor's own
+gates) and `policy/privacy.rego` (what the model may see, I11/I12).
 """
 
 from __future__ import annotations
@@ -14,9 +18,11 @@ from typing import Any
 
 POLICY = Path(__file__).parent / "policy" / "monitor.rego"
 QUERY = "data.triage.monitor.decision"
+PRIVACY_POLICY = Path(__file__).parent / "policy" / "privacy.rego"
+PRIVACY_QUERY = "data.triage.privacy.decision"
 
 
-def evaluate(input: dict[str, Any]) -> dict[str, Any]:
+def evaluate(input: dict[str, Any], *, policy: Path = POLICY, query: str = QUERY) -> dict[str, Any]:
     """`{"allow": bool, "deny_reasons": [str]}` for one proposed action.
 
     The binary is `opa` on PATH, or whatever `OPA_BIN` points at. Read per
@@ -27,7 +33,7 @@ def evaluate(input: dict[str, Any]) -> dict[str, Any]:
     # sidecar + httpx if the sweeper ever gates hundreds of actions a second.
     try:
         completed = subprocess.run(
-            [os.environ.get("OPA_BIN", "opa"), "eval", "-d", str(POLICY), "-I", "--format=raw", QUERY],
+            [os.environ.get("OPA_BIN", "opa"), "eval", "-d", str(policy), "-I", "--format=raw", query],
             input=json.dumps(input), capture_output=True, text=True, timeout=5, check=True,
         )
         decision = json.loads(completed.stdout)

@@ -286,7 +286,7 @@ def test_reassess_endpoint_moves_the_case_on_with_fresh_observations():
         f"/reassess/{case['case_id']}",
         json={
             "nurse_proposed_acuity": 1,
-            "chief_complaint": "worsening chest pain",
+            "chief_complaint": "chest_pain",
             "vitals": {"hr": 140, "bp": "90/60", "spo2": 88, "temp_c": 38.2},
         },
     )
@@ -307,7 +307,7 @@ def test_a_refile_always_parses_cleanly_and_never_ends_the_run():
 
     resp = client.post(
         f"/reassess/{case['case_id']}",
-        json={"nurse_proposed_acuity": 3, "chief_complaint": "unchanged", "vitals": {}},
+        json={"nurse_proposed_acuity": 3, "chief_complaint": "chest_pain", "vitals": {}},
     )
 
     assert resp.status_code == 200
@@ -319,7 +319,7 @@ def test_a_refile_always_parses_cleanly_and_never_ends_the_run():
 def test_reassess_endpoint_404s_for_an_unknown_case():
     resp = client.post(
         "/reassess/does-not-exist",
-        json={"nurse_proposed_acuity": 3, "chief_complaint": "x", "vitals": {}},
+        json={"nurse_proposed_acuity": 3, "chief_complaint": "chest_pain", "vitals": {}},
     )
     assert resp.status_code == 404
 
@@ -331,7 +331,7 @@ def test_reassess_endpoint_refuses_a_case_not_awaiting_a_refile():
 
     resp = client.post(
         f"/reassess/{case['case_id']}",
-        json={"nurse_proposed_acuity": 3, "chief_complaint": "x", "vitals": {}},
+        json={"nurse_proposed_acuity": 3, "chief_complaint": "chest_pain", "vitals": {}},
     )
 
     assert resp.status_code == 409

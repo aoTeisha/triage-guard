@@ -14,7 +14,7 @@ from app.states import State
 
 REFILE = {
     "nurse_proposed_acuity": 1,
-    "chief_complaint": "worsening chest pain",
+    "chief_complaint": "chest_pain",
     "vitals": {"hr": 140, "bp": "90/60", "spo2": 88, "temp_c": 38.2},
 }
 

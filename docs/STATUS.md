@@ -1,6 +1,9 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-25 (Langfuse traces now carry case, patient and outcome, and
+**Last updated:** 2026-09-26 (Z3 proofs, the real safety validator, the acuity range
+guard, and national-ID identity resolution. Previous entry below.)
+
+**Previous:** 2026-09-25 (Langfuse traces now carry case, patient and outcome, and
 the "Triage Guard" dashboard is seeded; treatment-move execution machine marked dropped,
 per the 2026-09-19 decision; last full project scan 2026-09-24)
 
@@ -106,11 +109,12 @@ A dead sweeper shows as "monitor degraded" on the board (heartbeat, `board/api.p
 
 ## What's left (scan 2026-09-24)
 
-Every test suite is green: triage-app 368 (plus 1 deselected), board 50, intake-channel
-48, crm-stub 15. Two triage-app tests (`test_a_crm_outage_degrades_and_continues`,
-`test_clean_case_walks_the_documented_transitions_in_order`) fail only while the local
-CRM stub is running on :8000, because they expect the CRM to be unreachable. With
-`CRM_BASE_URL=http://127.0.0.1:1` they pass.
+Every test suite is green: triage-app 453 (plus 1 deselected), board 50, intake-channel
+48, crm-stub 18. The two tests that used to fail while the CRM stub was running now
+force the outage themselves with `monkeypatch`, so nothing depends on a service being
+absent. The suite does need the Postgres container up (`db/docker-compose.yml`), SWI-
+Prolog installed, and the `opa` binary on PATH — on Windows that is
+`opa_windows_amd64.exe`, not the Linux static build the old README line fetched.
 Done since the last update: symbolic engines in the waiting-room monitor (Prolog for
 gate authorization, OPA for move/release, BPpy for dispatch/notify, Datalog for the
 temporal sweeper pass), safety invariants I1–I18, release from any pause, the
@@ -123,10 +127,17 @@ correction loop escalating to a shift lead, and the Arrow → Transition rename.
       each failure carrying a reason that names the contradiction. Written up in
       SPECIFICATION.md § Safety validation rules. Deliberately holds no clinical
       rule: :727 reserves judgment for the nurse and the classifier. Fails closed.
-- [ ] **Privacy check.** `app/deterministic.py:verify_no_identifiers` is a hardcoded
-      list of five key names. Should be an OPA/Rego policy.
-- [ ] **Output checker.** `app/verification.py` validates shape only, not whether the
-      values make sense together.
+- [x] **Privacy check.** `policy/privacy.rego`, evaluated by the real engine before a
+      payload is stored (I11, I12). An allow-list, not the old six-key deny-list — which
+      had been passing the nurse's prose and her proposed level to the model. With it:
+      `chief_complaint` is a code from a fixed set (validated at intake like acuity),
+      `age_band` is derived from the CRM's date of birth at identity resolution, and
+      ESI decision point D is computed against the handbook's table and shown on the
+      card. `patient_history` no longer carries name or date of birth in checkpoints.
+      Cost: one `opa` subprocess per case, ~250 ms.
+- [ ] **Output checker.** `app/verification.py` still validates shape and ranges only.
+      The safety validator now covers contradictions for the *acuity* decision (I13);
+      the classifier's and parser's other outputs get no equivalent check.
 - [ ] **Real LLM.** The acuity classifier defaults to the mock; live mode
       (`TRIAGE_LLM=live`) is written but needs a real run and a test that calls it.
 - [x] **Z3.** Six design-time proofs in `app/symbolic/z3_proofs.py`: I4's bands
@@ -142,8 +153,25 @@ correction loop escalating to a shift lead, and the Arrow → Transition rename.
       `treatment_started` → `formal_validation`. Not blocked on anything. Planned for
       later. (The comment in `app/views.py` above `BOARD_COLUMNS` still says it waits on
       the execution machine. That's out of date.)
-- [ ] **CRM write-back.** `patch_patient` exists in `app/crm_client.py` but nothing
-      calls it; the deferred write-back and its reconciliation (I17) are missing.
+- [x] **CRM write-back.** Done 2026-09-26 (I17): written at release, retried by the
+      sweeper through a `crm_writeback` timer when the CRM is down. Lesson learned the
+      hard way: the first version wrote visits with no acuity, and the privacy policy
+      then refused that patient's history for every later case. Tests no longer write
+      to the live CRM stub at all (`conftest.offline` stubs `patch_patient`).
+
+**Carried from the invariant review (2026-09-25)**
+
+- [x] **Identity.** The nurse enters a national ID, the CRM resolves it to
+      `stable_patient_id`, and the case carries only the internal id (I11). Done
+      2026-09-26, with the lookup deliberately kept in the graph node — see the note in
+      SPECIFICATION.md § Identity resolution.
+- [ ] **Roles come from the caller.** `board/board/api.py:304,346,351` still default
+      `actor_role` to `"nurse"`, and every request states its own role. I14 wants the
+      role read from the server's staff records: a `nurse_id` on each request and a
+      roster table Prolog can query.
+- [ ] **UI gaps.** A case paused at `awaiting_intake_fix` is not visible as such on the
+      board; the safety-correction form has no input for the corrected value, so a
+      charge nurse cannot actually answer a safety failure from the UI.
 
 **Spec holes and decisions**
 
@@ -419,11 +447,56 @@ There's also one genuine hole in the spec itself:
 
 ---
 
+## Invariant coverage (audited 2026-09-26)
+
+Every invariant has a checker in code. Three have a checker the spec names wrongly,
+and one has no runtime caller — listed here rather than left to be discovered.
+
+| State | Invariants | Notes |
+| ----- | ---------- | ----- |
+| Enforced as documented | I1, I3, I4, I5, I6, I7, I8, I9, I10, I13, I14, I15, I16, I18, I19, I20, I22 | I1 and I4 gained Z3 proofs; I3 and I13 gained the safety validator's Prolog and Datalog rules |
+| Enforced as documented since 2026-09-26 | I11, I12 | OPA (`policy/privacy.rego`) decides what the model may see: an allow-list of fields with per-field closed shapes, identifier keys refused at any depth. The regex scan for identifiers typed *inside* values stays in Python — its patterns need look-arounds RE2 lacks. The old check was a six-key deny-list; it let `free_text` (prose) and `nurse_proposed_acuity` (the answer the model is meant to cross-check) reach the model on every case |
+| Enforced as documented since 2026-09-26 | I2, I21 | `datalog.history_invariants` re-reads a case's whole checkpoint history — the key moved only with the acuity (or a re-file's new nurse level); the audit log only ever grew. `runner.case_history_check` runs it behind both case endpoints as `history_safety`, beside the audit-log trace check. The "DB constraint" the spec once mentioned for I21 still does not exist; the history check is the enforcement |
+| Enforced as documented since 2026-09-26 | I17 | CRM write-back. The release step writes the visit (date, acuity, complaint code — no identifiers, no prose) and, if the CRM is down, schedules a `crm_writeback` timer the sweeper retries until it lands: BPpy proposes it, Prolog agrees, OPA allows it only for a closed case with an internal id. A release before an acuity settled, or for a patient the CRM has no record of, is recorded as skipped rather than writing a half-visit |
+
+## Submission items (audited 2026-09-26 against the requirements PDF)
+
+15 of the 21 required items exist. Every item that needs *working code* is done —
+OPA, Z3, Prolog, Datalog, temporal logic, the state machine, the neuro-symbolic
+split. What is left is mostly writing.
+
+**Partial**
+
+- [ ] **(3) Short architecture document.** `SPECIFICATION.md` is ~900 lines and
+      `SYSTEM_MODELING.md` is a risk model. Neither is the one- or two-page front door
+      an examiner reads first.
+- [ ] **(11) Prompt architecture and I/O examples.** The four demo cases are documented;
+      the prompt is not. `actors/acuity_classifier.py:64` builds it from a persona file.
+      Requirement 11 wants the system instructions, the input and output structure,
+      injection prevention, and how model output is formally checked before it is used.
+      All of that exists in code and nowhere in prose.
+- [ ] **(19) Risk analysis.** Scattered across `SPECIFICATION.md:50`,
+      `SYSTEM_MODELING.md` and this file. Requirement 15 lists nine specific risks
+      (secrets, unauthorized action, prompt and tool injection, data leakage, illegal
+      state, dangerous event sequence, a blocked model proposal, audit, human review).
+      No single section answers them in order.
+
+**Missing**
+
+- [ ] **(18) Test table with results.** 453 tests pass and nothing maps them to the
+      requirement each one covers. Mostly a generation job from what already exists.
+- [ ] **(20) Presentation.** The requirements give an 11-slide structure; nothing exists.
+- [ ] **(21) Demo showing a block, not only a success.** `uv run triage-guard` walks a
+      clean case end to end. The requirement asks for a blocked path too — a `BLK` row
+      from an unauthorized actor, or a safety failure going to the gate.
+- [ ] **The central question**, which the requirements say every student must answer:
+      how does this system stop an agent drifting from a safe sequence into a dangerous
+      one? Answerable from what is built; worth rehearsing in two minutes using state,
+      events, OPA, Z3, Prolog, Datalog and the temporal rules.
+
 ## Suggested next step
 
-**Start with the safety validator.** It's the most valuable single thing left, nothing
-needs designing first, and finishing it makes the central claim about the system
-actually true.
-
-The open question for that piece: which checks belong to which engine (OPA / Z3 /
-Prolog / Datalog), and what rules it actually needs to enforce.
+**The test table (18), then the short architecture document (3).** Both are writing
+from facts that already exist, and together they make the presentation close to a copy
+job. After that, the two code gaps worth closing are the privacy check moving to Rego
+(so I11 and I12 are enforced by the layer the spec claims) and I17's CRM write-back.

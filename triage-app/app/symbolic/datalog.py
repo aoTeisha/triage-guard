@@ -30,8 +30,13 @@ _ENGINE_REFUSAL_MARKERS = ("engine_unavailable:", "layer_disagreement")
 
 RULES = """
 unwatched(C) <= waiting(C) & ~live_timer(C, 'reassessment', T)
-orphan(C, T) <= live_timer(C, K, T) & ~active_case(C)
+orphan(C, T) <= live_timer(C, K, T) & ~active_case(C) & ~outlives_case(K)
 """
+
+# A timer kind that is *meant* to be live after its case closes: the CRM
+# write-back (I17) runs for a released case by definition, so it is never an
+# orphan.
+OUTLIVES_CASE = ("crm_writeback",)
 
 
 def _answers(query: str) -> list[tuple]:
@@ -66,6 +71,8 @@ def tick_invariants(timer_rows: list[dict[str, Any]], case_rows: list[dict[str, 
     # can never match a real id/kind/timer_id.
     pyDatalog.assert_fact("active_case", "__never__")
     pyDatalog.assert_fact("live_timer", "__never__", "__never__", "__never__")
+    for kind in OUTLIVES_CASE:
+        pyDatalog.assert_fact("outlives_case", kind)
     for case in case_rows:
         if case["control_state"] not in (None, "case_closed"):
             pyDatalog.assert_fact("active_case", case["case_id"])
@@ -111,6 +118,38 @@ def find_duplicate_active_case(stable_patient_id: str | None, case_rows: list[di
         and row["control_state"] not in (None, "case_closed", "input_rejected")
     )
     return matches[0] if matches else None
+
+
+def order_key_follows_acuity(history: list[dict[str, Any]]) -> tuple[bool, str]:
+    """I2: between one checkpoint and the next, `order_key` changes only when
+    the acuity did — or the nurse's proposed level did, which is what a re-file
+    is (SPECIFICATION.md § Queue ordering rule: a re-triage may re-key). The
+    first key ever assigned is not a change.
+
+    Read over the persisted history like `audit_log_is_monotonic`, because the
+    audit log records that a level changed but not what the key became.
+    """
+    for i in range(len(history) - 1):
+        before, after = history[i], history[i + 1]
+        key_before, key_after = before.get("order_key"), after.get("order_key")
+        if key_before is None or key_after is None or list(key_before) == list(key_after):
+            continue
+        acuity_changed = before.get("acuity") != after.get("acuity")
+        nurse_changed = before.get("nurse_proposed_acuity") != after.get("nurse_proposed_acuity")
+        if not (acuity_changed or nurse_changed):
+            return False, (f"checkpoint {i + 1}: order_key moved from {list(key_before)} to "
+                           f"{list(key_after)} with no change of acuity")
+    return True, ""
+
+
+def history_invariants(history: list[dict[str, Any]]) -> dict[str, tuple[bool, str]]:
+    """The two invariants only a case's checkpoint history can answer, for a
+    detail view to show beside the trace check: I21 (the audit log only ever
+    grows) and I2 (the queue key follows the acuity)."""
+    return {
+        "audit_log_append_only": audit_log_is_monotonic(history),
+        "order_key_follows_acuity": order_key_follows_acuity(history),
+    }
 
 
 def audit_log_is_monotonic(history: list[list[dict[str, Any]]]) -> tuple[bool, str]:

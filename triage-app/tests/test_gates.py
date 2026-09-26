@@ -24,7 +24,7 @@ GAP_CASE = {
     "channel": "website",
     "national_id": "300000009",
     "nurse_proposed_acuity": 5,
-    "chief_complaint": "chest pain radiating to the arm",
+    "chief_complaint": "chest_pain",
     "vitals": {"hr": 120, "bp": "160/100", "spo2": 94, "temp_c": 37.0},
     "free_text": "Sudden crushing chest pain.",
 }

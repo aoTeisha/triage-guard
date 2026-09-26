@@ -53,12 +53,13 @@ from langgraph.types import Command
 from pydantic import BaseModel
 
 from app import runner
+from app.guards import CHIEF_COMPLAINTS
 from app.budgets import HEARTBEAT_STALE_MULTIPLIER
 from app.labels import Transition
 from app.monitor import timers
 from app.monitor.sweeper import SWEEP_INTERVAL_SECONDS
 from app.observability import case_trace, record_outcome
-from app.runner import config_for, history
+from app.runner import case_history_check, config_for, history
 from app.budgets import BOARD_FEED_WINDOW_MINUTES, BOARD_RED_AFTER_MINUTES
 from app.states import AcuityBucket, ClinicalStatus, State
 from app.views import BOARD_COLUMNS, CaseCard, card_from_state, case_view
@@ -204,12 +205,13 @@ def _complaint(state: dict) -> str:
     complaint text is ever read from the raw payload — never a patient
     identifier.
     """
-    return (
+    code = (
         (state.get("redacted_payload") or {}).get("chief_complaint")
         or (state.get("parsed_fields") or {}).get("chief_complaint")
         or (state.get("raw_payload") or {}).get("chief_complaint")
         or ""
     )
+    return str(code).replace("_", " ")      # a code from the fixed set, shown as words
 
 
 def notifications(states: list[dict], feed: list[dict] | None = None) -> list[dict]:
@@ -260,6 +262,9 @@ def board_payload() -> dict:
     nudges = nudges_by_case(feed, datetime.now(timezone.utc))
     return {
         "columns": BOARD_COLUMNS,
+        # The re-file form offers these and nothing else: the complaint is a code
+        # (I12), and the vocabulary has one home, app/guards/fields.py.
+        "chief_complaints": list(CHIEF_COMPLAINTS),
         "counters": counters(cards),
         "red_after_min": BOARD_RED_AFTER_MINUTES,
         "notifications": notifications(states, feed),
@@ -469,6 +474,9 @@ def case(case_id: str):
         "view": case_view(values, pending),
         "card": (card.model_dump() | {"position": place}) if card else None,
         "checkpoints": len(history(case_id)),
+        # I2 and I21, re-read over every checkpoint — the two rules the audit
+        # log alone cannot answer, beside `view["trace_safety"]` which it can.
+        "history_safety": case_history_check(case_id),
     }
 
 

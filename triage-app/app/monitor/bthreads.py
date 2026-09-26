@@ -23,6 +23,9 @@ RECONCILE = bp.BEvent("RECONCILE")
 NOTIFY = bp.BEvent("NOTIFY")
 CANCEL = bp.BEvent("CANCEL")
 FAIL_BUDGET = bp.BEvent("FAIL_BUDGET")
+# The CRM write-back (I17): a released case's visit data, retried until the
+# CRM takes it. Touches no case state, so no pause and no acknowledgment.
+WRITEBACK = bp.BEvent("WRITEBACK")
 
 # Every notify-only kind. Mirrors `fire._REMINDER_PAUSES`.
 REMINDER_KINDS = {"gate_reminder", "reassessment_reminder", "senior_reminder"}
@@ -35,6 +38,8 @@ def _proposed(ctx: dict[str, Any]) -> bp.BEvent:
         return DISPATCH
     if ctx["kind"] in REMINDER_KINDS:
         return NOTIFY
+    if ctx["kind"] == "crm_writeback":
+        return WRITEBACK
     return CANCEL  # unrecognized kind: no pause to check, never delivered blind
 
 

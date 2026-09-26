@@ -9,6 +9,7 @@ from typing import Any
 
 from app.actors import acuity_classifier, human_bridge
 from app.deterministic import assign_order_key, audit, bucket_for, compute_acuity_gap, resolve_acuity
+from app.esi import danger_zone
 from app.graph.nodes._shared import _bump
 from app.graph.state import TriageState
 from app.labels import Transition
@@ -35,12 +36,22 @@ def classifying(state: TriageState) -> dict[str, Any]:
         }
 
     checked = check.checked
+    # ESI decision point D, computed exactly and attached. It changes no level:
+    # the handbook treats it as judgment in context (SPECIFICATION.md § Safety
+    # invariants, the note on danger-zone vitals). No age band, no check — and
+    # the record says so rather than reporting the vitals as normal.
+    breaches = danger_zone(state.redacted_payload.get("vitals"), state.age_band)
+    annotation = (", ".join(breaches) if breaches
+                  else "none" if state.age_band else "not checked: no age band")
     return {
         "control_state": State.CLASSIFYING.value,
         "system_proposed_acuity": checked.system_proposed_acuity,
         "confidence": checked.confidence,
         "acuity_source": checked.acuity_source,
+        "danger_zone_vitals": breaches,
         "audit_log": [invoked,
+                      audit(state.case_id, State.CLASSIFYING, "annotate_danger_zone_vitals",
+                            f"danger-zone vitals: {annotation}"),
                       audit(state.case_id, State.CLASSIFYING, "emit_event_log",
                             f"acuity proposed: {checked.system_proposed_acuity} "
                             f"({checked.acuity_source})", Transition.ACUITY_PROPOSED)],

@@ -28,7 +28,7 @@ def case(**overrides):
         "nurse_proposal": 3,
         "system_proposal": 4,
         "classifier_down": False,
-        "payload": {"chief_complaint": "chest tightness", "vitals": {"hr": 96}},
+        "payload": {"chief_complaint": "chest_pain", "vitals": {"hr": 96}},
         "triage_records": [],
     }
     return base | overrides

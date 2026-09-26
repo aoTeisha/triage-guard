@@ -125,7 +125,7 @@ def test_a_notification_names_the_complaint_even_with_no_redacted_payload():
     """
     state = {
         "case_id": "c-1",
-        "raw_payload": {"chief_complaint": "ankle pain", "stable_patient_id": "P-1"},
+        "raw_payload": {"chief_complaint": "limb_injury", "stable_patient_id": "P-1"},
         "audit_log": [
             {
                 "case_id": "c-1",
@@ -137,7 +137,7 @@ def test_a_notification_names_the_complaint_even_with_no_redacted_payload():
         ],
     }
     note = api_module.notifications([state])[0]
-    assert note["complaint"] == "ankle pain"
+    assert note["complaint"] == "limb injury"
     assert "P-1" not in str(note)
 
 

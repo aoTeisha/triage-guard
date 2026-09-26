@@ -19,6 +19,7 @@ from typing import Any
 
 from langgraph.types import Command
 
+from app import crm_client
 from app.budgets import (
     NOTIFICATION_BUDGET_PER_WINDOW,
     NOTIFICATION_WINDOW_MINUTES,
@@ -119,6 +120,8 @@ def handle(conn, timer: dict[str, Any], *, graph) -> str:
         return reconcile(conn, timer, graph=graph)
     if selected == "NOTIFY":
         return _send_reminder(conn, timer, ctx)
+    if selected == "WRITEBACK":
+        return writeback(conn, timer, graph=graph)
     if selected == "FAIL_BUDGET":
         timers.set_state(conn, timer["timer_id"], "FAILED", last_error="notification budget exhausted")
         return "FAILED"
@@ -228,6 +231,32 @@ def _send_reminder(conn, timer: dict[str, Any], ctx: dict[str, Any]) -> str:
                                 recipient_class=ctx["recipient_class"])
     timers.set_state(conn, timer["timer_id"], "DELIVERED")
     return "DELIVERED"
+
+
+def writeback(conn, timer: dict[str, Any], *, graph) -> str:
+    """Write a released case's visit to the CRM (I17). DELIVERED when the CRM
+    took it; FAILED with `crm_unreachable` when it did not, which
+    `claim_retryable` picks up again — so "within T of the CRM being reachable"
+    is bounded by the sweeper's retry cadence, not by hope.
+
+    The case's own audit log admits nothing but refusals once released (I20),
+    so the record of the write lives here, on the timer row.
+    """
+    snapshot = graph.get_state(config_for(timer["case_id"])).values
+    gate = opa.evaluate({"action": "writeback",
+                         "case": {"control_state": snapshot.get("control_state"),
+                                  "stable_patient_id": snapshot.get("stable_patient_id")}})
+    if not gate["allow"]:
+        timers.set_state(conn, timer["timer_id"], "CANCELLED",
+                         last_error="opa denied writeback: " + "; ".join(gate["deny_reasons"]))
+        return "CANCELLED"
+    outcome = crm_client.patch_patient(snapshot["stable_patient_id"],
+                                       {"new_visit": crm_client.visit_record(snapshot)})
+    if outcome == "ok":
+        timers.set_state(conn, timer["timer_id"], "DELIVERED")
+        return "DELIVERED"
+    timers.set_state(conn, timer["timer_id"], "FAILED", last_error="crm_unreachable")
+    return "FAILED"
 
 
 def notify(conn, timer: dict[str, Any], *, graph) -> str:

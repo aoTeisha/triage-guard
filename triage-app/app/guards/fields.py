@@ -67,17 +67,31 @@ def missing_fields(payload: dict) -> list[str]:
     return absent
 
 
+# The complaint is a code, not a sentence (I12: the model receives fixed-choice
+# values or numbers). Kept in sync by hand with `chief_complaints` in
+# app/symbolic/policy/privacy.rego; tests/symbolic/test_opa_privacy.py catches drift.
+CHIEF_COMPLAINTS = (
+    "chest_pain", "shortness_of_breath", "abdominal_pain", "head_injury", "fever",
+    "laceration", "limb_injury", "dizziness", "vomiting", "back_pain", "other",
+)
+
+
 def unusable_fields(payload: dict) -> list[str]:
     """Present fields whose value the case cannot proceed on.
 
-    Acuity is the only one today, and it matters because `order_key` is built
-    from it: an acuity of 0 or 7 would file the patient at a level that does not
-    exist, ahead of or behind every real one (I1, I4).
+    Acuity, because `order_key` is built from it: an acuity of 0 or 7 would file
+    the patient at a level that does not exist (I1, I4). The complaint, because
+    the model may only see a code from the fixed set (I12) — free text typed here
+    would otherwise be refused three nodes later, by the privacy policy.
     """
+    unusable = []
     acuity = payload.get("nurse_proposed_acuity")
-    if acuity is None or is_esi_level(acuity):
-        return []
-    return ["nurse_proposed_acuity"]
+    if acuity is not None and not is_esi_level(acuity):
+        unusable.append("nurse_proposed_acuity")
+    complaint = payload.get("chief_complaint")
+    if complaint is not None and complaint not in CHIEF_COMPLAINTS:
+        unusable.append("chief_complaint")
+    return unusable
 
 
 def nothing_usable(payload: dict) -> bool:
