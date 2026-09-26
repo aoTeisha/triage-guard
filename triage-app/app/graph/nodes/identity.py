@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from langgraph.config import get_config
+
 from app.crm_client import fetch_patient, fetch_patient_by_national_id
 from app.deterministic import audit
 from app.esi import age_band
@@ -63,8 +65,17 @@ def resolving_identity(state: TriageState) -> dict[str, Any]:
         # in app/symbolic/prolog.py.
         from app.runner import all_case_summaries
 
+        # Exclude *this run*, by its thread id: the summaries are keyed by
+        # LangGraph thread, which is the case id in production but not
+        # necessarily elsewhere (a demo kickoff or a test may run a case under
+        # another thread). Excluding `state.case_id` alone let a re-filed case
+        # meet itself in the scan and reject itself as its own duplicate.
+        try:
+            own_thread = get_config()["configurable"]["thread_id"]
+        except Exception:  # noqa: BLE001 — called outside a run (a unit test): the case id is the thread
+            own_thread = state.case_id
         duplicate = find_duplicate_active_case(
-            record.get("stable_patient_id"), all_case_summaries(exclude_case_id=state.case_id)
+            record.get("stable_patient_id"), all_case_summaries(exclude_case_id=own_thread)
         )
         if duplicate:
             return {

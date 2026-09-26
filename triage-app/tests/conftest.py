@@ -123,7 +123,7 @@ def conn():
 
 
 @pytest.fixture
-def graph():
+def graph(monkeypatch):
     """A compiled graph with a throwaway checkpoint database.
 
     A database of its own, separate from `conn`'s — the gate tests need a
@@ -132,12 +132,23 @@ def graph():
     share one DSN in production, but that's a deployment choice, not a
     correctness requirement — the two are only ever joined by `case_id`, a
     plain string, never a real foreign key).
+
+    The process-wide runner is pointed at the same database for the test's
+    duration: `resolving_identity` asks `runner.all_case_summaries()` whether
+    the patient already has an open case (I19), and that reads `runner.DSN`.
+    Left on the shared database, one open case for P-1001 left by another
+    suite made every clean demo case here a duplicate.
     """
+    from app import runner
+
     dsn = _throwaway_db()
     try:
         with PostgresSaver.from_conn_string(dsn) as saver:
             saver.setup()
-            yield build_graph(checkpointer=saver)
+            compiled = build_graph(checkpointer=saver)
+            monkeypatch.setattr(runner, "graph", lambda: compiled)
+            monkeypatch.setattr(runner, "DSN", dsn)
+            yield compiled
     finally:
         _drop_db(dsn)
 
