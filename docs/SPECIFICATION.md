@@ -31,6 +31,7 @@
 - [Queue ordering rule](#queue-ordering-rule)
 - [Neuro-Symbolic Architecture](#neuro-symbolic-architecture)
 - [Safety invariants](#safety-invariants)
+- [Safety validation rules](#safety-validation-rules)
 - [Temporal logic rules](#temporal-logic-rules)
 - [Symbolic governance layer: OPA, Z3, Prolog, Datalog](#symbolic-governance-layer-opa-z3-prolog-datalog)
 - [Open decisions](#open-decisions)
@@ -223,7 +224,7 @@ This section lists all participants in a case: each proposing agent, the humans,
 | ------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
 | Intake Parser Agent                               | Validator (deterministic)                         | webform / structured intake (mock)             | `Data_Parsed` proposal / field-presence check                                                             | Deterministic schema validation            |
 | Acuity Classifier Agent                           | LLM + deterministic ESI decision point D          | model-facing payload (case_id-keyed) + history | `system_proposed_acuity` + confidence + any danger-zone vitals breaches (annotation only)                 | LLM + ESI v5 Figure 6-1                    |
-| Safety Validation Agent                           | Deterministic                                     | proposed classification                        | verdict (pass/fail)                                                                                       | Prolog / Datalog / Z3 / OPA                |
+| Safety Validation Agent                           | Deterministic                                     | the settled acuity, its provenance, this triage's log, the payload | verdict (pass/fail) + a reason per failed rule                                          | Prolog (field contradictions) + Datalog (provenance) |
 | Human Escalation Agent                            | Bridge to human                                   | case + verdict                                 | escalation + human response                                                                               | UI/queue _(to confirm)_                    |
 | Waiting Room Monitor Agent                        | Timer / watcher                                   | status + timers                                | timeout / deterioration triggers                                                                          | _(to confirm)_                             |
 | Audit Agent                                       | Logger                                            | event log                                      | persists trace                                                                                            | append-only store _(to confirm)_           |
@@ -735,6 +736,42 @@ All T values live in one table in `triage-app/app/budgets.py`.
 > vitals-raised proposal. It never means overriding a **safety-validation** verdict: there is no
 > safety-override path in the system. A safety-fail is resolved only by correct-and-revalidate
 > (see the resolved safety-fail branch), never by proceeding past a failed check.
+
+---
+
+## Safety validation rules
+
+Safety validation asks one question: **can this case's record be true?** It does not
+re-judge the medicine — the note above settles that, and the same reasoning applies
+to every clinical rule, not only decision point D. A level is the nurse's judgment
+and the classifier's; the validator's job is to refuse a record that contradicts
+itself, and to say exactly how, so a charge nurse can fix it (I3, I13).
+
+Six rules. Prolog reasons over one case's fields; Datalog answers who wrote the
+acuity and whether the data it was judged on is still there.
+
+| # | Fails when | Why it is certain, not judgment | Engine |
+| - | ---------- | ------------------------------- | ------ |
+| 1 | `acuity` is set with no `acuity_source`, or the reverse | a level nobody can attribute is unauditable | Prolog |
+| 2 | `acuity_source = auto_resolved` while the gap was ≥ 2 | the automatic settle exists only for gaps 0 and 1 (I4), so the case skipped a charge nurse it was owed | Prolog |
+| 3 | `acuity_source = human_confirmed` with no charge-nurse decision in **this** triage's log | claims a human decided when the log holds no decision; a re-file starts a new triage, so last triage's decision vouches for nothing | Datalog (provenance) + Prolog |
+| 4 | `acuity` matches neither proposal and no human set it | the level came from nowhere | Prolog |
+| 5 | the classifier is flagged unusable, yet `system_proposed_acuity` is present | `fallback_manual` runs *because* the classifier is unusable; a proposal from it cannot also exist | Prolog |
+| 6 | `chief_complaint` or `vitals` is absent by the time safety runs | the acuity was judged on data the case does not hold | Datalog |
+
+Also refused: an acuity written by a role that holds no charge role (I3 crossed with
+I14). Datalog takes that role set from Prolog's `charge_role/1` rather than restating
+it, so there is one source rather than a fourth copy.
+
+**Reasons are part of the contract.** Each failed rule produces a sentence naming the
+field and the contradiction — "acuity_source is auto_resolved, but the gap was 3" —
+because the correction loop (I7) requires the human to change something specific, and
+a verdict of "safety failed" tells them nothing. This follows the course material's
+requirement that a validator's feedback be usable information about *why* a proposal
+failed, not only that it did.
+
+**Fail closed.** An engine that cannot answer produces `fail`, not `pass`, and the
+case goes to a charge nurse — the documented degrade for this actor.
 
 ---
 

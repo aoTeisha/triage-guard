@@ -118,17 +118,21 @@ correction loop escalating to a shift lead, and the Arrow → Transition rename.
 
 **Core pieces still fake**
 
-- [ ] **Safety validator.** `app/actors/safety.py` returns a canned "pass" from
-      `mocks/safety_validator.json`. Needs the actual rules, and a decision on which
-      engine enforces which rule (Prolog / Datalog / Z3 / OPA). Top priority.
+- [x] **Safety validator.** Six real rules over Prolog (`rules/safety.pl`, field
+      contradictions) and Datalog (acuity provenance, required clinical fields),
+      each failure carrying a reason that names the contradiction. Written up in
+      SPECIFICATION.md § Safety validation rules. Deliberately holds no clinical
+      rule: :727 reserves judgment for the nurse and the classifier. Fails closed.
 - [ ] **Privacy check.** `app/deterministic.py:verify_no_identifiers` is a hardcoded
       list of five key names. Should be an OPA/Rego policy.
 - [ ] **Output checker.** `app/verification.py` validates shape only, not whether the
       values make sense together.
 - [ ] **Real LLM.** The acuity classifier defaults to the mock; live mode
       (`TRIAGE_LLM=live`) is written but needs a real run and a test that calls it.
-- [ ] **Z3 unused.** I4 (acuity gap ≥ 0) is marked "to be proven with Z3" in
-      `app/deterministic.py`; nothing proves it yet.
+- [x] **Z3.** Six design-time proofs in `app/symbolic/z3_proofs.py`: I4's bands
+      (partition + the if-chain obeying them), I13's range half, and I1 three times
+      (acuity order, the arrival tie-break, totality). Each has a mutation test that
+      requires a counterexample, so no proof can pass by restating itself.
 
 **Not built at all**
 

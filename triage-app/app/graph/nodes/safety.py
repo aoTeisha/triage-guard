@@ -20,10 +20,7 @@ from app.verification import verify_schema
 
 def safety_validating(state: TriageState) -> dict[str, Any]:
     """Deterministic verdict on the settled acuity."""
-    verdict = safety.validate(
-        {"case_id": state.case_id, "acuity": state.acuity,
-         "acuity_source": state.acuity_source, "payload": state.redacted_payload}
-    )
+    verdict = safety.validate(safety.facts_from(state))
     check = verify_schema("safety_validation", verdict, SafetyVerdict)
 
     if not check.passed:

@@ -105,7 +105,10 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
                           audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
                                 "apply_human_acuity",
                                 f"charge nurse resolved acuity: {chosen}",
-                                Transition.GATE_ACUITY_RESOLVED)],
+                                Transition.GATE_ACUITY_RESOLVED,
+                                # Machine-readable provenance, not only prose: the
+                                # Datalog check reads who wrote an acuity (I3).
+                                resolver_role=resolver)],
         }
 
     if decision == "escalate_further" and not state.senior_required:
@@ -136,7 +139,7 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
                       audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
                             "apply_correction",
                             f"correction round {state.correction_rounds + 1}: {changes}; re-running safety",
-                            Transition.GATE_SAFETY_CORRECTED)],
+                            Transition.GATE_SAFETY_CORRECTED, resolver_role=resolver)],
     }
     if "acuity" in changes:
         new = changes["acuity"]

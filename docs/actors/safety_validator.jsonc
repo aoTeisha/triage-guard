@@ -1,11 +1,15 @@
 {
   // Deterministic verdict on the settled acuity. Never writes State.
   // Spec arrows 9 -> 10 (pass) / 10-fail (route to human gate).
+  //
+  // Checks whether the case's record can be true, never whether the medicine is
+  // right: SPECIFICATION.md:727 reserves clinical judgment for the nurse and the
+  // classifier. Six rules, listed under "Safety validation rules" in the spec.
   "actor": "Safety Validation Agent",
   "type": "Deterministic",
-  "reads": "proposed classification",
-  "proposes": "verdict (pass/fail)",
-  "tech": "Prolog / Datalog / Z3 / OPA",
-  "implementation": "app.flow.agents.invoke_safety_validation",
-  "mock": "app/agents/mocks/safety_validator.json"
+  "reads": "the settled acuity, its provenance, the gap, both proposals, this triage's audit log, the redacted payload",
+  "proposes": "verdict (pass/fail) + one reason per failed rule, each naming the contradiction",
+  "tech": "Prolog (rules/safety.pl: field contradictions) + Datalog (acuity provenance, required clinical fields)",
+  "implementation": "app.actors.safety.validate, called by app.graph.nodes.safety.safety_validating",
+  "fails_closed": "an engine that cannot answer returns fail, so the case goes to a charge nurse (SYSTEM_MODELING.md:101)"
 }

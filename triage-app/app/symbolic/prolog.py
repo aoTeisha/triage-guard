@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from pyswip import Prolog
 
 RULES = Path(__file__).parent / "rules" / "monitor.pl"
+SAFETY_RULES = Path(__file__).parent / "rules" / "safety.pl"
 
 # ponytail: one process-wide engine behind one lock. pyswip's engine is a
 # global and is not thread-safe; the board's FastAPI threadpool reaches
@@ -34,6 +35,7 @@ def _engine() -> "Prolog":
 
     engine = Prolog()
     engine.consult(str(RULES))
+    engine.consult(str(SAFETY_RULES))
     return engine
 
 
@@ -72,6 +74,21 @@ def charge_role(role: str) -> tuple[bool, str]:
     if holds:
         return True, f"{role} holds charge role"
     return False, f"gate refused: role {role!r} is not a charge role"
+
+
+def charge_roles() -> frozenset[str]:
+    """Every role `charge_role/1` holds, read from the engine rather than copied.
+
+    `app.symbolic.datalog.acuity_provenance` needs the same set to decide whether
+    an acuity's writer was authorized; asking Prolog keeps one source. An engine
+    fault returns the empty set, so every writer reads as unauthorized and the
+    verdict fails closed.
+    """
+    with _lock:
+        try:
+            return frozenset(str(row["R"]) for row in _engine().query("charge_role(R)"))
+        except Exception:  # noqa: BLE001 — an engine fault must fail closed, not crash the verdict
+            return frozenset()
 
 
 def may_resolve_gate(role: str, *, senior_required: bool) -> tuple[bool, str]:
@@ -120,3 +137,49 @@ def timer_action(ctx: dict[str, Any]) -> tuple[str, str]:
                              f"notify_budget({tid}, _)", f"pause_active({tid})"):
                     engine.retractall(pred)
     return (actions[0] if actions else "cancel"), "; ".join(denials)
+
+
+# The facts safety.pl reasons over. Retracted after every query, so one case's
+# facts can never leak into the next.
+_SAFETY_FACTS = ("acuity(_)", "acuity_source(_)", "gap(_)", "nurse_proposal(_)",
+                 "system_proposal(_)", "human_decided", "classifier_down")
+
+
+def _term(value: Any) -> str:
+    """A Python value as a Prolog term: numbers bare, everything else quoted."""
+    return str(value) if isinstance(value, int) and not isinstance(value, bool) else atom(value)
+
+
+def safety_violations(case: dict[str, Any]) -> tuple[list[str], str]:
+    """`(violation codes, engine error)` for one case, from `rules/safety.pl`.
+
+    An engine fault returns no codes and a non-empty error: the caller must
+    treat that as a refusal, not as a pass (SYSTEM_MODELING.md:101 — a validator
+    that cannot answer routes the case to a human, it does not wave it through).
+    """
+    facts = [
+        f"acuity({_term(case.get('acuity') or 'none')})",
+        f"acuity_source({_term(case.get('acuity_source') or 'none')})",
+        f"gap({_term(case['gap'] if case.get('gap') is not None else 'unknown')})",
+        f"nurse_proposal({_term(case.get('nurse_proposal') or 'none')})",
+        f"system_proposal({_term(case.get('system_proposal') or 'none')})",
+    ]
+    if case.get("human_decided"):
+        facts.append("human_decided")
+    if case.get("classifier_down"):
+        facts.append("classifier_down")
+
+    with _lock:
+        engine = None
+        try:
+            engine = _engine()
+            for fact in facts:
+                engine.assertz(fact)
+            codes = sorted({str(row["C"]) for row in engine.query("violation(C)")})
+        except Exception as exc:  # noqa: BLE001 — an engine fault is a refusal, never a pass
+            return [], f"prolog: {exc}"
+        finally:
+            if engine is not None:
+                for pred in _SAFETY_FACTS:
+                    engine.retractall(pred)
+    return codes, ""
