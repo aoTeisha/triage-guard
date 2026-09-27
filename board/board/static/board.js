@@ -483,7 +483,10 @@ function movesSection(caseId, card) {
   const releaseGroup = el("div", "release-group");
   releaseGroup.append(reasonSelect, releaseBtn);
 
-  controls.append(moveBtn, completeBtn, releaseGroup);
+  const btnRow = el("div", "btn-row");
+  btnRow.append(moveBtn, completeBtn);
+
+  controls.append(btnRow, releaseGroup);
   box.append(controls, msg);
   return box;
 }
