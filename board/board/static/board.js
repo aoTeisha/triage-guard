@@ -30,7 +30,14 @@ document.getElementById("new-case-btn").onclick = toggleIntakePanel;
 document.getElementById("intake-panel-close").onclick = closeIntakePanel;
 document.getElementById("lookup-btn").onclick = runLookup;
 document.getElementById("submit-btn").onclick = submitNewCase;
-document.getElementById("patient-id").addEventListener("input", updateSubmitEnabled);
+document.getElementById("patient-id").addEventListener("input", () => {
+  updateSubmitEnabled();
+  if (caseMode() === "demo") renderPayloadPreview();
+});
+document.getElementById("intake-panel").addEventListener("change", (e) => {
+  if (e.target.name === "case_mode" || e.target.name === "submission_type"
+      || e.target.id === "violation") updateModeFields();
+});
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   closePanel();

@@ -60,7 +60,7 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
 
     Only the fields a nurse can actually change get overwritten. Everything
     else in `raw_payload` is carried over, and that is load-bearing rather
-    than tidiness: `free_text` and `case_id` are in `REQUIRED_FIELDS` and are
+    than tidiness: `case_id` is in `REQUIRED_FIELDS` and, like `free_text`, is
     only ever supplied by the original submission, so building a payload from
     scratch here would send every re-file to `missing_fields_requested` and
     end the run for a patient who is physically still in the waiting room.

@@ -60,6 +60,7 @@ from app.views import BOARD_COLUMNS, CaseCard, card_from_state, case_view
 
 from . import commands
 from .intake import router as intake_router
+from .mock_cases import PLANTED
 from .ordering import positions, sort_cards
 from .repo import CheckpointRepo
 
@@ -89,6 +90,18 @@ NOTIFY_TRANSITIONS = {
 app = FastAPI(title="Triage Guard — board", version="0.1.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(intake_router)
+
+
+@app.middleware("http")
+async def always_recheck_static(request, call_next):
+    """The browser must revalidate the page and its scripts on every load. A
+    heuristically cached script paired with fresh HTML once left the new-case
+    form missing its fields. Revalidation is cheap: unchanged files answer 304.
+    """
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["cache-control"] = "no-cache"
+    return response
 
 repo = CheckpointRepo()
 
@@ -240,7 +253,9 @@ def notifications(states: list[dict], feed: list[dict] | None = None) -> list[di
         }
         for state in states
         for rec in state.get("audit_log", [])
-        if rec.get("transition") in NOTIFY_TRANSITIONS
+        # Records the trace-violation demo planted are not events that
+        # happened to a patient; the red alert in the case panel shows them.
+        if rec.get("transition") in NOTIFY_TRANSITIONS and rec.get("action") != PLANTED
     ]
     records += [
         rec | {"complaint": complaints.get(rec["case_id"], "")} for rec in (feed or [])
@@ -268,7 +283,16 @@ def board_payload() -> dict:
         "notifications": notifications(states, feed),
         "cards": [
             c.model_dump()
-            | {"position": place.get(c.case_id), "reminders": nudges.get(c.case_id)}
+            | {
+                "position": place.get(c.case_id),
+                # A released card keeps no nudge: unlike the notification strip
+                # below, this is a live status chip, and a reminder from before
+                # release is no longer live.
+                "reminders": (
+                    None if c.status == ClinicalStatus.PATIENT_RELEASED.value
+                    else nudges.get(c.case_id)
+                ),
+            }
             for c in cards
         ],
     }

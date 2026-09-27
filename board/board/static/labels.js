@@ -35,6 +35,17 @@ const FLAG_LABELS = {
   "cross-check off": "second opinion unavailable",
 };
 const DRAWER_COLUMN = "patient_released";
+// The after-run trace check's rules, keyed as the server names them (the
+// checker's own wording, snake_cased), in words a newcomer can read. Also the
+// options of the trace-violation demo.
+const TRACE_RULE_LABELS = {
+  no_bypass: "Patient queued without a safety check",
+  single_treatment_start: "Treatment started twice",
+  correct_then_revalidate: "Queued after a failed safety check, without fixing it",
+  bounded_correction_loop: "Too many correction attempts, never escalated to a senior",
+  audit_record: "Log record from a different patient's case",
+  closed_case: "Case changed after the patient was released",
+};
 // `acuity_source` is the spec's vocabulary; a board is not the place to make a
 // nurse learn it.
 const SOURCE_LABELS = {

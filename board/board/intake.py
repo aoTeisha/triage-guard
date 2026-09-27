@@ -34,10 +34,10 @@ room.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, get_args
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app import runner
 from app.guards import ACUITY_LEVELS, NURSE_SUPPLIED_FIELDS, unusable_fields
@@ -45,7 +45,7 @@ from app.states import State
 from app.views import case_view
 
 from . import commands
-from .mock_cases import SubmissionType, build_case
+from .mock_cases import TRACE_VIOLATIONS, SubmissionType, build_case, new_case_id, planted_records
 from .patient_lookup import fetch_patient
 
 router = APIRouter(prefix="/api")
@@ -76,9 +76,29 @@ def _answer_pause(case_id, resume, check):
         raise HTTPException(status_code=409, detail=f"cannot resume {case_id}: {exc}")
 
 
+# What a nurse may type on a real case: the same fields as the re-file form. The
+# national id is its own field on the request, and routing metadata is set here.
+REAL_CASE_FIELDS = NURSE_SUPPLIED_FIELDS - {"national_id"}
+
+
 class SubmitRequest(BaseModel):
+    """Either a real case (`fields`, as the nurse typed them) or a demo case
+    (`submission_type`, one of the fixed payloads) — never both, never neither.
+    """
+
     national_id: str            # what the patient carries; the CRM returns the internal id
-    submission_type: SubmissionType
+    submission_type: SubmissionType | None = None
+    fields: dict[str, Any] | None = None
+    # which trace-check rule a `trace_violation` demo breaks
+    violation: str | None = None
+
+    @model_validator(mode="after")
+    def _one_kind(self):
+        if (self.submission_type is None) == (self.fields is None):
+            raise ValueError("send either fields (a real case) or submission_type (a demo case)")
+        if self.submission_type == "trace_violation" and self.violation not in TRACE_VIOLATIONS:
+            raise ValueError(f"violation must be one of {sorted(TRACE_VIOLATIONS)}")
+        return self
 
 
 class ResumeRequest(BaseModel):
@@ -118,6 +138,23 @@ def lookup(national_id: str):
     return {"status": result.status, "record": result.record}
 
 
+@router.get("/demo-cases")
+def demo_cases(national_id: str = ""):
+    """What each demo scenario sends, for the form to show before submitting.
+
+    Built by the same `build_case` that `/submit` uses, so the preview is the
+    real payload, minus the case_id that is minted fresh on every submit. The
+    trace-violation scenario also lists the records it plants, per rule.
+    """
+    cases = {}
+    for kind in get_args(SubmissionType):
+        case = build_case(None, national_id, kind)
+        case.pop("case_id")
+        cases[kind] = case
+    planted = {rule: [t.value for t in seq] for rule, seq in TRACE_VIOLATIONS.items()}
+    return {"cases": cases, "planted": planted}
+
+
 @router.post("/submit")
 def submit(body: SubmitRequest):
     """Build a case from the form and run it through the graph.
@@ -125,13 +162,29 @@ def submit(body: SubmitRequest):
     Tracing happens in `start_case`: its `case-start` span is the root of this
     case's trace.
     """
-    lookup_result = fetch_patient(body.national_id)
-    case = build_case(lookup_result, body.national_id, body.submission_type)
+    if body.fields is not None:
+        unknown = sorted(set(body.fields) - REAL_CASE_FIELDS)
+        if unknown:
+            raise HTTPException(status_code=422, detail=f"not intake form fields: {unknown}")
+        unusable = unusable_fields(body.fields)
+        if unusable:
+            raise HTTPException(status_code=422, detail=f"values outside their allowed range: {unusable}")
+        # A blank field is simply absent, so a partial case takes the normal
+        # missing-fields route rather than being refused here.
+        case = {"case_id": new_case_id(), "channel": "website",
+                "national_id": body.national_id, **body.fields}
+    else:
+        case = build_case(fetch_patient(body.national_id), body.national_id, body.submission_type)
 
     try:
         state, pending = runner.start_case(case)
     except runner.CaseClosedError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+
+    if body.submission_type == "trace_violation":
+        runner.plant_audit_records(case["case_id"], planted_records(case["case_id"], body.violation))
+        # Same pause as before the planting, so `pending` still holds.
+        state = runner.hydrate(runner.snapshot(case["case_id"]))
 
     return case_view(state, pending)
 

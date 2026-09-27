@@ -135,7 +135,8 @@ function renderCard(card, thresholds) {
     const danger = el("span", "chip danger", `vitals: ${card.danger_zone_vitals.join(", ")}`);
     danger.title = "outside the ESI danger-zone limits for this age band — annotation only";
     chips.append(danger);
-  } else {
+  }
+  if (card.acuity === null || card.acuity === undefined) {
     chips.append(el("span", "chip", "not yet triaged"));
   }
   if (card.gate_pending) chips.append(el("span", "chip gate", "awaiting charge nurse"));

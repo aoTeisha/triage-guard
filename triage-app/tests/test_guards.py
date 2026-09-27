@@ -116,3 +116,10 @@ def test_an_unusable_acuity_goes_back_to_the_nurse_not_to_rejection():
     """
     assert guards.classify_intake_payload({**CLEAN, "nurse_proposed_acuity": 7}) \
         == "MISSING_FIELDS_DETECTED"
+
+
+def test_free_text_is_optional_so_a_structured_form_is_complete_without_it():
+    """The real-case form has no free-text box; the model never reads free text (I12)."""
+    payload = {k: v for k, v in CLEAN.items() if k != "free_text"}
+    assert "free_text" not in guards.missing_fields(payload)
+    assert "free_text" not in guards.NURSE_SUPPLIED_FIELDS

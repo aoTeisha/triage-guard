@@ -50,35 +50,87 @@
                 font-weight: 600; cursor: pointer; }
     .new-case:hover { background: #3fc086; }
 
-    #intake-panel { position: fixed; top: 0; left: 0; width: min(24rem, 92vw); height: 100%;
+    #intake-panel { position: fixed; top: 0; left: 0; width: min(30rem, 94vw); height: 100%;
                     background: var(--panel); border-right: 1px solid var(--line);
                     padding: 1rem 1.1rem; overflow-y: auto; transform: translateX(-101%);
                     transition: transform 0.15s ease-out; z-index: 10; }
     #intake-panel.open { transform: none; }
     #intake-panel .close { float: right; cursor: pointer; color: var(--muted);
                            background: none; border: none; font-size: 1.1rem; }
-    #intake-panel h2 { font-size: 0.95rem; margin: 0 0 0.4rem; }
+    #intake-panel h2 { font-size: 1.05rem; margin: 0 0 0.4rem; font-weight: 700; }
     #intake-panel label { display: block; font-size: 0.75rem; color: var(--muted);
-                          margin: 0.8rem 0 0.2rem; }
-    #intake-panel #submission-types label { color: var(--text); font-size: 0.82rem;
-                                            margin: 0.3rem 0; }
+                          margin: 0.8rem 0 0.3rem; font-weight: 500; }
+    #intake-panel .group-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em;
+                                 color: var(--muted); font-weight: 700; margin: 0 0 0.7rem; }
+    #intake-panel #submission-types label { display: flex; align-items: flex-start; gap: 0.55rem;
+                                            color: var(--text); font-size: 0.83rem; margin: 0;
+                                            padding: 0.55rem 0.6rem; border-radius: 8px; cursor: pointer;
+                                            transition: background 0.12s ease; }
+    #intake-panel #submission-types label:hover { background: var(--panel-2); }
+    #intake-panel #submission-types label:has(input:checked) { background: var(--panel-2);
+                                            box-shadow: 0 0 0 1px var(--line) inset; }
+    #intake-panel #submission-types input { margin-top: 0.15rem; accent-color: #5b6ee1; }
+
+    #case-mode { display: flex; gap: 0.25rem; background: var(--panel);
+                border: 1px solid var(--line); border-radius: 10px; padding: 0.25rem; }
+    #case-mode label { position: relative; flex: 1; display: flex; align-items: center;
+                       justify-content: center; color: var(--muted); font-size: 0.82rem;
+                       font-weight: 600; margin: 0; padding: 0.5rem 0.4rem; border-radius: 7px;
+                       cursor: pointer; text-align: center; transition: background 0.12s ease, color 0.12s ease; }
+    #case-mode input { position: absolute; opacity: 0; width: 0; height: 0; }
+    #case-mode label:has(input:checked) { background: var(--panel-2); color: var(--text);
+                       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
+    #case-mode label:hover { color: var(--text); }
+
+    #payload-preview { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+                       padding: 0.6rem 0.7rem; font-size: 0.78rem; }
+    #payload-preview .v { overflow-wrap: anywhere; }
+    #payload-preview .not-sent { color: var(--emergent); font-style: italic; }
+    #payload-preview .planted { color: var(--warn); }
+
+    #intake-panel select, #real-inputs input {
+      width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--line);
+      border-radius: 7px; padding: 0.4rem 0.55rem; font: inherit; box-sizing: border-box;
+      transition: border-color 0.12s ease, box-shadow 0.12s ease; }
+    #intake-panel select:focus, #real-inputs input:focus, #intake-panel #patient-id:focus {
+      outline: none; border-color: #5b6ee1; box-shadow: 0 0 0 2px rgba(91, 110, 225, 0.35); }
+    #real-inputs .vitals { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 0.6rem; }
+    #real-inputs .vitals .field { display: flex; flex-direction: column; gap: 0.25rem; }
+    #real-inputs .vitals .field-label { font-size: 0.68rem; color: var(--muted);
+                       text-transform: uppercase; letter-spacing: 0.05em; }
+
+    #real-fields, #national-id-box, #submission-type-box, #demo-fields {
+                   margin-top: 1rem; background: #2a2308; border: 1px solid #5c4a10;
+                   border-left: 3px solid var(--warn); border-radius: 10px; padding: 0.9rem 1rem; }
+    #real-fields label:first-child, #national-id-box label:first-child { margin-top: 0; }
+    /* Stronger against the dark-amber fill: the muted grey used elsewhere in the
+       panel reads too faint here. */
+    #real-fields .group-label, #national-id-box .group-label,
+    #submission-type-box .group-label, #demo-fields .group-label { color: var(--warn); }
+    #real-fields label, #national-id-box label, #demo-fields label,
+    #real-inputs .vitals .field-label {
+      color: var(--text); }
+
     #intake-panel .lookup-row { display: flex; gap: 0.5rem; }
-    #intake-panel #patient-id { flex: 1; min-width: 0; background: var(--panel-2);
+    #intake-panel #patient-id { flex: 1; min-width: 0; background: var(--panel);
                                 color: var(--text); border: 1px solid var(--line);
-                                border-radius: 6px; padding: 0.35rem 0.5rem; font: inherit; }
-    #intake-panel #lookup-btn { background: var(--panel-2); color: var(--text);
-                                border: 1px solid var(--line); border-radius: 6px;
-                                padding: 0.35rem 0.7rem; font: inherit; cursor: pointer; }
-    #intake-panel #lookup-btn:hover { border-color: #47506a; }
-    #intake-panel #submit-btn { margin-top: 1rem; width: 100%; background: var(--ok);
-                                color: #05170e; border: 1px solid #4cc789; border-radius: 6px;
-                                padding: 0.5rem 0.8rem; font: inherit; font-weight: 600;
-                                cursor: pointer; }
+                                border-radius: 7px; padding: 0.4rem 0.55rem; font: inherit; }
+    #intake-panel #lookup-btn { background: var(--panel); color: var(--text);
+                                border: 1px solid var(--line); border-radius: 7px;
+                                padding: 0.4rem 0.8rem; font: inherit; font-weight: 600; cursor: pointer;
+                                transition: border-color 0.12s ease, background 0.12s ease; }
+    #intake-panel #lookup-btn:hover { border-color: #47506a; background: var(--panel-2); }
+    #intake-panel #submit-btn { margin-top: 1.6rem; width: 100%; background: var(--ok);
+                                color: #05170e; border: 1px solid #4cc789; border-radius: 8px;
+                                padding: 0.6rem 0.8rem; font: inherit; font-size: 0.88rem; font-weight: 700;
+                                cursor: pointer; transition: background 0.12s ease, transform 0.05s ease; }
+    #intake-panel #submit-btn:hover:not([disabled]) { background: #3fc086; }
+    #intake-panel #submit-btn:active:not([disabled]) { transform: translateY(1px); }
     #intake-panel #submit-btn[disabled] { background: var(--panel-2); color: var(--muted);
                                           border-color: var(--line); font-weight: 400;
                                           cursor: not-allowed; opacity: 0.6; }
-    #lookup-result:not(:empty) { margin-top: 0.4rem; font-size: 0.78rem;
-                                 border-radius: 6px; padding: 0.4rem 0.5rem; }
+    #lookup-result:not(:empty) { margin-top: 0.5rem; font-size: 0.78rem;
+                                 border-radius: 7px; padding: 0.45rem 0.6rem; }
     .status-found { background: #14301f; color: #7ee2ab; }
     .status-not_found { background: #332708; color: #ffd479; }
     .status-db_error { background: #3a2a10; color: #ffc48a; }
@@ -191,7 +243,10 @@
     .refile input, .refile select { width: 100%; background: var(--panel-2); color: var(--text);
                                      border: 1px solid var(--line); border-radius: 6px;
                                      padding: 0.3rem 0.5rem; font: inherit; }
-    .refile .vitals { display: grid; grid-template-columns: 1fr 1fr; gap: 0 0.5rem; }
+    .refile .vitals { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 0.5rem; }
+    .refile .vitals .field { display: flex; flex-direction: column; gap: 0.2rem; }
+    .refile .vitals .field-label { font-size: 0.68rem; color: var(--muted);
+                                   text-transform: uppercase; letter-spacing: 0.05em; }
     .refile button { margin-top: 0.7rem; background: var(--warn); color: #1a1400; border: 1px solid #ffbd47;
                      padding: 0.4rem 0.9rem; border-radius: 6px; cursor: pointer; font-weight: 600; }
     .refile button:hover:not([disabled]) { background: #ffb84d; }
@@ -222,6 +277,8 @@
     .trace-alert h3 { color: var(--emergent); font-size: 0.8rem; margin: 0 0 0.4rem; }
     .trace-alert h3::before { content: "⚠ "; }
     .trace-alert ul { margin: 0; padding-left: 1.1rem; font-size: 0.78rem; line-height: 1.5; }
+    .trace-alert li b { color: var(--text); }
+    .trace-ok { margin-top: 1rem; font-size: 0.78rem; color: var(--ok); }
   </style>
 </head>
 <body>
@@ -259,20 +316,51 @@
       control plane, so the case that appears on the board is a real one.
     </p>
 
-    <label for="patient-id">National ID</label>
-    <div class="lookup-row">
-      <input type="text" id="patient-id" inputmode="numeric" placeholder="300000005" />
-      <button id="lookup-btn">Lookup</button>
+    <div id="national-id-box">
+      <div class="group-label">Patient identification</div>
+      <label for="patient-id">National ID</label>
+      <div class="lookup-row">
+        <input type="text" id="patient-id" inputmode="numeric" placeholder="300000005" />
+        <button id="lookup-btn">Lookup</button>
+      </div>
+      <div id="lookup-result" role="status" aria-live="polite"></div>
     </div>
-    <div id="lookup-result" role="status" aria-live="polite"></div>
 
-    <label>Submission type</label>
-    <div id="submission-types">
-      <label><input type="radio" name="submission_type" value="clean" checked /> Clean submission</label>
-      <label><input type="radio" name="submission_type" value="missing" /> Missing fields</label>
-      <label><input type="radio" name="submission_type" value="failed" /> Failed submission</label>
-      <label><input type="radio" name="submission_type" value="gap" /> Acuity discrepancy — pauses for a charge nurse</label>
-      <label><input type="radio" name="submission_type" value="injection" /> Injection attempt</label>
+    <div id="submission-type-box">
+      <div class="group-label">Submission type</div>
+      <div id="case-mode" role="radiogroup" aria-label="Case kind">
+        <label><input type="radio" name="case_mode" value="real" checked /> Real case</label>
+        <label><input type="radio" name="case_mode" value="demo" /> Demo case scenarios</label>
+      </div>
+    </div>
+
+    <div id="real-fields">
+      <div class="group-label">Clinical observations</div>
+      <p class="meta">Enter what you observed. Anything left blank is not sent,
+        and the system will ask for it.</p>
+      <div id="real-inputs"></div>
+    </div>
+
+    <div id="demo-fields" hidden>
+      <div class="group-label">Demo scenario</div>
+      <p class="meta">Each scenario sends a fixed, pre-written submission — shown
+        below exactly as it will be sent.</p>
+      <div id="submission-types">
+        <label><input type="radio" name="submission_type" value="clean" checked /> Clean submission</label>
+        <label><input type="radio" name="submission_type" value="missing" /> Missing fields</label>
+        <label><input type="radio" name="submission_type" value="failed" /> Failed submission</label>
+        <label><input type="radio" name="submission_type" value="gap" /> Acuity discrepancy — pauses for a charge nurse</label>
+        <label><input type="radio" name="submission_type" value="injection" /> Injection attempt</label>
+        <label><input type="radio" name="submission_type" value="trace_violation" /> Trace violation — tamper with the log</label>
+      </div>
+      <div id="violation-fields" hidden>
+        <label for="violation">Rule to break</label>
+        <select id="violation"></select>
+        <p class="meta">Runs a clean case, then plants fake records in its audit log
+          that skip the guards, to show the trace check catching them.</p>
+      </div>
+      <label>What will be sent</label>
+      <div id="payload-preview" class="kv"></div>
     </div>
 
     <button id="submit-btn" disabled>Submit</button>

@@ -21,7 +21,13 @@ function traceAlert(violations) {
   const box = el("div", "section trace-alert");
   box.append(el("h3", null, "Trace check found a problem"));
   const list = el("ul");
-  (violations || []).forEach((v) => list.append(el("li", null, v)));
+  (violations || []).forEach((v) => {
+    const item = el("li");
+    const rule = Object.keys(TRACE_RULE_LABELS).find((r) => v.includes(r.replace(/_/g, " ")));
+    if (rule) item.append(el("b", null, TRACE_RULE_LABELS[rule]), " — ");
+    item.append(v);
+    list.append(item);
+  });
   box.append(list);
   return box;
 }
@@ -105,6 +111,7 @@ async function openPanel(caseId) {
   if (view.status === "awaiting_human_approval") body.append(gatePanel(caseId, view, card));
   if (view.control_state === "reassessment_required") body.append(refilePanel(caseId));
   if (view.trace_safety === false) body.append(traceAlert(view.trace_violations));
+  else body.append(el("div", "trace-ok", "Trace check: passed ✓ — the audit log breaks none of the safety rules"));
 
   const trailBox = el("div", "section");
   trailBox.append(el("h3", null, "Audit trail — everything that happened to this case"),

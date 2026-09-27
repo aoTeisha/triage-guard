@@ -527,3 +527,21 @@ def test_cards_carry_no_reminder_when_none_was_sent(seeded):
     cards = client.get("/api/board").json()["cards"]
     assert cards
     assert all(c["reminders"] is None for c in cards)
+
+
+def test_a_released_card_does_not_keep_its_reminder(seeded):
+    """The reminder was live while the case was open; once released it is a
+    dead nudge, and the card must stop carrying it even within the feed
+    window (unlike the notification strip, which is a historical log)."""
+    case_id = seeded[0]
+    timers.record_notification(timers.connection(), case_id=case_id,
+                               reason="gate_reminder_0", channel="notification_strip",
+                               recipient_class="assigned_nurse")
+    client.post(f"/api/case/{case_id}/release",
+                json={"reason": "discharge", "actor_role": "charge_nurse"})
+
+    cards = client.get("/api/board").json()["cards"]
+
+    card = next(c for c in cards if c["case_id"] == case_id)
+    assert card["status"] == "patient_released"
+    assert card["reminders"] is None

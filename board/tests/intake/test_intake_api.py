@@ -5,13 +5,16 @@ answers from the intake side, now served by the board app on one origin.
 from __future__ import annotations
 
 import threading
+from typing import get_args
 
 import httpx
+import pytest
 import respx
 from fastapi.testclient import TestClient
 
 from app.labels import Transition
 from board.api import app
+from board.mock_cases import PLANTED, TRACE_VIOLATIONS, SubmissionType
 from board.patient_lookup import CRM_BASE_URL
 
 client = TestClient(app)
@@ -285,3 +288,124 @@ def test_resume_keeps_its_old_refusal_wording_for_a_case_not_at_the_gate():
 
     assert denied.status_code == 409
     assert denied.json()["detail"] == "case is not awaiting human approval"
+
+
+# ---- real case: the nurse types the fields --------------------------------
+
+REAL_FIELDS = {
+    "nurse_proposed_acuity": 3,
+    "chief_complaint": "chest_pain",
+    "vitals": {"hr": 104, "bp": "148/92", "spo2": 95, "temp_c": 37.1},
+}
+
+
+@respx.mock
+def test_a_complete_real_case_runs_the_clean_path():
+    _crm()
+
+    body = client.post("/api/submit", json={"national_id": "300000005", "fields": REAL_FIELDS}).json()
+
+    assert body["control_state"] == "monitoring"
+    assert body["acuity"] is not None
+
+
+@respx.mock
+def test_a_partial_real_case_is_sent_as_is_and_asks_for_the_rest():
+    _crm()
+
+    body = client.post(
+        "/api/submit", json={"national_id": "300000005", "fields": {"chief_complaint": "chest_pain"}}
+    ).json()
+
+    assert "nurse_proposed_acuity" in body["missing_fields"]
+
+
+@pytest.mark.parametrize("field", [{"acuity": 1}, {"free_text": "typed prose"}])
+def test_a_real_case_refuses_a_field_that_is_not_on_the_form(field):
+    """The real form has no free-text box: the model never sees free text (I12)."""
+    response = client.post("/api/submit", json={"national_id": "300000005", "fields": field})
+
+    assert response.status_code == 422
+
+
+def test_a_real_case_refuses_a_complaint_outside_the_fixed_set():
+    response = client.post(
+        "/api/submit", json={"national_id": "300000005", "fields": {"chief_complaint": "sore"}}
+    )
+
+    assert response.status_code == 422
+
+
+def test_a_submission_must_be_either_a_real_case_or_a_demo_case():
+    both = {"national_id": "300000005", "submission_type": "clean", "fields": REAL_FIELDS}
+    neither = {"national_id": "300000005"}
+
+    assert client.post("/api/submit", json=both).status_code == 422
+    assert client.post("/api/submit", json=neither).status_code == 422
+
+
+# ---- trace-violation demo: plants records the trace check must catch --------
+
+@pytest.mark.parametrize("rule", sorted(TRACE_VIOLATIONS))
+@respx.mock
+def test_each_planted_violation_trips_exactly_its_own_rule(rule):
+    _crm()
+
+    body = client.post(
+        "/api/submit",
+        json={"national_id": "300000005", "submission_type": "trace_violation", "violation": rule},
+    ).json()
+
+    assert body["trace_safety"] is False
+    assert body["trace_violations"]
+    assert all(rule.replace("_", " ") in v for v in body["trace_violations"]), body["trace_violations"]
+    assert any(r["action"] == PLANTED for r in body["audit_log"])
+
+
+@pytest.mark.parametrize("violation", [None, "not_a_rule"])
+def test_a_trace_violation_needs_a_known_rule(violation):
+    response = client.post(
+        "/api/submit",
+        json={"national_id": "300000005", "submission_type": "trace_violation", "violation": violation},
+    )
+
+    assert response.status_code == 422
+
+
+@respx.mock
+def test_planted_records_stay_out_of_the_notification_strip():
+    _crm()
+    client.post(
+        "/api/submit",
+        json={"national_id": "300000005", "submission_type": "trace_violation",
+              "violation": "single_treatment_start"},
+    )
+
+    notes = client.get("/api/board").json()["notifications"]
+
+    assert not any(n["action"] == PLANTED for n in notes)
+
+
+# ---- demo scenarios: what each one sends, for the form's preview ----------
+
+def test_demo_cases_serves_every_scenario_payload_as_it_will_be_sent():
+    body = client.get("/api/demo-cases?national_id=300000005").json()
+
+    assert set(body["cases"]) == set(get_args(SubmissionType))
+    assert body["cases"]["clean"]["national_id"] == "300000005"
+    assert "vitals" not in body["cases"]["missing"]
+    assert "national_id" not in body["cases"]["failed"]
+    # case_id is minted fresh on every submit, so a preview cannot show it.
+    assert not any("case_id" in c for c in body["cases"].values())
+    assert set(body["planted"]) == set(TRACE_VIOLATIONS)
+    assert body["planted"]["single_treatment_start"] == ["move_confirmed", "move_confirmed"]
+
+
+def test_demo_cases_needs_no_patient_lookup():
+    """No CRM mock on purpose: the preview never looks the patient up."""
+    assert client.get("/api/demo-cases").status_code == 200
+
+
+def test_static_files_are_always_rechecked_by_the_browser():
+    """A stale cached script against fresh HTML once left the form without its fields."""
+    assert client.get("/static/intake.js").headers["cache-control"] == "no-cache"

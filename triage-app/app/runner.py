@@ -216,6 +216,21 @@ def resume_case(
     return hydrate(result), pending(result)
 
 
+def plant_audit_records(case_id: str, records: list[dict[str, Any]]) -> None:
+    """Append records to a case's audit log without running any node — demo only.
+
+    This deliberately skips every guard, so the after-run trace check has
+    something to catch. Only for a case paused at `awaiting_reassessment`,
+    where a clean case always ends. The write is attributed to `monitoring`,
+    whose plain edge leads back into that same pause, so the case stays paused
+    where it was. Attributing it to the paused node would instead advance the
+    case to its next step.
+    """
+    with case_lock(case_id):
+        graph().update_state(config_for(case_id), {"audit_log": records},
+                             as_node=State.MONITORING.value)
+
+
 def snapshot(case_id: str) -> dict[str, Any]:
     """Current persisted state for a case, for a board or a status endpoint."""
     return graph().get_state(config_for(case_id)).values

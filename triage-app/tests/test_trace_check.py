@@ -300,3 +300,22 @@ def test_a_released_case_passes(graph, run):
     assert state["control_state"] == "case_closed"
     result = check_trace(state["audit_log"])
     assert result.passed, result.violations
+
+
+# ---- a demo that plants records, so the check has something to catch --------
+
+def test_planted_records_are_caught_and_leave_the_case_where_it_was(graph, run):
+    from app.runner import plant_audit_records
+
+    _, _, thread = run(DEMO_CASES["clean"])
+    before = graph.get_state(config_for(thread))
+    plant_audit_records(thread, [_record(T.MOVE_CONFIRMED), _record(T.MOVE_CONFIRMED)])
+    after = graph.get_state(config_for(thread))
+
+    assert after.next == before.next
+    assert after.values["control_state"] == before.values["control_state"]
+    assert after.values["clinical_status"] == before.values["clinical_status"]
+    assert any("single treatment start" in v for v in check_trace(after.values["audit_log"]).violations)
+    # The case still answers a real move: the guards read state, not the log.
+    state = _resume(graph, thread, {"event": "MOVE_REQUESTED", "actor_role": "charge_nurse"})
+    assert state["clinical_status"] == "treatment_started"

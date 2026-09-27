@@ -227,13 +227,10 @@ function gatePanel(caseId, view, card) {
   return box;
 }
 
-function refilePanel(caseId) {
-  const box = el("div", "section refile");
-  box.append(el("h3", null, "Re-file reassessment"),
-             el("div", "meta", "The reassessment timer fired. Enter this patient's current "
-               + "observations to re-triage them — the system never carries the old numbers "
-               + "forward on its own."));
-
+// The clinical fields a nurse types: acuity, complaint, vitals. Shared by the
+// re-file form and the new-case form so the two cannot drift. `read()` returns
+// only what was filled in — a blank field is left out, never sent as null.
+function clinicalInputs() {
   const acuity = el("select");
   const placeholder = el("option", null, "select ESI level");
   placeholder.value = "";
@@ -256,25 +253,64 @@ function refilePanel(caseId) {
     complaint.append(opt);
   });
 
-  const hr = el("input"); hr.type = "number"; hr.placeholder = "HR";
-  const bp = el("input"); bp.type = "text"; bp.placeholder = "BP (e.g. 120/80)";
-  const spo2 = el("input"); spo2.type = "number"; spo2.placeholder = "SpO2";
-  const temp = el("input"); temp.type = "number"; temp.step = "0.1"; temp.placeholder = "Temp °C";
+  const hr = el("input"); hr.type = "number"; hr.placeholder = "e.g. 88";
+  const bp = el("input"); bp.type = "text"; bp.inputMode = "numeric";
+  bp.placeholder = "e.g. 120/80"; bp.maxLength = 7;
+  // Digits only; the slash is inserted automatically once the systolic
+  // number (always 3 digits, adult vitals) is typed — never free text.
+  bp.addEventListener("input", () => {
+    const digits = bp.value.replace(/\D/g, "").slice(0, 6);
+    bp.value = digits.length > 3 ? `${digits.slice(0, 3)}/${digits.slice(3)}` : digits;
+  });
+  const spo2 = el("input"); spo2.type = "number"; spo2.placeholder = "e.g. 98";
+  const temp = el("input"); temp.type = "number"; temp.step = "0.1"; temp.placeholder = "e.g. 37.0";
+
+  // A persistent caption above each vital, so the field's meaning survives
+  // once the placeholder is gone (the moment the nurse starts typing).
+  const field = (caption, input) => {
+    const wrap = el("div", "field");
+    wrap.append(el("span", "field-label", caption), input);
+    return wrap;
+  };
+  const vitalsBox = el("div", "vitals");
+  vitalsBox.append(field("HR", hr), field("BP", bp), field("SpO2", spo2), field("Temp °C", temp));
+
+  return {
+    nodes: [
+      el("label", null, "Nurse-proposed acuity"), acuity,
+      el("label", null, "Chief complaint"), complaint,
+      el("label", null, "Vitals"), vitalsBox,
+    ],
+    read() {
+      const fields = {};
+      if (acuity.value) fields.nurse_proposed_acuity = Number(acuity.value);
+      if (complaint.value) fields.chief_complaint = complaint.value;
+      const vitals = {};
+      if (hr.value) vitals.hr = Number(hr.value);
+      if (bp.value.trim()) vitals.bp = bp.value.trim();
+      if (spo2.value) vitals.spo2 = Number(spo2.value);
+      if (temp.value) vitals.temp_c = Number(temp.value);
+      if (Object.keys(vitals).length) fields.vitals = vitals;
+      return fields;
+    },
+  };
+}
+
+function refilePanel(caseId) {
+  const box = el("div", "section refile");
+  box.append(el("h3", null, "Re-file reassessment"),
+             el("div", "meta", "The reassessment timer fired. Enter this patient's current "
+               + "observations to re-triage them — the system never carries the old numbers "
+               + "forward on its own."));
 
   const msg = el("div", "msg");
   const submit = el("button", null, "Submit re-file");
-  const vitalsBox = el("div", "vitals");
-  vitalsBox.append(hr, bp, spo2, temp);
-
-  box.append(
-    el("label", null, "Nurse-proposed acuity"), acuity,
-    el("label", null, "Chief complaint"), complaint,
-    el("label", null, "Vitals"), vitalsBox,
-    submit, msg,
-  );
+  const inputs = clinicalInputs();
+  box.append(...inputs.nodes, submit, msg);
 
   submit.onclick = async () => {
-    if (!acuity.value || !complaint.value.trim()) {
+    const fields = inputs.read();
+    if (!fields.nurse_proposed_acuity || !fields.chief_complaint) {
       msg.className = "msg err";
       msg.textContent = "acuity and chief complaint are required";
       return;
@@ -286,13 +322,7 @@ function refilePanel(caseId) {
       const res = await fetch(`/api/case/${encodeURIComponent(caseId)}/reassess`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          nurse_proposed_acuity: Number(acuity.value),
-          chief_complaint: complaint.value.trim(),
-          vitals: { hr: hr.value ? Number(hr.value) : null, bp: bp.value || null,
-                    spo2: spo2.value ? Number(spo2.value) : null,
-                    temp_c: temp.value ? Number(temp.value) : null },
-        }),
+        body: JSON.stringify({ vitals: {}, ...fields }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
