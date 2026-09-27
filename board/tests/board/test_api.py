@@ -197,7 +197,7 @@ def test_move_to_treatment_endpoint_updates_the_card(seeded):
 def test_release_endpoint_marks_the_card_released(seeded):
     """The card is NOT removed from `/api/board`'s `cards` — it moves to the
     `patient_released` status, and the frontend's drawer section (already
-    built, board.js `DRAWER_COLUMN`) is what visually separates it from the
+    built, labels.js `DRAWER_COLUMN`) is what visually separates it from the
     main columns.
     """
     resp = client.post(
@@ -380,7 +380,8 @@ def test_deteriorated_endpoint_re_enters_the_graph_while_waiting(checkpoint_db):
     # A reported deterioration lands the case at the reassessment re-filing
     # pause, waiting for a nurse's fresh observations — it does not replay the
     # stale intake payload. triage-app's tests/test_reassessment.py covers the
-    # pause; intake-channel's POST /reassess/{case_id} is what answers it.
+    # pause; this board's own POST /api/case/{case_id}/reassess is what
+    # answers it.
     assert detail["view"]["control_state"] == "reassessment_required"
     assert any(
         rec.get("explanation", "").startswith(

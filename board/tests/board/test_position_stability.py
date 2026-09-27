@@ -8,7 +8,7 @@ from app.states import ClinicalStatus
 from app.views import card_from_state
 from board.ordering import positions, sort_cards
 
-from .conftest import make_state
+from ..conftest import make_state
 
 T0 = "2026-01-01T08:00:00+00:00"
 T1 = "2026-01-01T09:00:00+00:00"

@@ -6,9 +6,9 @@ description: Wipe the triage-guard demo data (cases, timers, notifications, esca
 # Reset Board DB
 
 Drops every case, timer, notification and escalation from the `triage`
-Postgres database used by `triage-app`, `board`, and `intake-channel`. The
-`crm` database (patient records) is never touched — this only resets the
-case/checkpoint side.
+Postgres database used by `triage-app` and `board`. The `crm` database
+(patient records) is never touched — this only resets the case/checkpoint
+side.
 
 This is destructive and the DB is shared across every worktree and running
 service that points at it (same `triage-guard-postgres` container). Always
@@ -37,11 +37,11 @@ skill by name — say what will be wiped and wait for a yes.
 
 4. **Report what happened** — which tables were dropped (the `DROP SCHEMA`
    output lists them via `NOTICE: drop cascades to ...`) — and mention that
-   the board/intake-channel/triage-guard CLI can be used immediately; no
-   restart is needed since each opens its own connection and the schema is
-   recreated automatically on first use.
+   the board and the triage-guard CLI can be used immediately; no restart is
+   needed since each opens its own connection and the schema is recreated
+   automatically on first use.
 
-If any service (board, intake-channel, the sweeper) is running against this
-DB while you wipe it, its next read will see empty tables and its next
-write will recreate them — no crash, but any in-flight case is gone. Mention
-this if you know something is running.
+If any service (board, the sweeper) is running against this DB while you
+wipe it, its next read will see empty tables and its next write will
+recreate them — no crash, but any in-flight case is gone. Mention this if
+you know something is running.

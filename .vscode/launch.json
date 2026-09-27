@@ -17,21 +17,6 @@
       "console": "integratedTerminal"
     },
     {
-      "name": "intake-channel (:8001)",
-      "type": "debugpy",
-      "request": "launch",
-      "preLaunchTask": "uv sync: intake-channel",
-      "cwd": "${workspaceFolder}/intake-channel",
-      "python": "${workspaceFolder}/intake-channel/.venv/bin/python",
-      "windows": {
-        "python": "${workspaceFolder}/intake-channel/.venv/Scripts/python.exe"
-      },
-      "module": "uvicorn",
-      "args": ["channel.api:app", "--host", "127.0.0.1", "--port", "8001"],
-      "justMyCode": false,
-      "console": "integratedTerminal"
-    },
-    {
       "name": "board (:8002)",
       "type": "debugpy",
       "request": "launch",
@@ -63,8 +48,8 @@
   ],
   "compounds": [
     {
-      "name": "All services (crm-stub + intake-channel + board + sweeper)",
-      "configurations": ["crm-stub (:8000)", "intake-channel (:8001)", "board (:8002)", "sweeper (waiting-room monitor)"],
+      "name": "All services (crm-stub + board + sweeper)",
+      "configurations": ["crm-stub (:8000)", "board (:8002)", "sweeper (waiting-room monitor)"],
       "preLaunchTask": "prelaunch: sync + postgres",
       "stopAll": true
     }

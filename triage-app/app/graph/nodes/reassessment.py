@@ -56,7 +56,7 @@ def reassessment_required(state: TriageState) -> dict[str, Any]:
 
 def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
     """The re-filing pause: freezes until a nurse submits fresh clinical
-    observations (`POST /reassess/{case_id}` in intake-channel).
+    observations (`POST /api/case/{case_id}/reassess` on the board).
 
     Only the fields a nurse can actually change get overwritten. Everything
     else in `raw_payload` is carried over, and that is load-bearing rather
@@ -71,8 +71,9 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
 
     fresh_payload = {
         **state.raw_payload,
-        # Identity is settled; the national id is long gone (I11). Carrying the
-        # internal id lets the front door see an identified patient.
+        # Identity is settled; the national id is long gone — patient identifiers
+        # live only in the CRM. Carrying the internal id lets the front door see
+        # an identified patient.
         "stable_patient_id": state.stable_patient_id,
         "nurse_proposed_acuity": submitted.get("nurse_proposed_acuity"),
         "chief_complaint": submitted.get("chief_complaint"),
@@ -84,7 +85,9 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
         "raw_payload": fresh_payload,
         # A re-file starts a new triage. Values from the last one must not count:
         # a stale `acuity` skipped the gate on a big gap, and a stale `approved`
-        # would let a move through (I4, I5). `order_key` is kept on purpose (I2).
+        # would let the case bypass safety validation in its new triage.
+        # `order_key` is kept on purpose — it changes only when acuity changes,
+        # not on every re-file.
         "acuity": None,
         "acuity_source": None,
         "human_decision": None,

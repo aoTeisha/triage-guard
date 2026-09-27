@@ -26,14 +26,6 @@
       "problemMatcher": []
     },
     {
-      "label": "uv sync: intake-channel",
-      "type": "shell",
-      "command": "uv sync",
-      "options": { "cwd": "${workspaceFolder}/intake-channel" },
-      "presentation": { "reveal": "silent", "panel": "shared" },
-      "problemMatcher": []
-    },
-    {
       "label": "uv sync: board",
       "type": "shell",
       "command": "uv sync",
@@ -51,7 +43,7 @@
     },
     {
       "label": "uv sync: all",
-      "dependsOn": ["uv sync: crm-stub", "uv sync: intake-channel", "uv sync: board", "uv sync: triage-app"],
+      "dependsOn": ["uv sync: crm-stub", "uv sync: board", "uv sync: triage-app"],
       "dependsOrder": "parallel",
       "problemMatcher": []
     },

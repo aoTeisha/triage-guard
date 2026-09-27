@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from app.views import PATIENT_LABELS, CaseCard, card_from_state
 
-from .conftest import make_state
+from ..conftest import make_state
 
 T0 = "2026-01-01T08:00:00+00:00"
 

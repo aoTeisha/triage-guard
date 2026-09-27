@@ -12,6 +12,7 @@ import pytest
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command
 
+from app import runner
 from app.graph import build_graph
 from app.labels import Transition
 from app.runner import hydrate
@@ -75,11 +76,14 @@ def test_a_resolved_gate_re_runs_safety_before_the_queue(graph, run):
     assert resumed["safety_passed"] is True
 
 
-def test_the_pause_survives_a_rebuilt_graph():
+def test_the_pause_survives_a_rebuilt_graph(monkeypatch):
     """The real test of durability: throw the graph object away between the pause
     and the resume, as a restarted process would.
     """
     dsn = _throwaway_db()
+    # The duplicate-case check reads `runner.DSN`, fixed at import to the real
+    # store — without this, an open demo case for the same patient rejects the run.
+    monkeypatch.setattr(runner, "DSN", dsn)
     cfg = {"configurable": {"thread_id": "case-gap"}}
     try:
         with PostgresSaver.from_conn_string(dsn) as saver_a:

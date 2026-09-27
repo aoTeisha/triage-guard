@@ -1,7 +1,23 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-26 (Z3 proofs, the real safety validator, the acuity range
-guard, and national-ID identity resolution. Previous entry below.)
+**Last updated:** 2026-09-27 (the two nurse-facing services became one. Previous entry
+below.)
+
+**2026-09-27.** `intake-channel` (port 8001) and the board (port 8002) were two
+services because the board's own detail panel already rendered the gate form and the
+re-filing form — it just posted them cross-origin to the other service, which is why
+that service carried a CORS allow-list. They are one service now: the board serves
+both, on :8002, and `intake-channel/` is deleted. All nine writes that re-enter a
+paused case — the four the board already had plus the five that moved over — now go
+through one function, `board/board/commands.py::answer_pause`, which takes the case
+lock and validates the pause inside it rather than before it (closing a race the old
+`_resume_waiting_case` documented but the gate path never had). Nothing about what any
+endpoint replies changed: the board's four still return `{"status": "ok"}` /
+`{"status": "denied", "detail": ...}`, the five that moved over still return the bare
+case view, and no existing test's expected value was edited to make that hold. The
+board's test suite is now split into `tests/board/` and `tests/intake/`, each with its
+own autouse database fixtures. New totals: board 116 (1 skipped — a concurrency test
+with no matching demo case), triage-app 554 (plus 1 deselected), crm-stub 18.
 
 **Previous:** 2026-09-25 (Langfuse traces now carry case, patient and outcome, and
 the "Triage Guard" dashboard is seeded; treatment-move execution machine marked dropped,
@@ -108,8 +124,10 @@ A dead sweeper shows as "monitor degraded" on the board (heartbeat, `board/api.p
 
 ## What's left (scan 2026-09-24)
 
-Every test suite is green: triage-app 453 (plus 1 deselected), board 50, intake-channel
-48, crm-stub 18. The two tests that used to fail while the CRM stub was running now
+Every test suite is green: triage-app 554 (plus 1 deselected), board 116 (1 skipped),
+crm-stub 18. `intake-channel` no longer exists as its own service — it was merged into
+the board on 2026-09-27; see the entry at the top of this file. The two tests that used
+to fail while the CRM stub was running now
 force the outage themselves with `monkeypatch`, so nothing depends on a service being
 absent. The suite does need the Postgres container up (`db/docker-compose.yml`), SWI-
 Prolog installed, and the `opa` binary on PATH — on Windows that is
@@ -309,7 +327,7 @@ scope here. Two new board endpoints (`POST /api/case/{case_id}/move-to-treatment
 — rather than writing case state directly; the in-graph guards
 `move_authorized` / `release_authorized` (`app/deterministic.py`) do the actual
 authorization check, and a refusal is a normal 200 response
-(`status: "denied"`), not an HTTP error. `board.js` gained two new buttons
+(`status: "denied"`), not an HTTP error. The board UI (`case-actions.js`) gained two new buttons
 ("Start treatment", "Release patient") in the case detail panel. Full
 design/build notes, scope cuts, and the post-implementation review rounds:
 `docs/superpowers/plans/2026-09-17-treatment-move-and-release/`.

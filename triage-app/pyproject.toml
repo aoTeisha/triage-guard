@@ -43,7 +43,7 @@ packages = ["app"]
 "app/monitor/schema.sql" = "app/monitor/schema.sql"
 
 # A uv dependency group, not an extra: uv installs it on `uv sync` by default,
-# so `uv run pytest` works with no flags. Matches crm-stub/ and intake-channel/.
+# so `uv run pytest` works with no flags. Matches crm-stub/ and board/.
 [dependency-groups]
 dev = [
     "pytest>=8.0",

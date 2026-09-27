@@ -1,6 +1,5 @@
-"""FastAPI server for the triage board — the read-only dashboard nurses watch,
-as opposed to intake-channel (the separate service that accepts new cases and
-answers gate questions).
+"""FastAPI server for the triage board — the one nurse-facing service: the live
+queue board and the intake front door on one page.
 
     GET  /                            the board itself
     GET  /api/board                   columns, cards, counters — one call per refresh
@@ -9,31 +8,29 @@ answers gate questions).
     GET  /api/heartbeat               is the background sweeper process still alive?
     POST /api/case/{case_id}/deteriorated       nurse-initiated DETERIORATION_DETECTED
     POST /api/case/{case_id}/move-to-treatment  nurse-initiated MOVE_REQUESTED
+    POST /api/case/{case_id}/treatment-complete nurse-initiated TREATMENT_COMPLETE
     POST /api/case/{case_id}/release            nurse-initiated RELEASE_REQUESTED
 
-Read-only by design, with three deliberate exceptions — `/deteriorated`,
-`/move-to-treatment`, and `/release`. None of them write case state
-directly: each re-enters that case's paused LangGraph run with a
-`Command(resume=...)`, the same mechanism intake-channel's own `/resume`
-endpoint uses. The real authorization check for a move or a release
-(`move_authorized` / `release_authorized`) runs inside the graph node that
-receives the resume, not here — a request this layer accepts can still come
-back refused, the same way `/deteriorated` already can.
+The `intake` router, mounted below, adds the five endpoints that create a case
+and answer its pauses: `POST /api/submit`, `POST /api/case/{case_id}/resume`,
+`/reassess`, `/fields`, and `/recover`.
 
-This is the minimal version: both new endpoints only work while a case is
-genuinely parked in the waiting-room pause (`control_state == monitoring`),
-not from the human-approval gate or the reassessment re-file pause. See
+Every one of these nine writes re-enters the case's own paused LangGraph run
+through `commands.answer_pause` rather than touching case state directly. That
+function owns the case lock, validates the pause inside it, and invokes the
+graph; each endpoint here only decides which pause it answers and how it
+formats the reply. The real authorization check for a move, a release, a gate
+answer or a re-file (`move_authorized`, `release_authorized`, the resolver-role
+check, and so on) runs inside the graph node that receives the resume, not
+here — a request this layer accepts can still come back refused.
+
+This is the minimal version of the treatment-move and release endpoints: they
+only work while a case is genuinely parked in the waiting-room pause
+(`control_state == monitoring`) or, for release, any open pause. See
 docs/superpowers/plans/2026-09-17-treatment-move-and-release/findings.md
-for why those two are out of scope here, and docs/STATUS.md item 4 for the
-full treatment-move execution machine (Tool Gateway, idempotency,
-reconciliation) this version deliberately skips.
-
-This server issues no other writes, but the page it serves does: a case
-sitting at `reassessment_required` shows a re-filing form in its detail
-panel that calls `intake-channel`'s `POST /reassess/{case_id}` directly from
-the browser, not through this backend — a second front door for the same
-"answer a paused case" action `/deteriorated` and intake-channel's own
-`/resume` already do, just reached from here instead of the intake form.
+for why the gate and re-file pauses are out of scope for those two, and
+docs/STATUS.md item 4 for the full treatment-move execution machine (Tool
+Gateway, idempotency, reconciliation) this version deliberately skips.
 
 Run:
     uv run board
@@ -49,21 +46,20 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from langgraph.types import Command
 from pydantic import BaseModel
 
-from app import runner
 from app.guards import CHIEF_COMPLAINTS
 from app.budgets import HEARTBEAT_STALE_MULTIPLIER
 from app.labels import Transition
 from app.monitor import timers
 from app.monitor.sweeper import SWEEP_INTERVAL_SECONDS
-from app.observability import case_trace, record_outcome
-from app.runner import case_history_check, config_for, history
+from app.runner import case_history_check, history
 from app.budgets import BOARD_FEED_WINDOW_MINUTES, BOARD_RED_AFTER_MINUTES
 from app.states import AcuityBucket, ClinicalStatus, State
 from app.views import BOARD_COLUMNS, CaseCard, card_from_state, case_view
 
+from . import commands
+from .intake import router as intake_router
 from .ordering import positions, sort_cards
 from .repo import CheckpointRepo
 
@@ -92,6 +88,7 @@ NOTIFY_TRANSITIONS = {
 
 app = FastAPI(title="Triage Guard — board", version="0.1.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.include_router(intake_router)
 
 repo = CheckpointRepo()
 
@@ -262,8 +259,9 @@ def board_payload() -> dict:
     nudges = nudges_by_case(feed, datetime.now(timezone.utc))
     return {
         "columns": BOARD_COLUMNS,
-        # The re-file form offers these and nothing else: the complaint is a code
-        # (I12), and the vocabulary has one home, app/guards/fields.py.
+        # The re-file form offers these and nothing else: the complaint must be a
+        # code from a fixed set, never typed prose, and the vocabulary has one
+        # home, app/guards/fields.py.
         "chief_complaints": list(CHIEF_COMPLAINTS),
         "counters": counters(cards),
         "red_after_min": BOARD_RED_AFTER_MINUTES,
@@ -309,44 +307,6 @@ class DeteriorationReport(BaseModel):
     actor_role: str = "nurse"
 
 
-def _waiting_snapshot(case_id: str):
-    """Fetch a case's graph handle + config, refusing (404/409) unless it's
-    genuinely parked in the waiting-room pause (`control_state == monitoring`
-    — the same fact `app.monitor.fire.dispatch` checks before firing a
-    reassessment timer). Shared by `deteriorated` and `move_to_treatment`;
-    `release` uses `_paused_snapshot`, since a release may come from any pause.
-    """
-    g = runner.graph()
-    config = config_for(case_id)
-    snapshot = g.get_state(config)
-    if not snapshot.values:
-        raise HTTPException(status_code=404, detail=f"no case {case_id}")
-    if snapshot.values.get("control_state") != State.MONITORING.value:
-        raise HTTPException(status_code=409, detail="case is not currently waiting in the queue")
-    return g, config, snapshot
-
-
-@app.post("/api/case/{case_id}/deteriorated")
-def deteriorated(case_id: str, report: DeteriorationReport):
-    """Lets a nurse report that a patient's condition is worsening while they
-    wait. This manual path stays useful even once a real vitals-monitoring
-    feed exists — a human noticing something is always valid input. It
-    re-enters the case's paused LangGraph run with a `Command(resume=...)`
-    into that case's own thread, the same mechanism intake-channel's own
-    `/resume` endpoint uses, rather than writing to case state directly.
-
-    Routed through `_resume_waiting_case` (I22): this mutates the same case
-    thread `/move-to-treatment` and `/release` do, through the same
-    `g.invoke()` mechanism, so it needs the same `runner.case_lock` —
-    without it, a deterioration report racing a concurrent release could hit
-    a thread the release had already closed out from under it.
-    """
-    return _resume_waiting_case(
-        case_id, {"event": "DETERIORATION_DETECTED", "signal": report.signal,
-                  "actor_role": report.actor_role}
-    )
-
-
 class MoveToTreatmentReport(BaseModel):
     actor_role: str = "nurse"
 
@@ -356,115 +316,88 @@ class ReleaseReport(BaseModel):
     actor_role: str = "nurse"
 
 
-def _paused_snapshot(case_id: str):
-    """Like `_waiting_snapshot`, but for release (I9): any pause of a case that
-    is not already closed qualifies, not just the waiting room.
+# The waiting-room pause reports itself through `control_state`, the same fact
+# `app.monitor.fire.dispatch` checks before firing a reassessment timer.
+_WAITING = "case is not currently waiting in the queue"
+
+
+def _report(outcome: commands.Outcome) -> dict:
+    """The board's own reply shape, unchanged since before `commands.py` existed.
+
+    A guard refusal is not an HTTP error — the request was valid and processed,
+    the graph just said no — so this still returns 200, with `status: "denied"`
+    and the guard's own explanation. That is what lets the page tell "accepted"
+    apart from "refused" instead of assuming every 200 means success.
     """
-    g = runner.graph()
-    config = config_for(case_id)
-    snapshot = g.get_state(config)
-    if not snapshot.values:
-        raise HTTPException(status_code=404, detail=f"no case {case_id}")
-    if snapshot.values.get("control_state") == State.CASE_CLOSED.value or not snapshot.next:
-        raise HTTPException(status_code=409, detail="case is closed or not paused")
-    return g, config, snapshot
-
-
-def _resume_waiting_case(case_id: str, resume: dict, any_pause: bool = False) -> dict:
-    """Shared by `/move-to-treatment` and `/release`: re-enter a case's
-    waiting-room pause with `Command(resume=...)`, refusing (404/409) unless
-    it's genuinely parked there, then report whether the in-graph guard
-    (`move_authorized` / `release_authorized`) actually accepted the action.
-
-    A guard refusal is a normal outcome, not an HTTP error — the request was
-    valid and processed, the graph just said no (same convention
-    `/deteriorated` already follows) — so this still returns 200, with
-    `status: "denied"` and the guard's own explanation, letting the caller
-    (the board UI) tell "accepted" apart from "refused" instead of assuming
-    every 200 means success.
-
-    Reads the outcome from `g.invoke()`'s own return value, not a second
-    `g.get_state()` call after invoking — a second post-invoke `get_state()`
-    would risk reading whichever request's audit row landed last rather than
-    this call's own. If the audit log didn't grow at all, this request's
-    resume never actually applied — so it's reported the same way as "case
-    not currently waiting" rather than a false "ok".
-
-    I22: the pause-validity snapshot is taken *after* acquiring
-    `runner.case_lock`, not before. Two near-simultaneous requests for the
-    same case (a double-click, or two nurses) used to both pass this
-    function's own guard while the case still looked paused to both, then
-    race into `g.invoke()` — the loser's `g.invoke()` could land on a thread
-    the winner had *already closed*, and LangGraph's `Command(resume=...)`
-    on an ended thread with no pending task just returns the current (now
-    fully-updated) state rather than erroring, so the loser's audit-log
-    check would see growth and misreport the *winner's* outcome as its own.
-    Locking first, then snapshotting, means a second request only ever sees
-    truth: either the pause is genuinely still open (rare true idempotent
-    replay — the length check below still catches that), or the case has
-    already moved on and `_paused_snapshot`/`_waiting_snapshot` itself
-    refuses with its normal 404/409 before `g.invoke()` is ever called.
-    """
-    with runner.case_lock(case_id):
-        g, config, snapshot = (_paused_snapshot if any_pause else _waiting_snapshot)(case_id)
-        before = len(snapshot.values.get("audit_log") or [])
-        with case_trace(case_id, "board-action", snapshot.values) as span:
-            result = g.invoke(Command(resume=resume), config)
-            record_outcome(span, snapshot.values, result)
-
-    after_log = result.get("audit_log") or []
-    if len(after_log) <= before:
-        raise HTTPException(status_code=409, detail="case already left the pause")
-
-    last = after_log[-1]
-    if last.get("transition") == Transition.BLK.value:
-        return {"status": "denied", "detail": last.get("explanation")}
+    if not outcome.accepted:
+        return {"status": "denied", "detail": outcome.refusal}
     return {"status": "ok"}
+
+
+@app.post("/api/case/{case_id}/deteriorated")
+def deteriorated(case_id: str, report: DeteriorationReport):
+    """Lets a nurse report that a patient's condition is worsening while they
+    wait. This manual path stays useful even once a real vitals-monitoring feed
+    exists — a human noticing something is always valid input.
+    """
+    return _report(commands.answer_pause(
+        case_id,
+        {"event": "DETERIORATION_DETECTED", "signal": report.signal,
+         "actor_role": report.actor_role},
+        commands.in_control_state(State.MONITORING.value, _WAITING),
+        require_applied=True,
+    ))
 
 
 @app.post("/api/case/{case_id}/move-to-treatment")
 def move_to_treatment(case_id: str, report: MoveToTreatmentReport):
-    """Nurse-initiated move into treatment. Same shape as `/deteriorated`:
-    re-enters the paused run rather than writing case state directly.
-    Only works from the waiting-room pause (see
-    docs/superpowers/plans/2026-09-17-treatment-move-and-release/
-    findings.md: only that pause is wired in this version).
+    """Nurse-initiated move into treatment. Only wired from the waiting-room
+    pause in this version. The real authorization check (`move_authorized`) runs
+    inside the graph node that receives the resume, not here, so a request this
+    layer accepts can still come back refused.
     """
-    return _resume_waiting_case(
-        case_id, {"event": "MOVE_REQUESTED", "actor_role": report.actor_role}
-    )
+    return _report(commands.answer_pause(
+        case_id,
+        {"event": "MOVE_REQUESTED", "actor_role": report.actor_role},
+        commands.in_control_state(State.MONITORING.value, _WAITING),
+        require_applied=True,
+    ))
 
 
 @app.post("/api/case/{case_id}/treatment-complete")
 def treatment_complete(case_id: str, report: MoveToTreatmentReport):
-    """Treatment is done: `treatment_started` -> `formal_validation` (spec arrow
-    FV), the sign-off column before release. Same shape as `/move-to-treatment`;
-    the pause node refuses it for a patient who is not in treatment.
+    """Treatment is done: the case moves to the sign-off column before release.
+    The pause node refuses it for a patient who is not in treatment.
     """
-    return _resume_waiting_case(
-        case_id, {"event": "TREATMENT_COMPLETE", "actor_role": report.actor_role}
-    )
+    return _report(commands.answer_pause(
+        case_id,
+        {"event": "TREATMENT_COMPLETE", "actor_role": report.actor_role},
+        commands.in_control_state(State.MONITORING.value, _WAITING),
+        require_applied=True,
+    ))
 
 
 @app.post("/api/case/{case_id}/release")
 def release(case_id: str, report: ReleaseReport):
-    """Nurse-initiated release, from any pause of an open case (I9). Same
-    shape as `/deteriorated` and `/move-to-treatment` above. The real authorization check
-    (`release_authorized`, charge-role + valid reason) runs inside the
+    """Nurse-initiated release: possible from any pause of a case that is not
+    yet closed, and only with a valid reason. The real authorization check
+    (`release_authorized`, charge role plus a valid reason) runs inside the
     graph node, not here.
     """
-    return _resume_waiting_case(
+    return _report(commands.answer_pause(
         case_id,
-        {"event": "RELEASE_REQUESTED", "reason": report.reason, "actor_role": report.actor_role},
-        any_pause=True,
-    )
+        {"event": "RELEASE_REQUESTED", "reason": report.reason,
+         "actor_role": report.actor_role},
+        commands.open_pause(),
+        require_applied=True,
+    ))
 
 
 @app.get("/api/case/{case_id}")
 def case(case_id: str):
-    """The case detail panel: the same view intake-channel renders for this
-    case, plus how many checkpoints (state snapshots) it has. The event
-    trail is `view["audit_log"]`, already formatted as
+    """The case detail panel: the same view `board.intake`'s endpoints render
+    for this case, plus how many checkpoints (state snapshots) it has. The
+    event trail is `view["audit_log"]`, already formatted as
     `at · transition · action · explanation` by `deterministic.audit()`.
     """
     values, gated = repo.load(case_id)
@@ -473,8 +406,8 @@ def case(case_id: str):
     # `gated` means the run is currently paused waiting for a charge nurse's
     # decision. A paused run hasn't written any gate-related fields to its
     # state yet — the pause itself only shows up as a pending task on the
-    # checkpoint. The panel just needs to know it's paused; actually
-    # answering the gate is intake-channel's job, not the board's.
+    # checkpoint. This read endpoint just needs to know it's paused; actually
+    # answering the gate is `board.intake.resume`'s job, not this one's.
     pending = {"gate": values.get("escalation_reason") or "awaiting charge nurse"} if gated else None
     card = card_from_state(values, None, gated)
     # A case's position in the queue isn't stored on the case itself — it can

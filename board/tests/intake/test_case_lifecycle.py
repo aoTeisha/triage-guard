@@ -1,55 +1,22 @@
-"""Tests for channel.api — the HTTP layer over the real graph.
+"""Tests for board.intake — the HTTP layer over the real graph.
 
-`/submit` used to return a canned dict from `MOCK_PARSE_RESULTS`. It now runs
-the case through `app.graph`, so these tests exercise the control plane through
-the same door a nurse uses, including the pause at the acuity gate.
+`/submit` runs the case through `app.graph`, so these tests exercise the
+control plane through the same door a nurse uses, including the pause at the
+acuity gate.
 """
 
 import httpx
-import pytest
 import respx
 from fastapi.testclient import TestClient
 from langgraph.types import Command
 
-import channel.api as api_module
+import board.api as api_module
 from app.labels import Transition
 from app.mock_cases import DEMO_CASES
 from app.runner import config_for, start_case
-from channel.patient_lookup import CRM_BASE_URL
+from board.patient_lookup import CRM_BASE_URL
 
 client = TestClient(api_module.app)
-
-
-@pytest.fixture(autouse=True)
-def offline(monkeypatch):
-    """Mock actors, no tracing, and a throwaway checkpoint database per test."""
-    monkeypatch.setenv("TRIAGE_LLM", "mock")
-    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
-    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
-
-    import os
-    import uuid
-
-    import psycopg
-    from langgraph.checkpoint.postgres import PostgresSaver
-
-    from app import runner
-    from app.graph import build_graph
-
-    admin_dsn = os.environ.get("POSTGRES_TEST_DSN", "postgresql://triage:triage@localhost:5434/postgres")
-    name = f"test_{uuid.uuid4().hex}"
-    with psycopg.connect(admin_dsn, autocommit=True) as admin:
-        admin.execute(f'CREATE DATABASE "{name}"')
-    dsn = admin_dsn.rsplit("/", 1)[0] + f"/{name}"
-
-    with PostgresSaver.from_conn_string(dsn) as saver:
-        saver.setup()
-        compiled = build_graph(checkpointer=saver)
-        monkeypatch.setattr(runner, "graph", lambda: compiled)
-        yield
-
-    with psycopg.connect(admin_dsn, autocommit=True) as admin:
-        admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
 
 
 def _crm(status: int = 200, body: dict | None = None):
@@ -62,7 +29,7 @@ def _crm(status: int = 200, body: dict | None = None):
 
 def _submit(kind: str, patient: str = "300000005"):
     return client.post(
-        "/submit", json={"national_id": patient, "submission_type": kind}
+        "/api/submit", json={"national_id": patient, "submission_type": kind}
     ).json()
 
 
@@ -73,7 +40,7 @@ def _submit(kind: str, patient: str = "300000005"):
 def test_lookup_found_returns_200_with_status_found():
     _crm(200, {"status": "found", "record": {"stable_patient_id": "P-1005", "name": "David Friedman"}})
 
-    r = client.get("/lookup/300000005")
+    r = client.get("/api/lookup/300000005")
 
     assert r.status_code == 200
     assert r.json()["status"] == "found"
@@ -89,7 +56,7 @@ def test_lookup_not_found_still_returns_200():
         return_value=httpx.Response(404, json={"detail": "not_found"})
     )
 
-    r = client.get("/lookup/999999999")
+    r = client.get("/api/lookup/999999999")
 
     assert r.status_code == 200
     assert r.json()["status"] == "not_found"
@@ -100,7 +67,7 @@ def test_lookup_not_found_still_returns_200():
 def test_lookup_db_error_still_returns_200():
     _crm(503, {"detail": "db_error"})
 
-    r = client.get("/lookup/300000005")
+    r = client.get("/api/lookup/300000005")
 
     assert r.json()["status"] == "db_error"
 
@@ -208,7 +175,7 @@ def test_a_charge_nurse_can_resolve_the_gate_and_the_case_completes():
     paused = _submit("gap")
 
     resumed = client.post(
-        f"/resume/{paused['case_id']}",
+        f"/api/case/{paused['case_id']}/resume",
         json={"decision": "use_system_acuity", "resolver_role": "charge_nurse"},
     ).json()
 
@@ -227,7 +194,7 @@ def test_an_unauthorized_resolver_is_refused_through_the_api():
     paused = _submit("gap")
 
     denied = client.post(
-        f"/resume/{paused['case_id']}",
+        f"/api/case/{paused['case_id']}/resume",
         json={"decision": "use_system_acuity", "resolver_role": "nurse"},
     ).json()
 
@@ -237,7 +204,7 @@ def test_an_unauthorized_resolver_is_refused_through_the_api():
     assert any(r["transition"] == Transition.BLK.value for r in denied["audit_log"])
 
     resolved = client.post(
-        f"/resume/{paused['case_id']}",
+        f"/api/case/{paused['case_id']}/resume",
         json={"decision": "use_system_acuity", "resolver_role": "charge_nurse"},
     )
     assert resolved.status_code == 200
@@ -250,7 +217,7 @@ def test_a_case_can_be_read_back_after_the_request_that_created_it():
     _crm()
     submitted = _submit("clean")
 
-    fetched = client.get(f"/case/{submitted['case_id']}").json()
+    fetched = client.get(f"/api/case/{submitted['case_id']}").json()["view"]
 
     assert fetched["case_id"] == submitted["case_id"]
     assert fetched["control_state"] == "monitoring"
@@ -259,7 +226,7 @@ def test_a_case_can_be_read_back_after_the_request_that_created_it():
 
 
 def test_reading_an_unknown_case_is_a_404():
-    assert client.get("/case/case-does-not-exist").status_code == 404
+    assert client.get("/api/case/case-does-not-exist").status_code == 404
 
 
 # ---- the reassessment re-filing pause, through the UI's endpoint -----------
@@ -283,7 +250,7 @@ def test_reassess_endpoint_moves_the_case_on_with_fresh_observations():
     case = _reach_refile_pause()
 
     resp = client.post(
-        f"/reassess/{case['case_id']}",
+        f"/api/case/{case['case_id']}/reassess",
         json={
             "nurse_proposed_acuity": 1,
             "chief_complaint": "chest_pain",
@@ -306,7 +273,7 @@ def test_a_refile_always_parses_cleanly_and_never_ends_the_run():
     case = _reach_refile_pause("case-reassess-2")
 
     resp = client.post(
-        f"/reassess/{case['case_id']}",
+        f"/api/case/{case['case_id']}/reassess",
         json={"nurse_proposed_acuity": 3, "chief_complaint": "chest_pain", "vitals": {}},
     )
 
@@ -318,7 +285,7 @@ def test_a_refile_always_parses_cleanly_and_never_ends_the_run():
 
 def test_reassess_endpoint_404s_for_an_unknown_case():
     resp = client.post(
-        "/reassess/does-not-exist",
+        "/api/case/does-not-exist/reassess",
         json={"nurse_proposed_acuity": 3, "chief_complaint": "chest_pain", "vitals": {}},
     )
     assert resp.status_code == 404
@@ -330,7 +297,7 @@ def test_reassess_endpoint_refuses_a_case_not_awaiting_a_refile():
     start_case(case, thread_id=case["case_id"])  # paused at monitoring, not re-filing
 
     resp = client.post(
-        f"/reassess/{case['case_id']}",
+        f"/api/case/{case['case_id']}/reassess",
         json={"nurse_proposed_acuity": 3, "chief_complaint": "chest_pain", "vitals": {}},
     )
 
@@ -349,7 +316,7 @@ def test_resume_endpoint_refuses_a_case_parked_at_the_refile_pause():
     case = _reach_refile_pause("case-resume-guard")
 
     resp = client.post(
-        f"/resume/{case['case_id']}",
+        f"/api/case/{case['case_id']}/resume",
         json={"decision": "use_system_acuity", "resolver_role": "charge_nurse"},
     )
 
@@ -362,13 +329,13 @@ def test_resume_endpoint_refuses_a_case_parked_at_the_refile_pause():
     assert values["nurse_proposed_acuity"] == case["nurse_proposed_acuity"]
     assert values["raw_payload"]["chief_complaint"] == case["chief_complaint"]
 
-    fetched = client.get(f"/case/{case['case_id']}").json()
+    fetched = client.get(f"/api/case/{case['case_id']}").json()["view"]
     assert fetched["control_state"] == "reassessment_required"
 
 
 def test_a_gate_answer_without_a_role_is_rejected():
     """I14: no role must never default to charge nurse."""
-    response = client.post("/resume/any-case", json={"decision": "use_system_acuity"})
+    response = client.post("/api/case/any-case/resume", json={"decision": "use_system_acuity"})
 
     assert response.status_code == 422
 
@@ -381,7 +348,7 @@ def test_missing_fields_can_be_completed_through_the_api():
     assert paused["status"] == "awaiting_intake_fix"
 
     done = client.post(
-        f"/fields/{paused['case_id']}",
+        f"/api/case/{paused['case_id']}/fields",
         json={"nurse_proposed_acuity": 3,
               "vitals": {"hr": 90, "bp": "120/80", "spo2": 98, "temp_c": 36.8}},
     ).json()
@@ -396,12 +363,12 @@ def test_each_pause_accepts_only_its_own_answer():
     _crm()
     at_gate = _submit("gap")
 
-    assert client.post(f"/fields/{at_gate['case_id']}", json={}).status_code == 409
-    assert client.post(f"/recover/{at_gate['case_id']}").status_code == 409
-    assert client.post("/recover/no-such-case").status_code == 404
+    assert client.post(f"/api/case/{at_gate['case_id']}/fields", json={}).status_code == 409
+    assert client.post(f"/api/case/{at_gate['case_id']}/recover").status_code == 409
+    assert client.post("/api/case/no-such-case/recover").status_code == 404
 
 
 def test_fields_rejects_anything_that_is_not_an_intake_field():
-    response = client.post("/fields/any-case", json={"case_id": "x", "bogus": 1})
+    response = client.post("/api/case/any-case/fields", json={"case_id": "x", "bogus": 1})
 
     assert response.status_code == 422

@@ -5,13 +5,12 @@ result type the UI can render directly, without parsing HTTP status codes in
 JS. Mirrors crm-stub's own FetchStatus split (crm/models.py) on the client
 side.
 
-Deliberately independent from app/crm_client.py: app and intake-channel are
-separately deployed services with no shared build-time source, so each
-maintains its own small client over crm-stub rather than importing the
-other's. See docs/SPECIFICATION.md — "New patient vs. DB down (both
-continue on intake-only data, different logging)" — both not_found and
-db_error are non-blocking outcomes; only the caller decides what continuing
-means.
+Kept separate from `app/crm_client.py` on purpose. That client is the one the
+graph's own nodes use, and the board's tests pin it at an unreachable address to
+prove the board keeps rendering through a CRM outage. This one serves the intake
+form, where a lookup failing is a thing the nurse is shown and continues past
+rather than a thing the page survives. Both `not_found` and `db_error` are
+non-blocking outcomes; only the caller decides what continuing means.
 """
 
 from __future__ import annotations
@@ -19,6 +18,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import Literal, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -50,8 +50,13 @@ def fetch_patient(national_id: str, *, timeout: float = 5.0) -> PatientLookupRes
     Any network-level failure (connection refused, timeout) is also reported
     as db_error — from the nurse's point of view an unreachable CRM and a
     CRM returning 503 look the same: continue without history, flag it.
+
+    `national_id` is percent-encoded before it goes into the path (`safe=""`,
+    so even `/` is escaped). Without that, a value containing a slash or a
+    `..` segment gets collapsed by ordinary URL normalization and can climb
+    out of `/patients/by-national-id/` to a different CRM route entirely.
     """
-    url = f"{CRM_BASE_URL}/patients/by-national-id/{national_id}"
+    url = f"{CRM_BASE_URL}/patients/by-national-id/{quote(national_id, safe='')}"
     try:
         response = httpx.get(url, timeout=timeout)
     except httpx.HTTPError:

@@ -14,12 +14,24 @@ deteriorated, which improves ER capacity logistics and treatment.
 In VS Code, open the Run and Debug panel and pick a compound from
 `.vscode/launch.json`:
 
-- **All services (crm-stub + intake-channel + board + sweeper)** — all three APIs plus
+- **All services (crm-stub + board + sweeper)** — both APIs plus
   the waiting-room monitor, debuggable.
 
-Stopping the compound stops every service in it. Open `http://127.0.0.1:8001` for
-the intake form, `http://127.0.0.1:8002` for the board.
+Stopping the compound stops every service in it. Open `http://127.0.0.1:8002` for
+the one nurse-facing page — the queue board and the intake front door together.
 For running each service on its own, or the offline CLI/test loop, see below.
+
+### Run all tests
+
+Each service is its own uv project with its own virtualenv, so each suite runs
+from inside its folder — `uv run pytest` at the repo root falls back to the system
+Python and fails on missing imports. From the repo root, with the shared Postgres up:
+
+```bash
+for d in triage-app board crm-stub; do (cd "$d" && uv run pytest) || break; done
+```
+
+It stops at the first failing suite.
 
 ## The Triage guard app
 
@@ -42,7 +54,7 @@ cp triage-app/.env.example triage-app/.env      # optional — mock mode needs n
 cd triage-app
 uv sync
 uv run triage-guard            # clean / missing / failed / injection
-uv run pytest                  # 345 tests, offline
+uv run pytest                  # offline, no LLM key needed
 uv run sweeper                 # waiting-room monitor — fires reassessment timers
 ```
 
@@ -64,10 +76,11 @@ but nothing ever fires it, so it never moves to `reassessment_required`. See
 works.
 
 To drive it from a browser instead — including pausing at the acuity gate and
-resolving it as a charge nurse — run `intake-channel/`. Once a case's reassessment
-timer fires, it pauses again waiting for a nurse to re-file it with fresh
-observations; the board (`board/`) surfaces that pause as a form on the case's detail
-panel, calling `intake-channel`'s `POST /reassess/{case_id}` directly.
+resolving it as a charge nurse — run `board/`. Its new-case panel is the intake
+form. Once a case's reassessment timer fires, it pauses again waiting for a
+nurse to re-file it with fresh observations; the board surfaces that pause as a
+form on the case's detail panel, answered through its own `POST
+/api/case/{case_id}/reassess`.
 
 See [triage-app/README.md](triage-app/README.md) for the full details, and
 [docs/plans/2026-09-10-langgraph-migration-design.md](docs/plans/2026-09-10-langgraph-migration-design.md)
@@ -117,41 +130,24 @@ Interactive API docs at [http://localhost:8000/docs](http://localhost:8000/docs)
 
 See [crm-stub/README.md](crm-stub/README.md) for the full details.
 
-## The intake channel
-
-A standalone nurse-facing intake form, standing in for the real website intake
-described in the spec.it's a small HTTP service like the
-CRM stub: look up a patient, pick one of four mock submission types (clean /
-missing / failed / injection), submit, and the payload runs through the
-`parse_intake` task and shows up as a Langfuse span.
-
-### Run
-
-```bash
-cd intake-channel
-uv sync
-uv run intake-channel   # serves on :8001, needs the CRM stub on :8000
-```
-
-See [intake-channel/README.md](intake-channel/README.md) for the full details.
-
 ## The board
 
-The other end of the same system: where intake is one case in, the board is all
-cases out. A nurse-facing kanban of the World plane — one card per live case, one
-column per `clinical_status`, sorted by the `order_key` the control plane already
-assigned. Click a card for its acuity block and its transition trail.
+The one nurse-facing service: intake in, cases out, on one page. A kanban of
+the World plane — one card per live case, one column per `clinical_status`,
+sorted by the `order_key` the control plane already assigned — plus a new-case
+panel that creates cases directly. Click a card for its acuity block and its
+transition trail.
 
-It is a _view_: the board computes no triage, writes no state, and re-computes no
-ordering. Two of the six columns have a writer today (`waiting`, `human_review`);
-the other four render empty with the milestone they wait on, rather than being
-filled in by the board to look complete. It never calls the CRM, so a CRM outage
-cannot blank it.
+It computes no triage and re-computes no ordering — every write, including
+case creation, re-enters the case's own paused LangGraph run rather than
+writing case state directly. It never calls the CRM from its own read path, so
+a CRM outage cannot blank it; the CRM stub is only reached by the intake
+panel's lookup step.
 
 ```bash
 cd board
 uv sync
-uv run board   # serves on :8002 — populates only from real intake-channel submissions
+uv run board   # serves on :8002 — the queue board and the intake front door
 ```
 
 See [board/README.md](board/README.md) for the full details, and

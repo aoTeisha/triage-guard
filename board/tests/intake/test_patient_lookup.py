@@ -1,4 +1,4 @@
-"""Tests for channel.patient_lookup — the national-id lookup, and its
+"""Tests for board.patient_lookup — the national-id lookup, and its
 200/404/503 to found/not_found/db_error mapping.
 
 Uses respx to mock the CRM stub over HTTP rather than requiring a live CRM
@@ -8,7 +8,7 @@ process, so this suite runs standalone.
 import httpx
 import respx
 
-from channel.patient_lookup import CRM_BASE_URL, fetch_patient
+from board.patient_lookup import CRM_BASE_URL, fetch_patient
 
 
 @respx.mock
@@ -83,3 +83,29 @@ def test_unexpected_status_is_conservative_db_error():
     result = fetch_patient("300000001")
 
     assert result.status == "db_error"
+
+
+def test_a_national_id_with_path_characters_cannot_reshape_the_crm_request():
+    """Review Focus 4. `fetch_patient` interpolates the id straight into a URL
+    path. An id containing a slash or a traversal segment must not turn a
+    patient lookup into a request for some other CRM endpoint. httpx normalizes
+    the path it sends, so the assertion is on what the CRM actually received.
+    """
+    import httpx
+    import respx
+
+    from board.patient_lookup import CRM_BASE_URL, fetch_patient
+
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.get(url__startswith=CRM_BASE_URL).mock(
+            return_value=httpx.Response(404)
+        )
+
+        result = fetch_patient("../../health")
+
+    assert result.status == "not_found"
+    requested = str(route.calls[0].request.url)
+    # Whatever normalization happened, it stayed inside the lookup endpoint and
+    # did not climb out to another CRM route.
+    assert "/patients/by-national-id/" in requested
+    assert not requested.endswith("/health")

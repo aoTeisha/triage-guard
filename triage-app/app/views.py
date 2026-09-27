@@ -2,8 +2,8 @@
 
 Two shapes live here, and nothing else:
 
-    case_view(state, pending)   the detail view — was `channel/api.py::_view`,
-                                now shared by intake-channel and the board
+    case_view(state, pending)   the detail view, shared by every board endpoint
+                                that answers a pause or creates a case
     CaseCard / card_from_state  the board's card DTO, a strict subset
 
 Both are *projections*: they read `TriageState` and return plain data. Neither
@@ -75,7 +75,8 @@ def case_view(state: dict[str, Any], pending: dict[str, Any] | None) -> dict[str
         "acuity_gap": state.get("acuity_gap"),
         "safety_passed": state.get("safety_passed"),
         # The validator's reasons, verbatim: a charge nurse answering a safety
-        # failure has to know what to correct (I7), not only that it failed.
+        # failure has to know what to correct before the case can pass safety
+        # again, not only that it failed.
         "safety_reasons": list(getattr(state.get("safety_verdict"), "reasons", None)
                                or (state.get("safety_verdict") or {}).get("reasons", [])
                                if state.get("safety_verdict") else []),

@@ -44,6 +44,45 @@
     #notif-panel h2 { font-size: 0.95rem; margin: 0 0 0.6rem; }
     #notif-panel .close { float: right; cursor: pointer; color: var(--muted);
                            background: none; border: none; font-size: 1.1rem; }
+
+    .new-case { background: var(--ok); color: #05170e; border: 1px solid #4cc789;
+                border-radius: 8px; padding: 0.4rem 0.8rem; font: inherit;
+                font-weight: 600; cursor: pointer; }
+    .new-case:hover { background: #3fc086; }
+
+    #intake-panel { position: fixed; top: 0; left: 0; width: min(24rem, 92vw); height: 100%;
+                    background: var(--panel); border-right: 1px solid var(--line);
+                    padding: 1rem 1.1rem; overflow-y: auto; transform: translateX(-101%);
+                    transition: transform 0.15s ease-out; z-index: 10; }
+    #intake-panel.open { transform: none; }
+    #intake-panel .close { float: right; cursor: pointer; color: var(--muted);
+                           background: none; border: none; font-size: 1.1rem; }
+    #intake-panel h2 { font-size: 0.95rem; margin: 0 0 0.4rem; }
+    #intake-panel label { display: block; font-size: 0.75rem; color: var(--muted);
+                          margin: 0.8rem 0 0.2rem; }
+    #intake-panel #submission-types label { color: var(--text); font-size: 0.82rem;
+                                            margin: 0.3rem 0; }
+    #intake-panel .lookup-row { display: flex; gap: 0.5rem; }
+    #intake-panel #patient-id { flex: 1; min-width: 0; background: var(--panel-2);
+                                color: var(--text); border: 1px solid var(--line);
+                                border-radius: 6px; padding: 0.35rem 0.5rem; font: inherit; }
+    #intake-panel #lookup-btn { background: var(--panel-2); color: var(--text);
+                                border: 1px solid var(--line); border-radius: 6px;
+                                padding: 0.35rem 0.7rem; font: inherit; cursor: pointer; }
+    #intake-panel #lookup-btn:hover { border-color: #47506a; }
+    #intake-panel #submit-btn { margin-top: 1rem; width: 100%; background: var(--ok);
+                                color: #05170e; border: 1px solid #4cc789; border-radius: 6px;
+                                padding: 0.5rem 0.8rem; font: inherit; font-weight: 600;
+                                cursor: pointer; }
+    #intake-panel #submit-btn[disabled] { background: var(--panel-2); color: var(--muted);
+                                          border-color: var(--line); font-weight: 400;
+                                          cursor: not-allowed; opacity: 0.6; }
+    #lookup-result:not(:empty) { margin-top: 0.4rem; font-size: 0.78rem;
+                                 border-radius: 6px; padding: 0.4rem 0.5rem; }
+    .status-found { background: #14301f; color: #7ee2ab; }
+    .status-not_found { background: #332708; color: #ffd479; }
+    .status-db_error { background: #3a2a10; color: #ffc48a; }
+
     .notif-item { background: var(--panel-2); border: 1px solid var(--line);
                   border-left: 3px solid var(--warn); border-radius: 8px;
                   padding: 0.5rem 0.6rem; margin-bottom: 0.5rem; cursor: pointer; }
@@ -195,6 +234,7 @@
       </div>
     </div>
     <div id="counters"></div>
+    <button class="new-case" id="new-case-btn">+ New case</button>
     <button class="bell" id="notif-bell" aria-label="Notifications">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
            stroke-linecap="round" stroke-linejoin="round">
@@ -211,6 +251,34 @@
     <div id="notif-list"></div>
   </aside>
 
+  <aside id="intake-panel" hidden>
+    <button class="close" id="intake-panel-close" aria-label="Close">✕</button>
+    <h2>New case</h2>
+    <p class="meta">
+      Stands in for the website intake form. The submission runs through the real
+      control plane, so the case that appears on the board is a real one.
+    </p>
+
+    <label for="patient-id">National ID</label>
+    <div class="lookup-row">
+      <input type="text" id="patient-id" inputmode="numeric" placeholder="300000005" />
+      <button id="lookup-btn">Lookup</button>
+    </div>
+    <div id="lookup-result" role="status" aria-live="polite"></div>
+
+    <label>Submission type</label>
+    <div id="submission-types">
+      <label><input type="radio" name="submission_type" value="clean" checked /> Clean submission</label>
+      <label><input type="radio" name="submission_type" value="missing" /> Missing fields</label>
+      <label><input type="radio" name="submission_type" value="failed" /> Failed submission</label>
+      <label><input type="radio" name="submission_type" value="gap" /> Acuity discrepancy — pauses for a charge nurse</label>
+      <label><input type="radio" name="submission_type" value="injection" /> Injection attempt</label>
+    </div>
+
+    <button id="submit-btn" disabled>Submit</button>
+    <div id="submit-result" class="msg" role="status" aria-live="polite"></div>
+  </aside>
+
   <main id="columns"></main>
 
   <details id="drawer">
@@ -223,6 +291,11 @@
     <div id="panel-body"></div>
   </aside>
 
+  <script src="/static/labels.js"></script>
+  <script src="/static/queue.js"></script>
+  <script src="/static/panel.js"></script>
+  <script src="/static/case-actions.js"></script>
+  <script src="/static/intake.js"></script>
   <script src="/static/board.js"></script>
 </body>
 </html>

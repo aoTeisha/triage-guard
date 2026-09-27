@@ -1,9 +1,9 @@
-"""Tests for channel.mock_cases.build_case — the four demo payloads."""
+"""Tests for board.mock_cases.build_case — the four demo payloads."""
 
 import pytest
 
-from channel.mock_cases import build_case
-from channel.patient_lookup import PatientLookupResult
+from board.mock_cases import build_case
+from board.patient_lookup import PatientLookupResult
 
 FOUND = PatientLookupResult(
     status="found", record={"stable_patient_id": "P-1005", "name": "David Friedman"}
