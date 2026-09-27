@@ -44,7 +44,24 @@ def test_lookup_found_returns_200_with_status_found():
 
     assert r.status_code == 200
     assert r.json()["status"] == "found"
-    assert r.json()["record"]["name"] == "David Friedman"
+    assert r.json()["record"]["name"] == "D. F."
+
+
+@respx.mock
+def test_lookup_masks_every_identifier_and_keeps_the_history():
+    _crm(200, {"status": "found", "record": {
+        "stable_patient_id": "P-1005", "name": "David Friedman", "national_id": "300000005",
+        "date_of_birth": "1949-09-18", "known_conditions": ["hypertension"],
+        "prior_visits": [{"date": "2025-10-10", "acuity": 2, "notes": "palpitations"}]}})
+
+    record = client.get("/api/lookup/300000005").json()["record"]
+
+    assert record["national_id"] == "•••••0005"
+    assert "date_of_birth" not in record
+    assert record["age_band"]
+    assert "David" not in str(record) and "1949" not in str(record) and "300000005" not in str(record)
+    assert record["known_conditions"] == ["hypertension"]
+    assert record["prior_visits"][0]["notes"] == "palpitations"
 
 
 @respx.mock

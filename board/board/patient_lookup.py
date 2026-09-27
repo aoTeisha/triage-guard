@@ -40,6 +40,17 @@ class PatientLookupResult:
     record: Optional[dict] = None
 
 
+def list_patients(*, timeout: float = 5.0) -> Optional[list[dict]]:
+    """GET {CRM_BASE_URL}/patients — every registered patient as
+    {national_id, name}, for the intake form's picker. None when the CRM is
+    unreachable or answers outside its contract."""
+    try:
+        response = httpx.get(f"{CRM_BASE_URL}/patients", timeout=timeout)
+    except httpx.HTTPError:
+        return None
+    return response.json()["patients"] if response.status_code == 200 else None
+
+
 def fetch_patient(national_id: str, *, timeout: float = 5.0) -> PatientLookupResult:
     """GET {CRM_BASE_URL}/patients/by-national-id/{id}, mapped to found /
     not_found / db_error.

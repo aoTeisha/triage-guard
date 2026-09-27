@@ -28,15 +28,20 @@ document.getElementById("notif-bell").onclick = toggleNotifPanel;
 document.getElementById("notif-panel-close").onclick = closeNotifPanel;
 document.getElementById("new-case-btn").onclick = toggleIntakePanel;
 document.getElementById("intake-panel-close").onclick = closeIntakePanel;
-document.getElementById("lookup-btn").onclick = runLookup;
 document.getElementById("submit-btn").onclick = submitNewCase;
-document.getElementById("patient-id").addEventListener("input", () => {
+document.getElementById("lookup-btn").onclick = runLookup;
+document.getElementById("patient-id").addEventListener("change", () => {
+  clearLookup();
   updateSubmitEnabled();
   if (caseMode() === "demo") renderPayloadPreview();
 });
 document.getElementById("intake-panel").addEventListener("change", (e) => {
   if (e.target.name === "case_mode" || e.target.name === "submission_type"
       || e.target.id === "violation") updateModeFields();
+  if (e.target.closest("#real-inputs") || e.target.name === "case_mode") updateSubmitEnabled();
+});
+document.getElementById("intake-panel").addEventListener("input", (e) => {
+  if (e.target.closest("#real-inputs")) updateSubmitEnabled();
 });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;

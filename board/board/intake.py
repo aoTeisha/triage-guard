@@ -40,13 +40,14 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from app import runner
+from app.esi import age_band
 from app.guards import ACUITY_LEVELS, NURSE_SUPPLIED_FIELDS, unusable_fields
 from app.states import State
 from app.views import case_view
 
 from . import commands
 from .mock_cases import TRACE_VIOLATIONS, SubmissionType, build_case, new_case_id, planted_records
-from .patient_lookup import fetch_patient
+from .patient_lookup import fetch_patient, list_patients
 
 router = APIRouter(prefix="/api")
 
@@ -135,7 +136,39 @@ def lookup(national_id: str):
     outcomes the page must render distinctly, not HTTP errors to branch on.
     """
     result = fetch_patient(national_id)
-    return {"status": result.status, "record": result.record}
+    return {"status": result.status, "record": _redacted(result.record)}
+
+
+def _redacted(record: dict | None) -> dict | None:
+    """The record with its identifiers masked (I11): initials for the name, the
+    last four digits of the national id, and an age band for the birth date.
+    The clinical history is shown as-is — it is what the nurse needs to see."""
+    if record is None:
+        return None
+    try:
+        band = age_band(record.get("date_of_birth") or "")
+    except ValueError:
+        band = None
+    name = record.get("name") or ""
+    nid = record.get("national_id") or ""
+    return {
+        "stable_patient_id": record.get("stable_patient_id"),
+        "name": " ".join(f"{part[0]}." for part in name.split()) or None,
+        "national_id": f"•••••{nid[-4:]}" if nid else None,
+        "age_band": band,
+        "known_conditions": record.get("known_conditions") or [],
+        "prior_visits": record.get("prior_visits") or [],
+    }
+
+
+@router.get("/patients")
+def patients():
+    """The CRM's registered patients, for the form's patient picker. A case can
+    only be opened for one of these (see `submit`)."""
+    records = list_patients()
+    if records is None:
+        raise HTTPException(status_code=503, detail="CRM unavailable")
+    return {"patients": records}
 
 
 @router.get("/demo-cases")
@@ -169,12 +202,21 @@ def submit(body: SubmitRequest):
         unusable = unusable_fields(body.fields)
         if unusable:
             raise HTTPException(status_code=422, detail=f"values outside their allowed range: {unusable}")
+
+    # Only a patient the CRM already holds can have a case opened: the form
+    # offers a picker, and this refuses anything typed around it. An unreachable
+    # CRM still continues (fail-open), since that is an outage, not an unknown.
+    patient = fetch_patient(body.national_id)
+    if patient.status == "not_found":
+        raise HTTPException(status_code=422, detail="patient not registered in the CRM")
+
+    if body.fields is not None:
         # A blank field is simply absent, so a partial case takes the normal
         # missing-fields route rather than being refused here.
         case = {"case_id": new_case_id(), "channel": "website",
                 "national_id": body.national_id, **body.fields}
     else:
-        case = build_case(fetch_patient(body.national_id), body.national_id, body.submission_type)
+        case = build_case(patient, body.national_id, body.submission_type)
 
     try:
         state, pending = runner.start_case(case)

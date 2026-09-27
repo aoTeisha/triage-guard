@@ -16,9 +16,32 @@ function toggleIntakePanel() {
     // Built on open, not at load: the complaint list arrives with the first
     // board refresh.
     buildRealInputs();
+    loadPatients();
     document.getElementById("patient-id").focus();
   }
   else closeIntakePanel();
+}
+
+// The picker offers only patients the CRM already holds — a case cannot be
+// opened for anyone else. Reloaded on every open, so a patient added to the
+// CRM since appears without a page reload.
+async function loadPatients() {
+  const select = document.getElementById("patient-id");
+  const placeholder = el("option", null, "select a patient");
+  placeholder.value = "";
+  let patients = [];
+  try {
+    const res = await fetch("/api/patients");
+    if (res.ok) patients = (await res.json()).patients;
+    else placeholder.textContent = "CRM unavailable — no patients to pick";
+  } catch {
+    placeholder.textContent = "could not reach the server";
+  }
+  select.replaceChildren(placeholder, ...patients.map((p) => {
+    const opt = el("option", null, `${p.name} · ${p.national_id}`);
+    opt.value = p.national_id;
+    return opt;
+  }));
 }
 
 function closeIntakePanel() {
@@ -74,6 +97,7 @@ function updateModeFields() {
   document.getElementById("demo-fields").hidden = !demo;
   document.getElementById("violation-fields").hidden = submissionType() !== "trace_violation";
   if (demo) renderPayloadPreview();
+  updateSubmitEnabled();
 }
 
 // What each demo scenario sends, from the server's own builder, fetched once.
@@ -84,7 +108,7 @@ let demoCases = null;
 const PREVIEW_ROWS = [
   ["channel", (c) => c.channel],
   ["national ID", (c) => ("national_id" in c
-    ? document.getElementById("patient-id").value.trim() || "(the ID typed above)" : undefined)],
+    ? document.getElementById("patient-id").value.trim() || "(the patient selected above)" : undefined)],
   ["nurse acuity", (c) => c.nurse_proposed_acuity && `ESI ${c.nurse_proposed_acuity}`],
   ["chief complaint", (c) => c.chief_complaint && c.chief_complaint.replace(/_/g, " ")],
   ["HR", (c) => c.vitals && c.vitals.hr],
@@ -131,18 +155,44 @@ function submitBody(nationalId) {
   return body;
 }
 
-// Only an empty ID blocks submission. not_found and db_error are both valid
-// outcomes to continue from: a new patient and an unreachable CRM each mean
-// "carry on with intake-only data", they are not failures to stop for.
+// No patient selected blocks submission. A real case additionally needs every
+// clinical field filled — nothing here is optional the way a demo case's fixed
+// payload is.
 function updateSubmitEnabled() {
   const id = document.getElementById("patient-id").value.trim();
-  document.getElementById("submit-btn").disabled = id.length === 0;
+  const ready = id.length > 0 && (caseMode() !== "real" || (realInputs && realInputs.allFilled()));
+  document.getElementById("submit-btn").disabled = !ready;
+  document.getElementById("lookup-btn").disabled = id.length === 0;
+}
+
+function clearLookup() {
+  const out = document.getElementById("lookup-result");
+  out.className = "";
+  out.textContent = "";
+}
+
+// The record as the server sends it: identifiers already masked (initials, the
+// last four digits, an age band instead of a birth date), history in full.
+function renderPatientRecord(record) {
+  const visits = record.prior_visits.map((v) =>
+    `${v.date} · ESI ${v.acuity}${v.notes ? ` · ${v.notes}` : ""}`);
+  const rows = [
+    ["patient", record.name || "—"],
+    ["national ID", record.national_id || "—"],
+    ["internal ID", record.stable_patient_id],
+    ["age band", record.age_band ? record.age_band.replace(/_/g, " ") : "unknown"],
+    ["known conditions", record.known_conditions.join(", ") || "none recorded"],
+    ["prior visits", visits.join("\n") || "none recorded"],
+  ];
+  const kv = el("div", "kv");
+  rows.forEach(([k, v]) => kv.append(el("div", "k", k), el("div", "v", v)));
+  return kv;
 }
 
 async function runLookup() {
   const id = document.getElementById("patient-id").value.trim();
   const out = document.getElementById("lookup-result");
-  if (!id) return;
+  if (!id) return clearLookup();
 
   out.className = "";
   out.textContent = "Looking up…";
@@ -152,12 +202,10 @@ async function runLookup() {
     const { status, record } = await res.json();
     out.className = `status-${status}`;
     if (status === "found") {
-      // The internal id is shown because the nurse will see it on the board;
-      // the national id they typed is never stored on the case — patient
-      // identifiers live only in the CRM.
-      out.textContent = `✓ ${record.name} · ${record.date_of_birth} · ${record.stable_patient_id}`;
+      out.replaceChildren(el("div", null, "✓ Record found — identifiers redacted"),
+                          renderPatientRecord(record));
     } else if (status === "not_found") {
-      out.textContent = "⚠ New patient — no record found. Continuing is fine.";
+      out.textContent = "⚠ Not registered in the CRM — a case cannot be opened.";
     } else {
       out.textContent = "⚠ CRM unavailable — continuing without history.";
     }

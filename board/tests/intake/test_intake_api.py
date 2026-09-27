@@ -50,6 +50,40 @@ def test_submit_is_served_under_the_api_prefix_and_runs_the_graph():
     assert body["case_id"].startswith("case-")
 
 
+@respx.mock
+def test_a_patient_the_crm_does_not_hold_cannot_have_a_case_opened():
+    respx.get(f"{CRM_BASE_URL}/patients/by-national-id/999999999").mock(
+        return_value=httpx.Response(404, json={"detail": "not_found"})
+    )
+
+    response = client.post(
+        "/api/submit", json={"national_id": "999999999", "submission_type": "clean"}
+    )
+
+    assert response.status_code == 422
+    assert "not registered" in response.json()["detail"]
+
+
+@respx.mock
+def test_the_patient_picker_lists_the_crm_patients():
+    respx.get(f"{CRM_BASE_URL}/patients").mock(
+        return_value=httpx.Response(
+            200, json={"patients": [{"national_id": "300000005", "name": "David Friedman"}]}
+        )
+    )
+
+    body = client.get("/api/patients").json()
+
+    assert body["patients"] == [{"national_id": "300000005", "name": "David Friedman"}]
+
+
+@respx.mock
+def test_the_patient_picker_is_a_503_when_the_crm_is_down():
+    respx.get(f"{CRM_BASE_URL}/patients").mock(side_effect=httpx.ConnectError("refused"))
+
+    assert client.get("/api/patients").status_code == 503
+
+
 def test_an_unknown_submission_type_is_a_422_not_a_500():
     """Review Focus 3. `build_case` ends in `raise ValueError`, so the pydantic
     Literal on `submission_type` is the only thing between a typo and a stack

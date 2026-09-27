@@ -119,7 +119,10 @@
                                 border: 1px solid var(--line); border-radius: 7px;
                                 padding: 0.4rem 0.8rem; font: inherit; font-weight: 600; cursor: pointer;
                                 transition: border-color 0.12s ease, background 0.12s ease; }
-    #intake-panel #lookup-btn:hover { border-color: #47506a; background: var(--panel-2); }
+    #intake-panel #lookup-btn:hover:not([disabled]) { border-color: #47506a; background: var(--panel-2); }
+    #intake-panel #lookup-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+    #lookup-result .kv { margin-top: 0.6rem; grid-template-columns: 8rem 1fr; }
+    #lookup-result .kv .v { color: var(--text); white-space: pre-line; }
     #intake-panel #submit-btn { margin-top: 1.6rem; width: 100%; background: var(--ok);
                                 color: #05170e; border: 1px solid #4cc789; border-radius: 8px;
                                 padding: 0.6rem 0.8rem; font: inherit; font-size: 0.88rem; font-weight: 700;
@@ -318,10 +321,10 @@
 
     <div id="national-id-box">
       <div class="group-label">Patient identification</div>
-      <label for="patient-id">National ID</label>
+      <label for="patient-id">Patient</label>
       <div class="lookup-row">
-        <input type="text" id="patient-id" inputmode="numeric" placeholder="300000005" />
-        <button id="lookup-btn">Lookup</button>
+        <select id="patient-id"><option value="">select a patient</option></select>
+        <button id="lookup-btn" disabled>Lookup</button>
       </div>
       <div id="lookup-result" role="status" aria-live="polite"></div>
     </div>
@@ -336,8 +339,7 @@
 
     <div id="real-fields">
       <div class="group-label">Clinical observations</div>
-      <p class="meta">Enter what you observed. Anything left blank is not sent,
-        and the system will ask for it.</p>
+      <p class="meta">Enter what you observed. Every field is required.</p>
       <div id="real-inputs"></div>
     </div>
 

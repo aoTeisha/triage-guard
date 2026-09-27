@@ -293,6 +293,8 @@ function clinicalInputs() {
       if (Object.keys(vitals).length) fields.vitals = vitals;
       return fields;
     },
+    allFilled: () => Boolean(acuity.value && complaint.value && hr.value
+      && bp.value.trim() && spo2.value && temp.value),
   };
 }
 
