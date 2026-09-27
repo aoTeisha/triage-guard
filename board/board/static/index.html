@@ -140,10 +140,16 @@
 
     .notif-item { background: var(--panel-2); border: 1px solid var(--line);
                   border-left: 3px solid var(--warn); border-radius: 8px;
-                  padding: 0.5rem 0.6rem; margin-bottom: 0.5rem; cursor: pointer; }
+                  padding: 0.5rem 0.6rem; margin-bottom: 0.5rem; cursor: pointer;
+                  position: relative; }
     .notif-item:hover { border-color: #47506a; }
+    .notif-item .clear { position: absolute; top: 0.35rem; right: 0.4rem;
+                         background: none; border: 0; color: var(--muted);
+                         cursor: pointer; font-size: 0.8rem; padding: 0.15rem 0.3rem; }
+    .notif-item .clear:hover { color: var(--text); }
     .notif-item.blk { border-left-color: var(--emergent); }
-    .notif-item .transition { color: var(--warn); font-weight: 600; font-size: 0.78rem; }
+    .notif-item .transition { color: var(--warn); font-weight: 600; font-size: 0.78rem;
+                              padding-right: 1.4rem; }  /* keep the label clear of the ✕ */
     .notif-item.blk .transition { color: var(--emergent); }
     .notif-item.nudge { border-left-color: var(--warn); }
     .notif-item .complaint { font-size: 0.82rem; margin-top: 0.15rem; }

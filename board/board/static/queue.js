@@ -32,7 +32,30 @@ function renderCounters(c) {
   );
 }
 
+// A notification has no id of its own: the list is rebuilt from the audit log
+// and the monitor feed on every poll. These fields never change for one event.
+const notifKey = (n) => n.source
+  ? [n.case_id, n.source, n.kind, n.schedule_seq, n.at].join("|")
+  : [n.case_id, n.transition, n.at].join("|");
+
+// Dismissed notifications, per browser. Clearing one is a personal "seen it",
+// not a clinical action, so it never reaches the server and another nurse's
+// screen still shows it. Storage can be blocked (private window, cleared site
+// data); then a dismissal lasts until reload.
+const DISMISSED_KEY = "triage-guard.dismissed-notifications";
+let dismissed = new Set();
+try { dismissed = new Set(JSON.parse(localStorage.getItem(DISMISSED_KEY)) || []); } catch {}
+let lastNotifications = [];
+
+function dismissNotification(n) {
+  dismissed.add(notifKey(n));
+  try { localStorage.setItem(DISMISSED_KEY, JSON.stringify([...dismissed])); } catch {}
+  renderNotifications(lastNotifications);
+}
+
 function renderNotifications(items) {
+  lastNotifications = items;
+  items = items.filter((n) => !dismissed.has(notifKey(n)));
   const badge = document.getElementById("notif-badge");
   badge.textContent = String(items.length);
   badge.hidden = items.length === 0;
@@ -50,14 +73,19 @@ function renderNotifications(items) {
     const node = el("div", "notif-item"
       + (n.transition === "blk" || escalated ? " blk" : "")
       + (n.source === "reminder" ? " nudge" : ""));
-    node.append(el("div", "transition", n.source ? nudgeLabel(n) : plain(NOTICE_LABELS, n.transition)),
+    const clear = el("button", "clear", "✕");
+    clear.setAttribute("aria-label", "Clear notification");
+    // Clearing must not also open the case panel behind it.
+    clear.onclick = (e) => { e.stopPropagation(); dismissNotification(n); };
+    node.append(clear,
+                el("div", "transition", n.source ? nudgeLabel(n) : plain(NOTICE_LABELS, n.transition)),
                 el("div", "complaint", n.complaint || ""),
                 el("div", "at", n.at));
     node.title = n.source
       ? `${n.case_id} · ${n.source} · ${nudgeLabel(n)} · ${n.at}`
       : `${n.case_id} · transition ${n.transition} · ${n.action} · ${readable(n.explanation)} · ${n.at}`;
     // Clicking a notification opens the case panel but leaves this sidebar
-    // open — only the X closes it.
+    // open — only the sidebar's close button closes it.
     node.onclick = () => openPanel(n.case_id);
     return node;
   }));
