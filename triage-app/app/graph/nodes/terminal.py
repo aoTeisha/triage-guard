@@ -137,7 +137,7 @@ def awaiting_reassessment(state: TriageState) -> dict[str, Any]:
         "audit_log": [
             audit(state.case_id, State.MONITORING, "emit_event_log",
                   f"reassessment timer fired: {event}", Transition.REASSESSMENT_DUE,
-                  fire_id=fire_id),
+                  fire_id=fire_id, engines=["BPpy", "Prolog"]),
         ],
     }
     if fired.get("timer_gap"):

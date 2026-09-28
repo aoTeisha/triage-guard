@@ -124,15 +124,20 @@ def record_notification(conn: psycopg.Connection, *, case_id: str, reason: str, 
         return False
 
 
-def notification_count_in_window(conn: psycopg.Connection, *, recipient_class: str, window_minutes: int) -> int:
-    """How many notifications this recipient class got in the last `window_minutes`."""
+def notification_count_in_window(conn: psycopg.Connection, *, case_id: str, recipient_class: str,
+                                  window_minutes: int) -> int:
+    """How many notifications this case sent to this recipient class in the
+    last `window_minutes`. Scoped per case so one case's reminders can't burn
+    the budget another case needs to widen its own rung.
+    """
     return conn.execute(
         """
         SELECT COUNT(*) FROM notifications
-         WHERE recipient_class = %s
+         WHERE case_id = %s
+           AND recipient_class = %s
            AND sent_at >= now() - %s * INTERVAL '1 minute'
         """,
-        (recipient_class, window_minutes),
+        (case_id, recipient_class, window_minutes),
     ).fetchone()[0]
 
 

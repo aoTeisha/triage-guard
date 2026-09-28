@@ -83,7 +83,8 @@ def _context(conn, timer: dict[str, Any], *, graph) -> dict[str, Any]:
         # `control_state` still shows the previous node.
         "pause_active": pause is not None and pause in snapshot.next,
         "notify_count": timers.notification_count_in_window(
-            conn, recipient_class=recipient, window_minutes=NOTIFICATION_WINDOW_MINUTES),
+            conn, case_id=timer["case_id"], recipient_class=recipient,
+            window_minutes=NOTIFICATION_WINDOW_MINUTES),
         "notify_budget": NOTIFICATION_BUDGET_PER_WINDOW,
         "recipient_class": recipient,
     }

@@ -545,3 +545,22 @@ def test_a_released_card_does_not_keep_its_reminder(seeded):
     card = next(c for c in cards if c["case_id"] == case_id)
     assert card["status"] == "patient_released"
     assert card["reminders"] is None
+
+
+def test_a_reminder_does_not_survive_a_non_release_transition(seeded):
+    """The reminder was about a state the case has since left — a
+    move-to-treatment (not a release) must clear it too."""
+    case_id = seeded[0]
+    timers.record_notification(timers.connection(), case_id=case_id,
+                               reason="gate_reminder_0", channel="notification_strip",
+                               recipient_class="assigned_nurse")
+
+    cards = client.get("/api/board").json()["cards"]
+    assert next(c for c in cards if c["case_id"] == case_id)["reminders"] is not None
+
+    client.post(f"/api/case/{case_id}/move-to-treatment", json={"actor_role": "nurse"})
+
+    cards = client.get("/api/board").json()["cards"]
+    card = next(c for c in cards if c["case_id"] == case_id)
+    assert card["status"] == "treatment_started"
+    assert card["reminders"] is None

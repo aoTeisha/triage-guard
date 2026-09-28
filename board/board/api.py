@@ -189,6 +189,12 @@ def _nudge_rank(rec: dict) -> tuple[bool, str]:
     return (rec["source"] == "escalation", rec["at"])
 
 
+def _nudge_is_stale(nudge: dict, last_transition_at: str | None) -> bool:
+    """A nudge from before the case's most recent transition describes a
+    situation that has since moved on."""
+    return last_transition_at is not None and _at_key(last_transition_at) > _at_key(nudge["at"])
+
+
 def nudges_by_case(feed: list[dict], now: datetime) -> dict[str, dict]:
     """The one nudge worth putting on each card: an escalation outranks any
     reminder, and among reminders the newest wins — which is also the widest
@@ -272,6 +278,10 @@ def board_payload() -> dict:
     place = positions(cards)
     feed = monitor_feed()
     nudges = nudges_by_case(feed, datetime.now(timezone.utc))
+    last_transition_at = {
+        (state.get("case_id") or ""): ((state.get("audit_log") or [{}])[-1]).get("at")
+        for state in states
+    }
     return {
         "columns": BOARD_COLUMNS,
         # The re-file form offers these and nothing else: the complaint must be a
@@ -287,9 +297,13 @@ def board_payload() -> dict:
                 "position": place.get(c.case_id),
                 # A released card keeps no nudge: unlike the notification strip
                 # below, this is a live status chip, and a reminder from before
-                # release is no longer live.
+                # release is no longer live. Same for any other transition since
+                # the nudge was sent — it was about a situation the case has
+                # since moved on from.
                 "reminders": (
                     None if c.status == ClinicalStatus.PATIENT_RELEASED.value
+                    or (nudges.get(c.case_id) is not None
+                        and _nudge_is_stale(nudges[c.case_id], last_transition_at.get(c.case_id)))
                     else nudges.get(c.case_id)
                 ),
             }
