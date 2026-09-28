@@ -103,7 +103,8 @@ def acuity_proposed(state: TriageState) -> dict[str, Any]:
             "escalation_reason": human_bridge.DISCREPANCY,
             "audit_log": [audit(state.case_id, State.ACUITY_PROPOSED,
                                 "invoke_human_escalation",
-                                "gap >= 2, charge nurse decides", transition)],
+                                "gap >= 2, charge nurse decides", transition,
+                                engines=["Z3"])],
         }
 
     return {
@@ -114,5 +115,6 @@ def acuity_proposed(state: TriageState) -> dict[str, Any]:
         "acuity_bucket": bucket_for(final).value,
         "order_key": assign_order_key(final, arrival),
         "audit_log": [audit(state.case_id, State.ACUITY_PROPOSED,
-                            "assign_order_key", f"acuity settled: {final}", transition)],
+                            "assign_order_key", f"acuity settled: {final}", transition,
+                            engines=["Z3"])],
     }

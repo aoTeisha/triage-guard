@@ -32,6 +32,23 @@ function traceAlert(violations) {
   return box;
 }
 
+// Z3 proves the acuity-gap rules once, ahead of time — it doesn't run per
+// case — so its chip gets a tooltip saying that instead of the plain "engine
+// that decided this row" reading the others carry.
+const ENGINE_TITLES = {
+  Z3: "gap rules proven by Z3 ahead of time, not re-run per case",
+};
+
+function engineChips(engines) {
+  const box = el("span", "engines");
+  (engines || []).forEach((name) => {
+    const chip = el("span", "engine-chip", name);
+    if (ENGINE_TITLES[name]) chip.title = ENGINE_TITLES[name];
+    box.append(chip);
+  });
+  return box;
+}
+
 function trail(records) {
   const table = el("table", "trail");
   records.slice().reverse().forEach((r) => {
@@ -44,9 +61,11 @@ function trail(records) {
     // Transitions table. They belong in the tooltip, not in a nurse's line of
     // sight — the row itself is one sentence about what happened.
     tr.title = `${r.transition ? "transition " + r.transition + " · " : ""}${r.action}`;
-    tr.append(el("td", "at", (r.at || "").slice(11, 19)),
-              el("td", null, said && explanation ? `${said} — ${explanation}`
-                                                 : said || explanation || r.action));
+    const line = el("td");
+    line.append(said && explanation ? `${said} — ${explanation}`
+                                    : said || explanation || r.action,
+                engineChips(r.engines));
+    tr.append(el("td", "at", (r.at || "").slice(11, 19)), line);
     table.append(tr);
   });
   return table;

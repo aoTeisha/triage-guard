@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from app.actors import safety
-from app.symbolic import prolog
+from app.symbolic import datalog, prolog
 
 DECIDED = [{"action": "apply_human_acuity", "resolver_role": "charge_nurse"}]
 
@@ -161,6 +161,21 @@ def test_an_engine_that_cannot_answer_fails_closed(monkeypatch):
     verdict = safety.validate(case())
     assert verdict.verdict == "fail"
     assert any("routing to a human" in reason for reason in verdict.reasons)
+
+
+def test_a_datalog_fault_fails_closed_too(monkeypatch):
+    """The same stance as `test_an_engine_that_cannot_answer_fails_closed`, but
+    for Datalog's half of the check: `acuity_provenance` catches its own
+    fault and fails the verdict, instead of raising out of `validate` and
+    crashing the node with no engine named in the crash.
+    """
+    monkeypatch.setattr(datalog, "acuity_provenance",
+                        lambda *a, **k: {"writers": [], "unauthorized": [],
+                                          "missing_fields": [], "engine_error": "datalog: no engine"})
+
+    verdict = safety.validate(case())
+    assert verdict.verdict == "fail"
+    assert any("datalog: no engine" in reason for reason in verdict.reasons)
 
 
 def test_the_role_set_comes_from_prolog_not_a_copy():

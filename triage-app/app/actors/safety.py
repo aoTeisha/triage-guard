@@ -89,7 +89,7 @@ def validate(case: dict[str, Any]) -> SafetyVerdict:
     )
     # Datalog answers "did an authorized human write this acuity in this triage",
     # which rule 3 in safety.pl then reasons with.
-    codes, engine_error = prolog.safety_violations(
+    codes, prolog_error = prolog.safety_violations(
         {**case, "human_decided": bool(provenance["writers"])}
     )
 
@@ -101,9 +101,13 @@ def validate(case: dict[str, Any]) -> SafetyVerdict:
     if provenance["missing_fields"]:
         reasons.append("the case no longer holds the clinical data the acuity was judged on: "
                        + ", ".join(provenance["missing_fields"]))
-    if engine_error:
-        # Fail closed: an engine that cannot answer sends the case to a human.
-        reasons.append(f"safety engine could not answer, routing to a human: {engine_error}")
+    # Fail closed: an engine that cannot answer sends the case to a human. Both
+    # checked, and independently — Datalog failing doesn't stop Prolog's rules
+    # from running against whatever provenance it got back (an empty result,
+    # same as no writers at all), so either or both can add a reason here.
+    for engine_error in (provenance.get("engine_error"), prolog_error):
+        if engine_error:
+            reasons.append(f"safety engine could not answer, routing to a human: {engine_error}")
 
     if reasons:
         return SafetyVerdict(verdict="fail", reasons=reasons)

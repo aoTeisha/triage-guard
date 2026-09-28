@@ -33,14 +33,14 @@ def redacting_routing(state: TriageState) -> dict[str, Any]:
             "failed_stage": State.REDACTING_ROUTING.value,
             "audit_log": [audit(state.case_id, State.REDACTING_ROUTING,
                                 "alert_technician", "; ".join(check.violations),
-                                transition)],
+                                transition, engines=["OPA"])],
         }
 
     audit_records = [
         audit(state.case_id, State.REDACTING_ROUTING, "build_model_payload",
               "build model payload", Transition.BUILD_PAYLOAD),
         audit(state.case_id, State.REDACTING_ROUTING, "emit_event_log",
-              "payload clean", Transition.PAYLOAD_CLEAN),
+              "payload clean", Transition.PAYLOAD_CLEAN, engines=["OPA"]),
     ]
     return {
         "control_state": State.REDACTING_ROUTING.value,

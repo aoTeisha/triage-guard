@@ -108,7 +108,8 @@ def awaiting_reassessment(state: TriageState) -> dict[str, Any]:
             "clinical_status": ClinicalStatus.TREATMENT_STARTED.value,
             "treatment_started_at": now_iso(),
             "audit_log": [audit(state.case_id, State.MONITORING, "emit_event_log",
-                                 "move to treatment confirmed", Transition.MOVE_CONFIRMED)],
+                                 "move to treatment confirmed", Transition.MOVE_CONFIRMED,
+                                 engines=["OPA"])],
         }
 
     if event == Event.TREATMENT_COMPLETE.value:

@@ -85,12 +85,14 @@ def _retry_policy(state: State) -> RetryPolicy | None:
 # returned something unusable.
 
 
-def _crash(state: TriageState, node: State, agent: str, error: NodeError) -> dict:
+def _crash(state: TriageState, node: State, agent: str, error: NodeError,
+          engines: list[str] | None = None) -> dict:
+    extra = {"engines": engines} if engines else {}
     return {
         "audit_log": [
             nodes.audit(state.case_id, node, "alert_technician",
                         f"{agent} raised after its retry budget: {error.error}",
-                        Transition.AF_RECOVER)
+                        Transition.AF_RECOVER, **extra)
         ]
     }
 
@@ -111,7 +113,8 @@ def _on_safety_error(state: TriageState, error: NodeError) -> Command:
     approval" still holds even while the validator is down.
     """
     return Command(
-        update=_crash(state, State.SAFETY_VALIDATING, "safety_validation", error),
+        update=_crash(state, State.SAFETY_VALIDATING, "safety_validation", error,
+                      engines=["Prolog", "Datalog"]),
         goto="safety_fallback",
     )
 

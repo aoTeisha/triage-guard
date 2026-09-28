@@ -67,5 +67,6 @@ def release_case(state: TriageState, answer: dict[str, Any], at: State) -> dict[
         "release_reason": reason,
         "audit_log": [writeback,
                       audit(state.case_id, State.CASE_CLOSED, "sign_release",
-                            f"release signed: {reason}", Transition.RELEASE)],
+                            f"release signed: {reason}", Transition.RELEASE,
+                            engines=["OPA"])],
     }

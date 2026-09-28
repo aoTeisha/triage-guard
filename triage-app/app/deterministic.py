@@ -123,13 +123,22 @@ def audit(
     }
 
 
+# Engines named at the front of a `layer` string (e.g. "OPA (authorization)")
+# get an `engines` chip on the audit row; a plain Python check (e.g. "monitor
+# (idempotency)") names no engine and gets none.
+_KNOWN_ENGINES = {"Prolog", "OPA", "Datalog", "Z3"}
+
+
 def audit_denial(case_id: str, control_state: State, why: str,
                  layer: str = "Prolog (authorization)") -> dict[str, Any]:
     """The BLK row every refused attempt writes (I18). `layer` names which
     engine refused — the gate is Prolog's (I14), move and release are OPA's
     (I5/I9).
     """
-    return audit(case_id, control_state, "explain_denial", why, Transition.BLK, denying_layer=layer)
+    engine = layer.split()[0]
+    extra = {"engines": [engine]} if engine in _KNOWN_ENGINES else {}
+    return audit(case_id, control_state, "explain_denial", why, Transition.BLK,
+                 denying_layer=layer, **extra)
 
 
 # ---- symbolic-layer predicates ---------------------------------------------
