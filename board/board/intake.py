@@ -35,6 +35,7 @@ room.
 from __future__ import annotations
 
 from typing import Any, get_args
+from unittest.mock import patch
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
@@ -42,6 +43,7 @@ from pydantic import BaseModel, Field, model_validator
 from app import runner
 from app.esi import age_band
 from app.guards import ACUITY_LEVELS, NURSE_SUPPLIED_FIELDS, unusable_fields
+from app.schemas import SafetyVerdict
 from app.states import State
 from app.views import case_view
 
@@ -219,7 +221,21 @@ def submit(body: SubmitRequest):
         case = build_case(patient, body.national_id, body.submission_type)
 
     try:
-        state, pending = runner.start_case(case)
+        if body.submission_type == "safety_fail":
+            # This fakes the safety validator's result for one call. If
+            # another submission runs at the same moment, it would see the
+            # same fake result, since the patch applies to the whole process.
+            # Fine for a demo one person drives at a time; if this ever needs
+            # to support several people submitting cases concurrently, pass
+            # a fake validator through the request instead of patching the
+            # shared module.
+            with patch("app.actors.safety.validate",
+                       return_value=SafetyVerdict(
+                           verdict="fail",
+                           reasons=["planted by the safety-fail demo scenario"])):
+                state, pending = runner.start_case(case)
+        else:
+            state, pending = runner.start_case(case)
     except runner.CaseClosedError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 

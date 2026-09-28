@@ -16,7 +16,7 @@ ALLOWED = {
     "case_id", "patient_id", "patient_label", "complaint", "status", "acuity", "bucket",
     "acuity_source", "nurse_proposed_acuity", "system_proposed_acuity",
     "arrival_time", "waited_min", "order_key", "flags", "degraded",
-    "gate_pending", "danger_zone_vitals",
+    "gate_pending", "danger_zone_vitals", "senior_required",
 }
 
 # Identifier-class or model-facing fields. None of these may ever appear on a card.

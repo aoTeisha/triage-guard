@@ -41,17 +41,21 @@ _OPTIONS: dict[str, list[str]] = {
 }
 
 
-def request_decision(reason: str, case: dict[str, Any]) -> dict[str, Any]:
+def request_decision(
+    reason: str, case: dict[str, Any], *, senior_required: bool = False
+) -> dict[str, Any]:
     """Pause the run and surface the gate to a human.
 
-    Returns whatever the resumer supplied — a mapping with at least `decision` and
+    Returns whatever the resumer supplied: a mapping with at least `decision` and
     `resolver_role`. The caller is responsible for authorizing the resolver; this
-    bridge only carries the message.
+    bridge only carries the message. `required_role` names who `may_resolve_gate`
+    will actually accept: a shift lead once the correction loop has escalated,
+    a charge nurse otherwise.
     """
     return interrupt(
         {
             "gate": reason,
-            "required_role": "charge_nurse",
+            "required_role": "shift_lead" if senior_required else "charge_nurse",
             "options": _OPTIONS[reason],
             **case,
         }

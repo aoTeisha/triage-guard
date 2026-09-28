@@ -20,7 +20,8 @@ from app.states import State
 
 from .patient_lookup import PatientLookupResult
 
-SubmissionType = Literal["clean", "missing", "failed", "injection", "gap", "trace_violation"]
+SubmissionType = Literal["clean", "missing", "failed", "injection", "gap",
+                          "trace_violation", "safety_fail"]
 
 # A recognizable injection attempt, targeting the acuity field specifically —
 # the most relevant attack vector for this domain (an attacker trying to
@@ -52,8 +53,10 @@ def build_case(
     case_id = new_case_id()
 
     # A trace-violation demo starts as a clean case; its planted records are
-    # added afterwards, by `planted_records`.
-    if submission_type in ("clean", "trace_violation"):
+    # added afterwards, by `planted_records`. A safety_fail demo also starts
+    # clean: it's board/board/intake.py that makes its safety verdict fail,
+    # not this payload.
+    if submission_type in ("clean", "trace_violation", "safety_fail"):
         return {
             "case_id": case_id,
             "channel": "website",

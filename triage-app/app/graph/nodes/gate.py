@@ -59,6 +59,7 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
             "acuity_gap": state.acuity_gap,
             "safety_verdict": state.safety_verdict.model_dump() if state.safety_verdict else None,
         },
+        senior_required=state.senior_required,
     )
 
     if is_release(response):

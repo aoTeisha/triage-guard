@@ -1,8 +1,47 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-27 (one nurse-facing service instead of two, real cases typed
-by the nurse, a trace-violation demo, a CRM patient picker, and dismissable
-notifications. Previous entry below.)
+**Last updated:** 2026-09-28 (a safety-fail demo scenario on the board, and a real bug
+fix it exposed: the human gate always told the browser "charge nurse", even once a
+case had escalated to a shift lead. Previous entry below.)
+
+**2026-09-28.** No commits yet (working tree only).
+
+*A safety-fail demo scenario, and why it needed one.* None of the board's six demo
+scenarios ever made the safety validator actually fail. Its five Prolog rules
+(`triage-app/app/symbolic/rules/safety.pl`) only catch a case that contradicts
+itself, something the graph is built never to produce on its own, so there was no
+well-formed submission that would trip one. That also meant the "Escalate further"
+and "Corrected" buttons on the gate panel, and the `senior_reminder` timer behind
+them, were real and already tested in `triage-app`, but nobody had ever seen them on
+the board itself. A new scenario, `safety_fail`, closes that gap the same way the
+existing trace-violation demo does: it fakes one input, then lets the real code react
+to it for real. Picking "Safety validation failure" on the board sends an otherwise
+ordinary case through `/api/submit`, which wraps that one call in a patch of
+`app.actors.safety.validate` (`board/board/intake.py`) returning a fixed "fail"
+verdict. Everything downstream, from there, is the unmodified graph: `safety_validating`
+writes the verdict into the audit log for real, `awaiting_human_approval` genuinely
+pauses with `escalation_reason="safety_fail"`, and a charge nurse can genuinely
+correct and resubmit or escalate to a shift lead from the board UI. The patch is
+scoped to a single `start_case()` call, not left running, but it does still affect
+the whole process for that moment, so it assumes one person driving the demo at a
+time. Four new tests cover it: `board/tests/intake/test_case_lifecycle.py`.
+
+*The gate's own message was wrong once a case escalated.* Using the new demo
+scenario surfaced a real bug: after "Escalate further" handed a case to a shift
+lead, the board still showed a chip reading "awaiting charge nurse" and a resolver
+picker defaulting to `charge_nurse`, both of which the gate would then refuse. The
+cause was in `human_bridge.request_decision` (`triage-app/app/actors/human_bridge.py`):
+its `required_role` field was hardcoded to `"charge_nurse"`, ignoring
+`senior_required` entirely. It now reads `"shift_lead"` once a case has escalated,
+and that value flows through `app/views.py`'s `CaseCard` and `case_view()` (a new
+`senior_required` field on each) to the board, where the card chip
+(`board/board/static/queue.js`) now reads "awaiting shift lead" and the resolver
+picker (`board/board/static/case-actions.js`) now defaults to it. One new test in
+`triage-app/tests/test_gates.py` pins the interrupt payload itself, not just the
+state field, since the payload is what a stale UI had actually been reading.
+
+Test counts, collected: board 147 (was 143), triage-app 562 collected plus 1
+deselected (`test_live_llm.py`).
 
 **2026-09-27.** Five commits today.
 

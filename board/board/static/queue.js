@@ -167,7 +167,10 @@ function renderCard(card, thresholds) {
   if (card.acuity === null || card.acuity === undefined) {
     chips.append(el("span", "chip", "not yet triaged"));
   }
-  if (card.gate_pending) chips.append(el("span", "chip gate", "awaiting charge nurse"));
+  if (card.gate_pending) {
+    chips.append(el("span", "chip gate",
+      card.senior_required ? "awaiting shift lead" : "awaiting charge nurse"));
+  }
   if (card.reminders) {
     chips.append(el("span",
       "chip " + (card.reminders.source === "escalation" ? "escalated" : "nudge"),

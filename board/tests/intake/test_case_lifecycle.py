@@ -13,6 +13,7 @@ from langgraph.types import Command
 import board.api as api_module
 from app.labels import Transition
 from app.mock_cases import DEMO_CASES
+from app.monitor import timers
 from app.runner import config_for, start_case
 from board.patient_lookup import CRM_BASE_URL
 
@@ -244,6 +245,74 @@ def test_a_case_can_be_read_back_after_the_request_that_created_it():
 
 def test_reading_an_unknown_case_is_a_404():
     assert client.get("/api/case/case-does-not-exist").status_code == 404
+
+
+# ---- the safety-fail demo scenario -----------------------------------------
+
+
+def test_safety_fail_scenario_is_listed_and_looks_like_a_clean_case():
+    listing = client.get("/api/demo-cases").json()["cases"]
+
+    assert "safety_fail" in listing
+    case = listing["safety_fail"]
+    assert case["chief_complaint"] == "chest_pain"
+    assert case["nurse_proposed_acuity"] == 3
+    assert "vitals" in case
+
+
+@respx.mock
+def test_the_safety_fail_scenario_genuinely_pauses_at_the_safety_gate():
+    _crm()
+
+    body = _submit("safety_fail")
+
+    assert body["status"] == "awaiting_human_approval"
+    assert body["gate"]["gate"] == "safety_fail"
+    assert body["gate"]["required_role"] == "charge_nurse"
+    assert body["safety_reasons"] == ["planted by the safety-fail demo scenario"]
+
+
+@respx.mock
+def test_a_nurse_cannot_resolve_the_safety_fail_gate():
+    _crm()
+    paused = _submit("safety_fail")
+
+    denied = client.post(
+        f"/api/case/{paused['case_id']}/resume",
+        json={"decision": "escalate_further", "resolver_role": "nurse"},
+    ).json()
+
+    assert denied["status"] == "awaiting_human_approval"
+    assert denied["gate"]["gate"] == "safety_fail"
+
+
+@respx.mock
+def test_escalate_further_hands_the_safety_fail_case_to_a_shift_lead():
+    _crm()
+    paused = _submit("safety_fail")
+
+    escalated = client.post(
+        f"/api/case/{paused['case_id']}/resume",
+        json={"decision": "escalate_further", "resolver_role": "charge_nurse"},
+    ).json()
+
+    # Still open — a senior now has to decide, the case is not resolved.
+    assert escalated["status"] == "awaiting_human_approval"
+    assert escalated["gate"]["gate"] == "safety_fail"
+
+    # A charge nurse is no longer enough once a senior is required.
+    still_charge_nurse = client.post(
+        f"/api/case/{paused['case_id']}/resume",
+        json={"decision": "escalate_further", "resolver_role": "charge_nurse"},
+    ).json()
+    assert still_charge_nurse["status"] == "awaiting_human_approval"
+
+    conn = timers.connection()
+    count = conn.execute(
+        "SELECT COUNT(*) FROM timers WHERE case_id=%s AND kind='senior_reminder'",
+        (paused["case_id"],),
+    ).fetchone()[0]
+    assert count == 1
 
 
 # ---- the reassessment re-filing pause, through the UI's endpoint -----------

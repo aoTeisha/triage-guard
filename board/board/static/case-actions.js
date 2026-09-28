@@ -149,6 +149,9 @@ function gatePanel(caseId, view, card) {
     opt.value = value;
     role.append(opt);
   });
+  // Once the correction loop has escalated to a shift lead, the gate refuses
+  // a charge nurse. Default the picker to whoever it will actually accept.
+  if (view.senior_required) role.value = "shift_lead";
 
   // Readable stand-ins for the raw decision codes the API expects. The two
   // acuity-reason decisions get the actual proposed number, so the nurse

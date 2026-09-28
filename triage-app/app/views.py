@@ -80,6 +80,7 @@ def case_view(state: dict[str, Any], pending: dict[str, Any] | None) -> dict[str
         "safety_reasons": list(getattr(state.get("safety_verdict"), "reasons", None)
                                or (state.get("safety_verdict") or {}).get("reasons", [])
                                if state.get("safety_verdict") else []),
+        "senior_required": state.get("senior_required", False),
         "approved": state.get("approved"),
         "release_reason": state.get("release_reason"),
         "degraded": state.get("degraded", []),
@@ -115,6 +116,9 @@ class CaseCard(BaseModel):
     flags: list[str] = []
     degraded: list[str] = []
     gate_pending: bool = False
+    # True once the correction loop has escalated: the gate now needs a
+    # shift lead, not a charge nurse.
+    senior_required: bool = False
 
 
 def waited_minutes(arrival_time: str | None, now: datetime | None = None) -> int:
@@ -191,6 +195,7 @@ def card_from_state(
         flags=list(state.get("flags") or []),
         degraded=list(state.get("degraded") or []),
         gate_pending=at_gate or control_state == State.AWAITING_HUMAN_APPROVAL.value,
+        senior_required=bool(state.get("senior_required")),
     )
 
 

@@ -184,6 +184,23 @@ def test_escalate_further_hands_the_case_to_a_shift_lead_at_once(graph, run, mon
     ).fetchone()[0] == 1
 
 
+def test_the_re_pause_after_escalation_asks_for_a_shift_lead(graph, run, monkeypatch):
+    """The interrupt payload itself must say who can now answer it — a stale
+    'charge_nurse' here is what fed a stale UI chip/dropdown after escalation."""
+    from app.mock_cases import DEMO_CASES
+    from app.runner import pending
+
+    _failing_safety(monkeypatch)
+    _, _, thread = run(DEMO_CASES["clean"])
+
+    cfg = {"configurable": {"thread_id": thread}}
+    result = graph.invoke(
+        Command(resume={"decision": "escalate_further", "resolver_role": "charge_nurse"}), cfg
+    )
+
+    assert pending(result)["required_role"] == "shift_lead"
+
+
 def test_the_senior_reminder_goes_to_a_shift_lead(graph, run, monkeypatch, conn):
     """I15: a case waiting for a senior still escalates, to the right people."""
     from app.mock_cases import DEMO_CASES
