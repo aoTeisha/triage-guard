@@ -319,13 +319,16 @@ function clinicalInputs() {
 
   // A persistent caption above each vital, so the field's meaning survives
   // once the placeholder is gone (the moment the nurse starts typing).
-  const field = (caption, input) => {
+  const field = (caption, full, input) => {
     const wrap = el("div", "field");
-    wrap.append(el("span", "field-label", caption), input);
+    const label = el("span", "field-label", caption);
+    label.title = full;
+    input.title = full;
+    wrap.append(label, input);
     return wrap;
   };
   const vitalsBox = el("div", "vitals");
-  vitalsBox.append(field("HR", hr), field("BP", bp), field("SpO2", spo2), field("Temp °C", temp));
+  vitalsBox.append(field("HR", "Heart rate", hr), field("BP", "Blood pressure", bp), field("SpO2", "Oxygen saturation", spo2), field("Temp °C", "Temperature", temp));
 
   return {
     nodes: [
