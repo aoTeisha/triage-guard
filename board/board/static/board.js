@@ -11,6 +11,7 @@ async function refresh() {
   try {
     const data = await (await fetch("/api/board")).json();
     renderCounters(data.counters);
+    renderOutages(data.outages);
     renderNotifications(data.notifications);
     renderBoard(data);
     // After the render, so the first load highlights nothing.
@@ -27,6 +28,13 @@ document.getElementById("panel-close").onclick = closePanel;
 document.getElementById("notif-bell").onclick = toggleNotifPanel;
 document.getElementById("notif-panel-close").onclick = closeNotifPanel;
 document.getElementById("new-case-btn").onclick = toggleIntakePanel;
+document.getElementById("health-btn").onclick = () => {
+  const panel = document.getElementById("health-panel");
+  panel.hidden = !panel.hidden;
+};
+document.getElementById("health-panel-close").onclick = () => {
+  document.getElementById("health-panel").hidden = true;
+};
 document.getElementById("intake-panel-close").onclick = closeIntakePanel;
 document.getElementById("submit-btn").onclick = submitNewCase;
 document.getElementById("lookup-btn").onclick = runLookup;

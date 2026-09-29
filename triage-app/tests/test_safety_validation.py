@@ -154,28 +154,29 @@ def test_a_case_missing_its_clinical_data_fails(field):
 
 def test_an_engine_that_cannot_answer_fails_closed(monkeypatch):
     """SYSTEM_MODELING.md:101 — a validator that cannot answer routes the case to
-    a human. It must never wave one through.
+    a human. It must never wave one through: no verdict at all, raised as
+    `ValidatorUnavailable`, which the graph turns into the validator-down gate.
     """
     monkeypatch.setattr(prolog, "safety_violations", lambda c: ([], "prolog: no engine"))
 
-    verdict = safety.validate(case())
-    assert verdict.verdict == "fail"
-    assert any("routing to a human" in reason for reason in verdict.reasons)
+    with pytest.raises(safety.ValidatorUnavailable) as caught:
+        safety.validate(case())
+    assert caught.value.engines == ["prolog"]
 
 
 def test_a_datalog_fault_fails_closed_too(monkeypatch):
     """The same stance as `test_an_engine_that_cannot_answer_fails_closed`, but
     for Datalog's half of the check: `acuity_provenance` catches its own
-    fault and fails the verdict, instead of raising out of `validate` and
-    crashing the node with no engine named in the crash.
+    fault, and `validate` raises naming Datalog rather than letting a generic
+    crash through with no engine named.
     """
     monkeypatch.setattr(datalog, "acuity_provenance",
                         lambda *a, **k: {"writers": [], "unauthorized": [],
                                           "missing_fields": [], "engine_error": "datalog: no engine"})
 
-    verdict = safety.validate(case())
-    assert verdict.verdict == "fail"
-    assert any("datalog: no engine" in reason for reason in verdict.reasons)
+    with pytest.raises(safety.ValidatorUnavailable, match="datalog: no engine") as caught:
+        safety.validate(case())
+    assert caught.value.engines == ["datalog"]
 
 
 def test_the_role_set_comes_from_prolog_not_a_copy():

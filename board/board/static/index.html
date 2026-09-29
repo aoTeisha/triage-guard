@@ -168,8 +168,7 @@
 
     .card { background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--line);
             border-radius: 8px; padding: 0.5rem 0.6rem; margin-bottom: 0.5rem;
-            display: grid; grid-template-columns: 2.2rem 1fr; gap: 0.1rem 0.6rem;
-            cursor: pointer; }
+            display: flex; gap: 0.6rem; cursor: pointer; }
     .card:hover { border-color: #47506a; }
     .card.emergent { border-left-color: var(--emergent); }
     .card.selected { outline: 1px solid #5b6ee1; }
@@ -178,21 +177,46 @@
       0%, 60% { background: #1e3a2b; box-shadow: 0 0 0 1px var(--ok); }
       100% { background: var(--panel-2); box-shadow: none; }
     }
-    .pos { grid-row: span 3; font-size: 1.5rem; font-variant-numeric: tabular-nums;
+    .pos { flex: none; width: 2.2rem; font-size: 1.5rem; font-variant-numeric: tabular-nums;
            color: var(--muted); align-self: center; text-align: center; }
+    .card-body { flex: 1; min-width: 0; }
     .who { font-weight: 600; }
     .who small { color: var(--muted); font-weight: 400; }
     .meta { color: var(--muted); font-size: 0.78rem; }
     .meta .wait.red { color: var(--emergent); }
     .meta .patient-line { margin-top: 0.15rem; }
-    .chips { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-top: 0.15rem; }
+    .chips { display: flex; flex-direction: column; align-items: flex-start; gap: 0.2rem;
+             margin-top: 0.3rem; }
+    .chips + .chips { margin-top: 0.2rem; }
     .chip { font-size: 0.68rem; background: var(--chip); border-radius: 4px;
-            padding: 0.05rem 0.35rem; color: var(--muted); }
+            padding: 0.05rem 0.35rem; color: var(--muted); white-space: nowrap; }
     .chip.acuity { color: var(--text); }
     .chip.acuity.emergent { background: #46171a; color: #ff9ea1; }
     .chip.danger { background: #4a2a10; color: #ffc48a; }
     .chip.gate { background: #4a3708; color: #ffd479; }
     .chip.degraded { background: #3a2a10; color: var(--warn); }
+    .degraded-box { border-top: none; margin-top: 1rem; background: #2a2210; border: 1px solid #5a4410;
+            border-left: 3px solid var(--warn); border-radius: 8px; padding: 0.8rem 0.9rem; }
+    .degraded-box h3 { color: var(--warn); font-size: 0.8rem; margin: 0 0 0.4rem; }
+    .degraded-box h3::before { content: "⚠ "; }
+    .degraded-box ul { margin: 0 0 0.4rem; padding-left: 1.1rem; font-size: 0.78rem; line-height: 1.5; }
+    .degraded-box li:first-child { color: var(--text); font-weight: 600; list-style: none; margin-left: -1.1rem; }
+    button.health { background: #12261c; color: #6fdca0; border: 1px solid var(--ok);
+            border-radius: 6px; padding: 0.4rem 0.7rem; cursor: pointer; }
+    button.health.alert { background: var(--chip); border-color: var(--emergent); color: #ff9ea1; }
+    #outage-strip { margin: 0 1.2rem 0.6rem; padding: 0.45rem 0.8rem; border-radius: 6px;
+            background: #46171a; color: #ff9ea1; border: 1px solid #7a2328; font-size: 0.82rem; }
+    #health-panel { position: fixed; top: 4.5rem; right: 1.2rem; z-index: 20; width: 22rem;
+            background: #1c1f24; border: 1px solid #333; border-radius: 8px; padding: 0.9rem 1rem; }
+    #health-panel .close { float: right; cursor: pointer; color: var(--muted);
+                            background: none; border: none; font-size: 1.1rem; }
+    #health-panel h2 { font-size: 0.9rem; margin: 0 0 0.3rem; clear: both; }
+    #health-panel label { display: flex; gap: 0.5rem; align-items: flex-start; margin: 0.5rem 0;
+            font-size: 0.8rem; cursor: pointer; }
+    #health-panel .effect { display: block; color: var(--muted); font-size: 0.72rem; }
+    .role-note { font-size: 0.72rem; color: var(--warn); margin-top: 0.3rem; }
+    .monitor-down { align-self: center; font-size: 0.75rem; color: var(--warn); background: #3a2a10;
+            border: 1px solid #5a4410; border-radius: 6px; padding: 0.35rem 0.6rem; }
     .chip.nudge { background: #3a2a10; color: var(--warn); }
     .chip.escalated { background: #46171a; color: #ff9ea1; }
 
@@ -304,7 +328,8 @@
       </div>
     </div>
     <div id="counters"></div>
-    <button class="new-case" id="new-case-btn">+ New case</button>
+    <button class="health" id="health-btn" hidden title="All components running normally">System health</button>
+    <button class="new-case" id="new-case-btn" title="Submit a new patient case">+ New case</button>
     <button class="bell" id="notif-bell" aria-label="Notifications">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
            stroke-linecap="round" stroke-linejoin="round">
@@ -314,6 +339,14 @@
       <span class="badge" id="notif-badge" hidden>0</span>
     </button>
   </header>
+  <div id="outage-strip" hidden></div>
+  <aside id="health-panel" hidden>
+    <button class="close" id="health-panel-close" aria-label="Close">✕</button>
+    <h2>System health — simulate an outage</h2>
+    <p class="meta">Switch a component off for every patient until you switch it back.
+      Each case shows what it ran without.</p>
+    <div id="health-toggles"></div>
+  </aside>
 
   <aside id="notif-panel" hidden>
     <button class="close" id="notif-panel-close" aria-label="Close">✕</button>

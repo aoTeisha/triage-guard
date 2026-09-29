@@ -32,6 +32,19 @@ function traceAlert(violations) {
   return box;
 }
 
+// A component was down while this case ran: say which, and what the case went
+// without because of it. One list per component, the first line naming it.
+function degradedBox(degraded) {
+  const box = el("div", "section degraded-box");
+  box.append(el("h3", null, "Running degraded"));
+  [...new Set(degraded)].forEach((key) => {
+    const list = el("ul");
+    (DEGRADED_EFFECTS[key] || [key]).forEach((line) => list.append(el("li", null, line)));
+    box.append(list);
+  });
+  return box;
+}
+
 // Z3 proves the acuity-gap rules once, ahead of time — it doesn't run per
 // case — so its chip gets a tooltip saying that instead of the plain "engine
 // that decided this row" reading the others carry.
@@ -126,6 +139,7 @@ async function openPanel(caseId) {
   ]));
   body.append(acuity);
 
+  if ((view.degraded || []).length) body.append(degradedBox(view.degraded));
   body.append(movesSection(caseId, card));
   if (view.status === "awaiting_human_approval") body.append(gatePanel(caseId, view, card));
   if (view.control_state === "reassessment_required") body.append(refilePanel(caseId));
@@ -160,7 +174,19 @@ async function refreshMovesSection(caseId) {
   if (!res.ok) return;
   const { card } = await res.json();
   const prevReason = oldMoves.querySelector(".reason-select")?.value;
+  const prevRole = oldMoves.querySelector(".role-select")?.value;
+  const oldMsg = oldMoves.querySelector(".msg");
   const freshMoves = movesSection(caseId, card);
   if (prevReason) freshMoves.querySelector(".reason-select").value = prevReason;
+  // Keep the picked role across polls, unless an outage just changed who must sign.
+  if (prevRole && !isDown("opa")) freshMoves.querySelector(".role-select").value = prevRole;
+  // A denial's red message must survive this swap too — this rebuild runs
+  // right after the click that produced it (postCaseAction calls refresh()
+  // before the message has had any time on screen), not just on the 5s poll.
+  if (oldMsg && oldMsg.textContent) {
+    const freshMsg = freshMoves.querySelector(".msg");
+    freshMsg.className = oldMsg.className;
+    freshMsg.textContent = oldMsg.textContent;
+  }
   oldMoves.replaceWith(freshMoves);
 }

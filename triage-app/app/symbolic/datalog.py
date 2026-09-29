@@ -11,6 +11,7 @@ from typing import Any
 
 from pyDatalog import pyDatalog
 
+from app import outages
 from app.labels import Transition
 
 # A timer that is still going to do something. Everything else is history.
@@ -63,6 +64,7 @@ def tick_invariants(timer_rows: list[dict[str, Any]], case_rows: list[dict[str, 
     Facts are rebuilt on every call: pyDatalog's knowledge base is
     process-global, and a tick must never see a previous tick's rows.
     """
+    outages.check("datalog")
     pyDatalog.clear()
     pyDatalog.load(RULES)
     # Both predicates are negated in RULES (`~active_case`, `~live_timer`);
@@ -210,6 +212,7 @@ def acuity_provenance(
     shows up in the audit log as a generic crash with no engine named.
     """
     try:
+        outages.check("datalog")
         pyDatalog.clear()
         pyDatalog.load(SAFETY_RULES)
         # Negated predicates need at least one fact to exist at all (see tick_invariants).

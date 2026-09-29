@@ -48,6 +48,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from app import outages
 from app.guards import CHIEF_COMPLAINTS
 from app.budgets import HEARTBEAT_STALE_MULTIPLIER
 from app.labels import Transition
@@ -289,6 +290,7 @@ def board_payload() -> dict:
         # home, app/guards/fields.py.
         "chief_complaints": list(CHIEF_COMPLAINTS),
         "counters": counters(cards),
+        "outages": outages_status(),
         "red_after_min": BOARD_RED_AFTER_MINUTES,
         "notifications": notifications(states, feed),
         "cards": [
@@ -330,6 +332,30 @@ def heartbeat():
     the timer store from.
     """
     return heartbeat_status()
+
+
+class OutageSwitch(BaseModel):
+    down: bool
+
+
+@app.get("/api/outages")
+def outages_status():
+    """The outage switch: which components are simulated down for every patient.
+    `enabled` is false unless the board runs with `DEMO_OUTAGES=1`."""
+    return {"enabled": outages.enabled(), "components": list(outages.COMPONENTS),
+            "down": outages.down_list()}
+
+
+@app.put("/api/outages/{component}")
+def set_outage(component: str, body: OutageSwitch):
+    """Take one component down for every patient, or bring it back. The sweeper
+    reads the same flags, so it follows within a tick."""
+    if not outages.enabled():
+        raise HTTPException(status_code=404, detail="outage switch disabled (set DEMO_OUTAGES=1)")
+    if component not in outages.COMPONENTS:
+        raise HTTPException(status_code=404, detail=f"no component {component!r}")
+    outages.set_down(component, body.down)
+    return outages_status()
 
 
 @app.get("/api/board")

@@ -62,6 +62,7 @@ class Transition(str, Enum):
     # ---- redaction / classification ----------------------------------------
     BUILD_PAYLOAD = "build_payload"
     PAYLOAD_CLEAN = "payload_clean"
+    PRIVACY_GATE_DOWN = "privacy_gate_down"   # OPA could not answer: the model is skipped
     RUN_CLASSIFIER = "run_classifier"
     ACUITY_PROPOSED = "acuity_proposed"
 
@@ -79,6 +80,8 @@ class Transition(str, Enum):
     APPROVAL_REQUESTED = "approval_requested"
     GATE_ACUITY_RESOLVED = "gate_acuity_resolved"
     GATE_SAFETY_CORRECTED = "gate_safety_corrected"
+    GATE_REVALIDATE = "gate_revalidate"       # validator was down: ask it again, nothing to correct
+    GATE_SAFETY_WAIVED = "gate_safety_waived"  # validator was down: a shift lead cleared the case without it
 
     # ---- monitoring / world plane --------------------------------------------
     TIMER_RUNNING = "timer_running"
@@ -125,6 +128,7 @@ class Route(str, Enum):
     RETRY = "retry"
     EXHAUSTED = "exhausted"
     HALT = "halt"
+    DEGRADED = "degraded"
     ESCALATE = "escalate"
     CLEARED = "cleared"
     MOVED = "moved"

@@ -34,7 +34,15 @@ from app.symbolic import datalog, prolog
 
 
 class ValidatorUnavailable(RuntimeError):
-    """Raised when the symbolic engine cannot be reached (drives AF_SAFETY)."""
+    """Raised when a symbolic engine cannot answer (drives AF_SAFETY).
+
+    `engines` names which ones, lower case ("prolog", "datalog"), so the case
+    can say exactly what is down.
+    """
+
+    def __init__(self, engines: list[str], detail: str):
+        super().__init__(detail)
+        self.engines = engines
 
 
 # code -> how to say it to the person who has to fix it. Each takes the case.
@@ -101,13 +109,14 @@ def validate(case: dict[str, Any]) -> SafetyVerdict:
     if provenance["missing_fields"]:
         reasons.append("the case no longer holds the clinical data the acuity was judged on: "
                        + ", ".join(provenance["missing_fields"]))
-    # Fail closed: an engine that cannot answer sends the case to a human. Both
-    # checked, and independently — Datalog failing doesn't stop Prolog's rules
-    # from running against whatever provenance it got back (an empty result,
-    # same as no writers at all), so either or both can add a reason here.
-    for engine_error in (provenance.get("engine_error"), prolog_error):
-        if engine_error:
-            reasons.append(f"safety engine could not answer, routing to a human: {engine_error}")
+    # An engine that could not answer means no verdict at all, not a failing
+    # one: raise, so the case takes the validator-down path to a charge nurse,
+    # who asks for the check again once the engine is back. A "fail" here would
+    # demand a correction to the case, when the case itself is fine.
+    errors = {engine: error for engine, error in
+              (("datalog", provenance.get("engine_error")), ("prolog", prolog_error)) if error}
+    if errors:
+        raise ValidatorUnavailable(sorted(errors), "; ".join(errors.values()))
 
     if reasons:
         return SafetyVerdict(verdict="fail", reasons=reasons)

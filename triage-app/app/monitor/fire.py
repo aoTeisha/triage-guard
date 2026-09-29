@@ -248,8 +248,13 @@ def writeback(conn, timer: dict[str, Any], *, graph) -> str:
                          "case": {"control_state": snapshot.get("control_state"),
                                   "stable_patient_id": snapshot.get("stable_patient_id")}})
     if not gate["allow"]:
-        timers.set_state(conn, timer["timer_id"], "CANCELLED",
-                         last_error="opa denied writeback: " + "; ".join(gate["deny_reasons"]))
+        why = "; ".join(gate["deny_reasons"])
+        if all(r.startswith("engine_unavailable:opa") for r in gate["deny_reasons"]):
+            # OPA could not answer, which says nothing about this visit: retry it
+            # like a CRM outage. Cancelling would lose the visit for good.
+            timers.set_state(conn, timer["timer_id"], "FAILED", last_error="opa unavailable: " + why)
+            return "FAILED"
+        timers.set_state(conn, timer["timer_id"], "CANCELLED", last_error="opa denied writeback: " + why)
         return "CANCELLED"
     outcome = crm_client.patch_patient(snapshot["stable_patient_id"],
                                        {"new_visit": crm_client.visit_record(snapshot)})

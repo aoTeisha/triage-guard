@@ -97,6 +97,13 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
         "approved": False,
         "correction_rounds": 0,
         "senior_required": False,
+        # The last triage's payload and outage marks: a payload left here would
+        # route this triage past a failed privacy check.
+        "redacted_payload": {},
+        "payload_unverified": False,
+        "gate_disabled": False,
+        "validator_down": [],
+        "safety_waived": False,
         # Until the new acuity settles, the case queues by the nurse's new value,
         # as on first intake. Their acuity really changed, so I2 allows it.
         "order_key": assign_order_key(submitted.get("nurse_proposed_acuity"), state.arrival_time)

@@ -109,10 +109,16 @@ def test_an_engine_fault_is_a_deny_with_a_reason_not_a_crash(monkeypatch):
     assert "prolog engine unavailable" in why
     assert "engine on fire" in why
 
-    ok, why = prolog.may_resolve_gate("shift_lead", senior_required=True)
+    ok, why = prolog.may_resolve_gate("charge_nurse", senior_required=False)
     assert ok is False
-    assert "prolog engine unavailable" in why
+    assert "Prolog unavailable, shift lead sign-off required" in why
     assert "engine on fire" in why
+
+    # A shift lead may answer any gate, so one stands in for the engine: the
+    # gate never blocks with nobody able to act.
+    ok, why = prolog.may_resolve_gate("shift_lead", senior_required=True)
+    assert ok is True
+    assert why.startswith("authorized by shift lead")
 
 
 def test_timer_action_survives_the_engine_itself_failing_to_start(monkeypatch):

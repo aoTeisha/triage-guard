@@ -279,11 +279,11 @@ def test_a_crashed_validator_corrected_at_the_gate_passes(graph, run, monkeypatc
     from app.actors import safety
 
     def down(case):
-        raise safety.ValidatorUnavailable("engine down")
+        raise safety.ValidatorUnavailable(["prolog"], "engine down")
 
     monkeypatch.setattr(safety, "validate", down)
     _, pending, thread = run(DEMO_CASES["clean"])
-    assert pending and pending["gate"] == "safety_fail"
+    assert pending and pending["gate"] == "validator_down"
     monkeypatch.undo()
     state = _resume(graph, thread, {"decision": "corrected", "resolver_role": "charge_nurse",
                                     "corrections": {"acuity": 2}})

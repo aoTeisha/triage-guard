@@ -6,6 +6,7 @@ acuity gate.
 """
 
 import httpx
+import pytest
 import respx
 from fastapi.testclient import TestClient
 from langgraph.types import Command
@@ -458,3 +459,4 @@ def test_fields_rejects_anything_that_is_not_an_intake_field():
     response = client.post("/api/case/any-case/fields", json={"case_id": "x", "bogus": 1})
 
     assert response.status_code == 422
+

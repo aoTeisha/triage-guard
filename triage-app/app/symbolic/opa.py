@@ -17,6 +17,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from app import outages
+
 POLICY = Path(__file__).parent / "policy" / "monitor.rego"
 QUERY = "data.triage.monitor.decision"
 PRIVACY_POLICY = Path(__file__).parent / "policy" / "privacy.rego"
@@ -31,6 +33,7 @@ def evaluate(input: dict[str, Any], *, policy: Path = POLICY, query: str = QUERY
     deny path.
     """
     try:
+        outages.check("opa")
         url = os.environ.get("OPA_URL")
         decision = _via_server(url, query, input) if url else _via_subprocess(policy, query, input)
         return {"allow": decision["allow"] is True, "deny_reasons": list(decision["deny_reasons"])}

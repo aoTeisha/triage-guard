@@ -133,11 +133,13 @@ def test_the_verifier_still_scans_inside_allowed_values():
     assert "national_id in history.known_conditions[0]" in why
 
 
-def test_a_missing_engine_is_a_refusal(monkeypatch):
+def test_a_missing_engine_is_never_a_pass(monkeypatch):
+    """Not proven clean (`None`): the caller skips the model rather than halting,
+    but the payload is never approved for it."""
     monkeypatch.delenv("OPA_URL", raising=False)      # no sidecar either: nothing can answer
     monkeypatch.setenv("OPA_BIN", "/nonexistent/opa")
     ok, why = verify_no_identifiers(CLEAN)
-    assert not ok
+    assert ok is None
     assert "engine_unavailable:opa" in why
 
 

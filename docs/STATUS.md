@@ -1,8 +1,48 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-28 (a safety-fail demo scenario on the board, and a real bug
-fix it exposed: the human gate always told the browser "charge nurse", even once a
-case had escalated to a shift lead. Previous entry below.)
+**Last updated:** 2026-09-29 (an outage switch on the board: take the LLM, OPA, Prolog,
+Datalog or the monitor down for every patient, and the degrade paths it needed so no
+outage blocks treatment or release. Previous entry below.)
+
+**2026-09-29.** No commits yet (working tree only).
+
+*An outage switch, and the outages it exposed.* A "System health" button in the board
+header (shown when the board runs with `DEMO_OUTAGES=1`, which `.env`
+sets for the board and the sweeper) opens a toggle per component. A component switched
+off stays off for every patient and every action until it is switched back, and a red
+strip under the header names it. The flags live in a Postgres table,
+`component_outages`, read through `app/outages.py`, so the board and the sweeper, two
+processes, see the same outage. Each component checks its flag at the lowest call into
+it (the classifier call, `opa.evaluate`, `prolog._engine`, Datalog's provenance and
+invariant passes) and raises the same kind of error a real outage would, so the system's
+own handling reacts. The monitor's switch makes the sweeper skip its tick and its
+heartbeat, so the board shows "Monitor down" and timers wait in Postgres until it is back.
+
+Switched on and left on, the outages showed that several paths simply stopped. Now:
+
+- *OPA down.* The privacy check that runs before the model cannot prove the payload
+  clean, so the model is skipped and the case takes the classifier-down path (nurse's
+  acuity, gap gate off, flagged), instead of halting. A regex-found identifier still
+  halts. OPA also authorizes moves and releases: when it cannot answer, only a shift lead
+  may sign, before the action, and plain Python still checks what OPA would have (a move
+  needs a passed safety check and approval; a release needs a valid reason). A CRM
+  write-back timer whose OPA check cannot answer is retried, not cancelled.
+- *Prolog or Datalog down.* The safety check has no verdict, so the case goes to a new
+  gate reason, `validator_down`, whose options are "revalidate" (no change needed; uses a
+  correction round), "escalate further", and "clear without the check", which only a
+  shift lead may choose: the case queues as cleared by a shift lead (`safety_waived`,
+  never `safety_passed`), and a move to treatment accepts that in place of a pass. Prolog
+  also decides who may answer a gate: when it cannot answer, a shift lead answers.
+- *LLM down.* Unchanged: nurse's acuity, flagged.
+
+A shift lead standing in is written into the audit record ("authorized by shift lead:
+OPA unavailable") and marks the case degraded. Every degraded case names the component
+on its card chip and lists, in a "Running degraded" box in the case panel, what it went
+without. Move and release get a role picker that defaults to shift lead while OPA is down;
+the gate's picker does the same while Prolog is down. Technician alerting for outages is
+left for later. New tests: `triage-app/tests/test_outages.py`,
+`test_outage_authorization.py`, `test_component_down.py`, and
+`board/tests/intake/test_outage_switch.py`.
 
 **2026-09-28.** No commits yet (working tree only).
 
@@ -171,7 +211,7 @@ is now implemented, not just agreed: durable per-case timers, the sweeper that f
 them, and the failure/reconciliation model it was designed around
 (`triage-app/app/monitor/`). It runs as its own process (`uv run sweeper`), separate
 from any one `triage-guard` run or the other services. The VS Code "All services"
-launch starts it (`.vscode/launch.json`); run separately, a case that reaches
+launch starts it (`.env`); run separately, a case that reaches
 `monitoring` with no sweeper running schedules a reassessment timer that never fires.
 A dead sweeper shows as "monitor degraded" on the board (heartbeat, `board/api.py`).
 

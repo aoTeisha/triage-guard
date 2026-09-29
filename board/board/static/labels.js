@@ -8,11 +8,14 @@ const GATE_OPTIONS = {
   discrepancy: ["use_nurse_acuity", "use_system_acuity"],
   low_confidence: ["use_nurse_acuity", "use_system_acuity"],
   safety_fail: ["corrected", "escalate_further"],
+  validator_down: ["clear_by_shift_lead"],
 };
 const GATE_HEADINGS = {
   discrepancy: "Acuity discrepancy",
   low_confidence: "Low-confidence acuity — needs confirmation",
   safety_fail: "Safety validation failed — correct and revalidate",
+  // gatePanel names the engine that was down in front of this.
+  validator_down: "the safety check could not run. A shift lead clears the patient to the queue without it",
 };
 const COLUMN_LABELS = {
   waiting: "Waiting",
@@ -29,10 +32,59 @@ const COLUMN_LABELS = {
 const NOT_YET_WRITTEN = {};
 
 // The state fields say why a case is unusual; these say it in words.
-const DEGRADED_LABELS = { crm: "patient history unavailable" };
+const DEGRADED_LABELS = {
+  crm: "patient history unavailable",
+  acuity_classifier: "AI down",
+  opa: "OPA down",
+  prolog: "Prolog down",
+  datalog: "Datalog down",
+  safety_validation: "safety check down",
+  opa_signoff: "shift lead signed (OPA down)",
+  prolog_signoff: "shift lead answered gate (Prolog down)",
+  safety_signoff: "cleared by shift lead (no safety check)",
+};
+// What the case went without because a component was down, for the panel's
+// "Running degraded" box. Keys match DEGRADED_LABELS.
+const DEGRADED_EFFECTS = {
+  crm: ["CRM unavailable", "no patient history", "intake details only"],
+  acuity_classifier: ["AI classifier unavailable", "no second opinion on acuity",
+                      "nurse's acuity kept", "flagged for later review"],
+  opa: ["OPA unavailable", "no privacy check on the payload",
+        "AI classifier not used (data not proven clean)", "nurse's acuity kept",
+        "flagged for later review"],
+  prolog: ["Prolog unavailable", "safety rules not checked",
+           "a shift lead must clear the patient to the queue"],
+  datalog: ["Datalog unavailable", "who set the acuity not checked",
+            "a shift lead must clear the patient to the queue"],
+  safety_validation: ["Safety validator unavailable", "safety check did not run",
+                      "a shift lead must clear the patient to the queue"],
+  opa_signoff: ["OPA unavailable at sign-off", "a shift lead signed the move or release",
+                "safety, approval and release reason still checked"],
+  prolog_signoff: ["Prolog unavailable at the gate", "who may answer the gate was not checked",
+                   "a shift lead answered it"],
+  safety_signoff: ["Cleared without the safety check", "a shift lead cleared the patient to the queue",
+                   "nothing re-runs the check automatically: review this case once the engine is back"],
+};
+// The outage switch's components, in words.
+const COMPONENT_LABELS = {
+  llm: "LLM (AI classifier)",
+  opa: "OPA (privacy check, move and release authorization)",
+  prolog: "Prolog (safety rules, who may answer a gate)",
+  datalog: "Datalog (who set the acuity)",
+  monitor: "Monitor (timers and reminders)",
+};
+// What switching each one off does, shown under its toggle.
+const COMPONENT_EFFECTS = {
+  llm: "new cases use the nurse's acuity",
+  opa: "the AI is skipped; a shift lead signs moves and releases; reminders and reassessment timers wait until it is back",
+  prolog: "safety check cannot run: a shift lead clears the patient to the queue; only a shift lead answers gates; reminders and reassessment timers wait until it is back",
+  datalog: "safety check cannot run: a shift lead clears the patient to the queue",
+  monitor: "reminders and reassessment timers pause",
+};
 const FLAG_LABELS = {
   crm_down_intake_only: "no history — intake details only",
   "cross-check off": "second opinion unavailable",
+  cross_check_off_review_later: "second opinion unavailable — review later",
 };
 const DRAWER_COLUMN = "patient_released";
 // The after-run trace check's rules, keyed as the server names them (the
@@ -70,6 +122,9 @@ const ACTION_LABELS = {
   invoke_human_escalation: "sent to the charge nurse",
   apply_human_acuity: "charge nurse set the level",
   apply_correction: "correction applied",
+  request_revalidation: "charge nurse asked for the safety check again",
+  waive_safety_check: "shift lead cleared the patient without the safety check",
+  fallback_manual: "nurse's acuity used",
   explain_denial: "action refused",
   alert_technician: "technician alerted",
   discard_output: "result rejected, retrying",

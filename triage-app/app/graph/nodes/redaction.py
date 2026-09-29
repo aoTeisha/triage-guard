@@ -1,4 +1,5 @@
-"""redacting_routing — build the model-facing payload (BUILD_PAYLOAD, PAYLOAD_CLEAN, V_HALT_PII)."""
+"""redacting_routing — build the model-facing payload (BUILD_PAYLOAD, PAYLOAD_CLEAN, V_HALT_PII,
+PRIVACY_GATE_DOWN)."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ from app.graph.nodes._shared import _bump
 from app.graph.state import TriageState
 from app.labels import Transition
 from app.states import State
-from app.verification import verify_redacted_payload
+from app.verification import Violation, verify_redacted_payload
 
 
 def redacting_routing(state: TriageState) -> dict[str, Any]:
@@ -25,12 +26,29 @@ def redacting_routing(state: TriageState) -> dict[str, Any]:
     )
 
     check = verify_redacted_payload(payload)
+    if check.category is Violation.UNAVAILABLE:
+        # OPA could not answer. Keep the payload (the safety check and the board
+        # read it), but it is not proven clean, so the model is skipped and the
+        # case settles on the nurse's acuity instead of halting.
+        return {
+            "control_state": State.REDACTING_ROUTING.value,
+            "redacted_payload": check.checked,
+            "payload_unverified": True,
+            "degraded": ["opa"],
+            "audit_log": [audit(state.case_id, State.REDACTING_ROUTING,
+                                "alert_technician",
+                                "; ".join(check.violations) + "; model skipped",
+                                Transition.PRIVACY_GATE_DOWN, engines=["OPA"])],
+        }
     if not check.passed:
         transition = Transition.V_HALT_PII if check.structural else Transition.V_RETRY
         return {
             "control_state": State.REDACTING_ROUTING.value,
             "retry_count": _bump(state, "pii_schema_drop"),
             "failed_stage": State.REDACTING_ROUTING.value,
+            # Drop any payload a previous triage left, so routing halts on this one.
+            "redacted_payload": {},
+            "payload_unverified": False,
             "audit_log": [audit(state.case_id, State.REDACTING_ROUTING,
                                 "alert_technician", "; ".join(check.violations),
                                 transition, engines=["OPA"])],
@@ -45,5 +63,6 @@ def redacting_routing(state: TriageState) -> dict[str, Any]:
     return {
         "control_state": State.REDACTING_ROUTING.value,
         "redacted_payload": check.checked,
+        "payload_unverified": False,
         "audit_log": audit_records,
     }

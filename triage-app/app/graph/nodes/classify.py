@@ -66,14 +66,18 @@ def classifier_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
     """
     nurse = state.nurse_proposed_acuity
     arrival = state.arrival_time
+    # Also reached when OPA could not prove the payload clean: the classifier
+    # is fine but was skipped, so it is not the one marked degraded.
+    why = ("model skipped, payload not proven clean" if state.payload_unverified
+           else "classifier unusable")
     update: dict[str, Any] = {
         "control_state": State.CLASSIFYING.value,
         "system_proposed_acuity": None,
         "gate_disabled": True,
-        "degraded": ["acuity_classifier"],
+        "degraded": [] if state.payload_unverified else ["acuity_classifier"],
         "flags": ["cross_check_off_review_later"],
         "audit_log": [audit(state.case_id, State.CLASSIFYING, "fallback_manual",
-                            "classifier unusable, using nurse acuity; gate disabled"
+                            f"{why}, using nurse acuity; gate disabled"
                             + (f" ({reason})" if reason else ""),
                             Transition.V_EXHAUSTED_CLASSIFIER)],
     }

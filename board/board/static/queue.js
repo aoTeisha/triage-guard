@@ -20,6 +20,43 @@ function counter(label, value, alert) {
   return c;
 }
 
+// The outage switch, from `/api/board`: which components are simulated down.
+let outageState = { enabled: false, components: [], down: [] };
+const isDown = (component) => outageState.down.includes(component);
+
+function renderOutages(o) {
+  outageState = o || outageState;
+  const btn = document.getElementById("health-btn");
+  btn.hidden = !outageState.enabled;
+  btn.classList.toggle("alert", outageState.down.length > 0);
+  btn.title = outageState.down.length === 0
+    ? "All components running normally"
+    : "Down: " + outageState.down.map((c) => plain(COMPONENT_LABELS, c)).join(", ");
+  const strip = document.getElementById("outage-strip");
+  strip.hidden = outageState.down.length === 0;
+  strip.textContent = "⚠ Simulated outage: "
+    + outageState.down.map((c) => plain(COMPONENT_LABELS, c)).join(" · ");
+  const toggles = document.getElementById("health-toggles");
+  toggles.replaceChildren(...outageState.components.map((c) => {
+    const box = el("input");
+    box.type = "checkbox";
+    box.checked = isDown(c);
+    box.onchange = async () => {
+      box.disabled = true;
+      await fetch(`/api/outages/${encodeURIComponent(c)}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ down: box.checked }),
+      });
+      refresh();
+    };
+    const text = el("span", null, `${plain(COMPONENT_LABELS, c)} down`);
+    text.append(el("span", "effect", COMPONENT_EFFECTS[c] || ""));
+    const label = el("label");
+    label.append(box, text);
+    return label;
+  }));
+}
+
 function renderCounters(c) {
   const box = document.getElementById("counters");
   box.replaceChildren(
@@ -30,6 +67,13 @@ function renderCounters(c) {
     counter("longest wait", formatWait(c.longest_wait_min)),
     counter("avg wait", formatWait(Math.round(c.avg_wait_min))),
   );
+  // No sweeper heartbeat: cases still flow, but nothing time-based fires until
+  // it is back, so the people on shift have to watch the clock themselves.
+  // The red outage strip already says so when it is the simulated switch.
+  if (c.monitor_degraded && !isDown("monitor")) {
+    box.prepend(el("div", "monitor-down",
+                   "⚠ Monitor down — reminders and reassessment timers paused"));
+  }
 }
 
 // A notification has no id of its own: the list is rebuilt from the audit log
@@ -137,10 +181,11 @@ function renderCard(card, thresholds) {
     + (card.case_id === selected ? " selected" : "")
     + (seen && !seen.has(card.case_id) ? " just-arrived" : ""));
   node.append(el("div", "pos", card.position ? String(card.position) : "–"));
+  const body = el("div", "card-body");
 
   // The complaint is the headline: it is what a nurse scans a board for, and it
   // is identifier-free. The patient id is a reference, so it reads as one.
-  node.append(el("div", "who", card.complaint || "no complaint recorded"));
+  body.append(el("div", "who", card.complaint || "no complaint recorded"));
 
   const meta = el("div", "meta");
   const wait = el("span", "wait" + (isRed(card, thresholds) ? " red" : ""),
@@ -148,38 +193,49 @@ function renderCard(card, thresholds) {
   const who = el("div", "patient-line",
                  `${card.patient_label} · patient ${card.patient_id || "unknown"}`);
   meta.append(wait, who);
-  node.append(meta);
+  body.append(meta);
 
-  const chips = el("div", "chips");
+  // Unrelated facts get their own row so the eye doesn't scan them as one
+  // sentence: acuity/gate/reminders is "what stage", degraded is "what ran
+  // without", flags is everything else.
+  const acuityRow = el("div", "chips");
   if (card.acuity !== null && card.acuity !== undefined) {
     const chip = el("span", "chip acuity" + (card.bucket === "emergent" ? " emergent" : ""),
       `ESI ${card.acuity} · ${card.bucket}`);
     chip.title = `acuity decided by: ${SOURCE_LABELS[card.acuity_source] || card.acuity_source}`;
-    chips.append(chip, el("span", "chip", SOURCE_LABELS[card.acuity_source] || card.acuity_source));
+    acuityRow.append(chip, el("span", "chip", SOURCE_LABELS[card.acuity_source] || card.acuity_source));
   }
   // ESI decision point D: shown exactly as computed, and it changes no level —
   // the nurse and the classifier weigh it (SPECIFICATION.md § Safety invariants).
   if (card.danger_zone_vitals && card.danger_zone_vitals.length) {
     const danger = el("span", "chip danger", `vitals: ${card.danger_zone_vitals.join(", ")}`);
     danger.title = "outside the ESI danger-zone limits for this age band — annotation only";
-    chips.append(danger);
+    acuityRow.append(danger);
   }
   if (card.acuity === null || card.acuity === undefined) {
-    chips.append(el("span", "chip", "not yet triaged"));
+    acuityRow.append(el("span", "chip", "not yet triaged"));
   }
   if (card.gate_pending) {
-    chips.append(el("span", "chip gate",
-      card.senior_required ? "awaiting shift lead" : "awaiting charge nurse"));
+    acuityRow.append(el("span", "chip gate",
+      card.senior_required || card.gate_reason === "validator_down"
+        ? "awaiting shift lead" : "awaiting charge nurse"));
   }
   if (card.reminders) {
-    chips.append(el("span",
+    acuityRow.append(el("span",
       "chip " + (card.reminders.source === "escalation" ? "escalated" : "nudge"),
       `${nudgeLabel(card.reminders)} ${formatWait(card.reminders.elapsed_min)} ago`));
   }
-  card.degraded.forEach((d) => chips.append(el("span", "chip degraded", plain(DEGRADED_LABELS, d))));
-  card.flags.forEach((f) => chips.append(el("span", "chip", plain(FLAG_LABELS, f))));
-  node.append(chips);
+  if (acuityRow.children.length) body.append(acuityRow);
 
+  const degradedRow = el("div", "chips");
+  card.degraded.forEach((d) => degradedRow.append(el("span", "chip degraded", plain(DEGRADED_LABELS, d))));
+  if (degradedRow.children.length) body.append(degradedRow);
+
+  const flagsRow = el("div", "chips");
+  card.flags.forEach((f) => flagsRow.append(el("span", "chip", plain(FLAG_LABELS, f))));
+  if (flagsRow.children.length) body.append(flagsRow);
+
+  node.append(body);
   node.onclick = () => openPanel(card.case_id);
   return node;
 }

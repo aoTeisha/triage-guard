@@ -83,7 +83,10 @@ def case_view(state: dict[str, Any], pending: dict[str, Any] | None) -> dict[str
         "senior_required": state.get("senior_required", False),
         "approved": state.get("approved"),
         "release_reason": state.get("release_reason"),
-        "degraded": state.get("degraded", []),
+        "degraded": list(dict.fromkeys(state.get("degraded") or [])),
+        # Safety engines that could not answer at the latest check, for the
+        # validator-down gate to name.
+        "validator_down": state.get("validator_down", []),
         "flags": state.get("flags", []),
         "gate": pending,
         "audit_log": state.get("audit_log", []),
@@ -119,6 +122,8 @@ class CaseCard(BaseModel):
     # True once the correction loop has escalated: the gate now needs a
     # shift lead, not a charge nurse.
     senior_required: bool = False
+    # Why the gate is open (only while it is): the board words who must answer from it.
+    gate_reason: Optional[str] = None
 
 
 def waited_minutes(arrival_time: str | None, now: datetime | None = None) -> int:
@@ -193,9 +198,10 @@ def card_from_state(
         waited_min=waited_minutes(wait_basis, now),
         order_key=tuple(order_key) if order_key else None,
         flags=list(state.get("flags") or []),
-        degraded=list(state.get("degraded") or []),
+        degraded=list(dict.fromkeys(state.get("degraded") or [])),
         gate_pending=at_gate or control_state == State.AWAITING_HUMAN_APPROVAL.value,
         senior_required=bool(state.get("senior_required")),
+        gate_reason=state.get("escalation_reason") if at_gate or control_state == State.AWAITING_HUMAN_APPROVAL.value else None,
     )
 
 

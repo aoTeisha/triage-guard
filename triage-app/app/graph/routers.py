@@ -43,12 +43,14 @@ def route_after_identity(state: TriageState) -> Route:
 
 
 def route_after_redaction(state: TriageState) -> Route:
-    """PAYLOAD_CLEAN / V_HALT_PII / AF_PII.
+    """PAYLOAD_CLEAN / PRIVACY_GATE_DOWN / V_HALT_PII / AF_PII.
 
     `pii_schema_drop` carries N=0 by design, so a recoverable fault here exhausts
     on its first occurrence and halts. That is the critical-closed rule from the
     failure model, expressed as a budget rather than a special case.
     """
+    if state.redacted_payload and state.payload_unverified:
+        return Route.DEGRADED     # OPA down: skip the model, use the nurse's acuity
     if state.redacted_payload:
         return Route.PROCEED
     if state.failed_stage == State.REDACTING_ROUTING and not retry_budget_left(
@@ -122,7 +124,8 @@ def route_verdict(state: TriageState) -> Route:
 
 
 def route_gate(state: TriageState) -> Route:
-    """GATE_ACUITY_RESOLVED / GATE_SAFETY_CORRECTED / BLK, plus the correction-round loop guard.
+    """GATE_ACUITY_RESOLVED / GATE_SAFETY_CORRECTED / GATE_REVALIDATE / BLK, plus the
+    correction-round loop guard.
 
     Both resolved branches return to `safety_validating`: the acuity branch because
     a newly settled acuity must be validated, the safety branch because the spec
@@ -131,13 +134,16 @@ def route_gate(state: TriageState) -> Route:
     released_or_refused = release_route(state)
     if released_or_refused:
         return released_or_refused
+    if state.audit_log and state.audit_log[-1].get("transition") == Transition.GATE_SAFETY_WAIVED.value:
+        return Route.CLEARED      # a shift lead cleared it; the check it lacks cannot run
     authorized, _ = prolog.may_resolve_gate(state.resolver_role, senior_required=state.senior_required)
     if not authorized:
         return Route.DENIED
     # Handed to a senior when the rounds run out or a charge nurse escalates.
     # Once a senior holds the case, rounds no longer count, so it can't loop
     # past them (I8).
-    if state.escalation_reason == "safety_fail" and not state.senior_required and (
+    safety_branch = state.escalation_reason in ("safety_fail", "validator_down")
+    if safety_branch and not state.senior_required and (
         state.human_decision == "escalate_further"
         or not correction_rounds_left(state.correction_rounds - 1)
     ):

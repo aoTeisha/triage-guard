@@ -145,7 +145,7 @@ def audit_denial(case_id: str, control_state: State, why: str,
 # All four are answered by the real engines in `app.symbolic`.
 
 
-def verify_no_identifiers(payload: dict) -> tuple[bool, str]:
+def verify_no_identifiers(payload: dict) -> tuple[bool | None, str]:
     """What the model may see (I11, I12), decided by OPA over
     `app/symbolic/policy/privacy.rego`: only approved fields, each a closed value,
     no identifier key at any depth. Then the regex scan for an identifier typed
@@ -153,37 +153,80 @@ def verify_no_identifiers(payload: dict) -> tuple[bool, str]:
 
     The payload builder already redacted values, so a hit here means redaction
     missed something: a structural violation, not retryable, halts the case
-    (V_HALT_PII). An engine that cannot answer is a halt too, never a pass.
+    (V_HALT_PII).
+
+    `None` means OPA could not answer and the regex scan found nothing: the
+    payload is not proven clean, so it must not reach the model, but nothing was
+    found either. The caller skips the model instead of halting. A regex hit
+    while OPA is down is still a leak (`False`).
     """
     gate = opa.evaluate({"payload": payload}, policy=opa.PRIVACY_POLICY, query=opa.PRIVACY_QUERY)
     leaked = list(gate["deny_reasons"])
+    found = [f"{kind} in {path}" for path, kind in find_identifiers(payload)]
+    if _engine_down(gate) and not found:
+        return None, f"privacy check unavailable, payload not proven clean: {'; '.join(leaked)}"
     if not gate["allow"] and not leaked:
         leaked.append("the privacy policy did not allow the payload (no case_id?)")
-    leaked += [f"{kind} in {path}" for path, kind in find_identifiers(payload)]
+    leaked += found
     if leaked:
         return False, f"payload refused for the model: {'; '.join(leaked)}"
     return True, "payload approved for the model"
 
 
+# When the engine that authorizes an action cannot answer, the action is never
+# simply blocked: a shift lead signs instead, before it happens, and the facts the
+# engine would have checked are checked here. A `why` starting with this marks
+# such an action, so the caller can record the case as running degraded.
+SHIFT_LEAD_STANDS_IN = "authorized by shift lead"
+STAND_IN_ROLE = "shift_lead"
+# Same set as `release_reasons` in `app/symbolic/policy/monitor.rego`.
+RELEASE_REASONS = frozenset({"discharge", "ama", "transfer", "admit"})
+
+
+def _engine_down(gate: dict) -> bool:
+    reasons = gate["deny_reasons"]
+    return bool(reasons) and all(r.startswith("engine_unavailable:opa") for r in reasons)
+
+
+def _stand_in(actor_role: str, engine: str, facts_ok: bool, facts_why: str) -> tuple[bool, str]:
+    """The shift lead's sign-off when `engine` cannot answer."""
+    if actor_role != STAND_IN_ROLE:
+        return False, f"{engine} unavailable: shift lead sign-off required (role {actor_role!r})"
+    if not facts_ok:
+        return False, f"{engine} unavailable, and {facts_why}"
+    return True, f"{SHIFT_LEAD_STANDS_IN}: {engine} unavailable"
+
+
 def move_authorized(
-    safety_passed: bool, approved: bool, actor_role: str
+    safety_passed: bool, approved: bool, actor_role: str, safety_waived: bool = False
 ) -> tuple[bool, str]:
-    """OPA authorization for the treatment move (I5 no bypass), evaluated by
-    the real engine over `app/symbolic/policy/monitor.rego`. A refusal is the
-    BLK row: the attempt dies, the case does not move.
+    """OPA authorization for the treatment move (no bypass: a patient moves only
+    after passing safety and being approved), evaluated by the real engine over
+    `app/symbolic/policy/monitor.rego`. A refusal is the BLK row: the attempt
+    dies, the case does not move. OPA unable to answer: a shift lead may move a
+    patient who passed safety and was approved. A shift lead's clearance while the
+    safety check could not run (`safety_waived`) stands in for the pass.
     """
     gate = opa.evaluate({"action": "move",
-                         "case": {"safety_passed": bool(safety_passed), "approved": bool(approved)},
+                         "case": {"safety_passed": bool(safety_passed), "approved": bool(approved),
+                                  "safety_waived": bool(safety_waived)},
                          "actor_role": actor_role})
+    if _engine_down(gate):
+        return _stand_in(actor_role, "OPA", bool((safety_passed or safety_waived) and approved),
+                         "the patient has not passed safety and been approved")
     return gate["allow"], ("move authorized" if gate["allow"] else "; ".join(gate["deny_reasons"]))
 
 
 def release_authorized(reason: str, actor_role: str) -> tuple[bool, str]:
-    """OPA authorization for release (I9): a valid reason plus an authorized
-    signer. State-independent — release can happen from any pause, so this
-    takes no source-state argument.
+    """OPA authorization for release: a valid reason plus an authorized signer.
+    State-independent — release can happen from any pause, so this takes no
+    source-state argument. OPA unable to answer: a shift lead may release with
+    a valid reason.
     """
     gate = opa.evaluate({"action": "release", "reason": reason, "actor_role": actor_role})
+    if _engine_down(gate):
+        return _stand_in(actor_role, "OPA", reason in RELEASE_REASONS,
+                         f"{reason!r} is not a release reason")
     return gate["allow"], ("release authorized" if gate["allow"] else "; ".join(gate["deny_reasons"]))
 
 

@@ -57,12 +57,39 @@ async function postCaseAction(btn, msg, url, body, pendingText, okText, onOk) {
   onOk();
 }
 
+// Who is acting, per case. The panel re-renders on every 5s poll while open;
+// without remembering the pick here, each re-render would forget it and the
+// OPA-down default below would silently overwrite whatever the user chose.
+const lastActorRole = {};
+
+// OPA authorizes moves and releases; while it is down only a shift lead may
+// sign them, so the picker defaults to one and says why — but only the first
+// time it's shown for a case, never on top of a role the user already picked.
+function actorPicker(caseId, defaultRole) {
+  const role = el("select", "role-select");
+  [["nurse", "nurse"], ["charge_nurse", "charge nurse"], ["shift_lead", "shift lead"]]
+    .forEach(([value, label]) => {
+      const opt = el("option", null, label);
+      opt.value = value;
+      role.append(opt);
+    });
+  role.value = lastActorRole[caseId] || (isDown("opa") ? "shift_lead" : defaultRole);
+  role.onchange = () => { lastActorRole[caseId] = role.value; };
+  return role;
+}
+
 function movesSection(caseId, card) {
   const box = el("div", "section moves");
   box.append(el("h3", null, "Manual status change"));
 
   const controls = el("div", "controls");
   const msg = el("div", "msg");
+  const role = actorPicker(caseId, "charge_nurse");
+  controls.append(el("span", "meta", "acting as"), role);
+  if (isDown("opa")) {
+    controls.append(el("div", "role-note",
+      "OPA is down: moves and releases need a shift lead's sign-off."));
+  }
 
   const moveBtn = el("button", "move-btn", "Start treatment");
   moveBtn.disabled = card ? card.status !== "waiting" : true;
@@ -71,7 +98,7 @@ function movesSection(caseId, card) {
     : "";
   moveBtn.onclick = () => postCaseAction(
     moveBtn, msg, `/api/case/${encodeURIComponent(caseId)}/move-to-treatment`,
-    { actor_role: "nurse" }, "moving…", "moved to treatment",
+    { actor_role: role.value }, "moving…", "moved to treatment",
     () => setTimeout(() => openPanel(caseId), 300),
   );
 
@@ -81,7 +108,7 @@ function movesSection(caseId, card) {
   completeBtn.title = completeBtn.disabled ? "only a patient in treatment can be signed off" : "";
   completeBtn.onclick = () => postCaseAction(
     completeBtn, msg, `/api/case/${encodeURIComponent(caseId)}/treatment-complete`,
-    { actor_role: "nurse" }, "marking treated…", "treated — awaiting discharge",
+    { actor_role: role.value }, "marking treated…", "treated — awaiting discharge",
     () => setTimeout(() => openPanel(caseId), 300),
   );
 
@@ -108,7 +135,7 @@ function movesSection(caseId, card) {
     }
     postCaseAction(
       releaseBtn, msg, `/api/case/${encodeURIComponent(caseId)}/release`,
-      { reason: reasonSelect.value, actor_role: "charge_nurse" }, "releasing…", "released",
+      { reason: reasonSelect.value, actor_role: role.value }, "releasing…", "released",
       closePanel,
     );
   };
@@ -137,6 +164,9 @@ function gatePanel(caseId, view, card) {
   const heading = reason === "discrepancy" || reason === "low_confidence"
     ? `${GATE_HEADINGS[reason]} — nurse proposed ${card ? card.nurse_proposed_acuity : "—"}, `
       + `system proposed ${card ? card.system_proposed_acuity : "—"} (gap ${view.acuity_gap}).`
+    : reason === "validator_down"
+      ? `${(view.validator_down || []).map((e) => e[0].toUpperCase() + e.slice(1)).join(" and ")
+          || "The safety validator"} unavailable — ${GATE_HEADINGS[reason]}.`
     : reason
       ? GATE_HEADINGS[reason]
       : `Awaiting a charge nurse's decision (${rawReason || "reason unknown"}).`;
@@ -151,7 +181,10 @@ function gatePanel(caseId, view, card) {
   });
   // Once the correction loop has escalated to a shift lead, the gate refuses
   // a charge nurse. Default the picker to whoever it will actually accept.
-  if (view.senior_required) role.value = "shift_lead";
+  if (view.senior_required || reason === "validator_down") role.value = "shift_lead";
+  // Prolog checks who may answer a gate; while it is down a shift lead answers.
+  const prologDown = isDown("prolog");
+  if (prologDown) role.value = "shift_lead";
 
   // Readable stand-ins for the raw decision codes the API expects. The two
   // acuity-reason decisions get the actual proposed number, so the nurse
@@ -160,7 +193,9 @@ function gatePanel(caseId, view, card) {
     use_nurse_acuity: `Use nurse's acuity — ESI ${card ? card.nurse_proposed_acuity : "?"}`,
     use_system_acuity: `Use system's acuity — ESI ${card ? card.system_proposed_acuity : "?"}`,
     corrected: "Corrected — resubmit for revalidation",
+    revalidate: "Revalidate — run the safety check again",
     escalate_further: "Escalate further",
+    clear_by_shift_lead: "Clear to queue without the check (shift lead)",
   };
 
   // A safety failure names what contradicts what — the case continues only once
@@ -210,6 +245,17 @@ function gatePanel(caseId, view, card) {
           options.querySelectorAll("button").forEach((b) => (b.disabled = false));
           return;
         }
+        // /resume replies 200 with the bare case view even when the gate refuses:
+        // the refusal is only the newest audit row being a BLK.
+        const view = await res.json().catch(() => null);
+        const last = view && (view.audit_log || []).slice(-1)[0];
+        if (last && last.transition === "blk") {
+          msg.className = "msg err";
+          msg.textContent = readable(last.explanation) || "refused";
+          options.querySelectorAll("button").forEach((b) => (b.disabled = false));
+          refresh();
+          return;
+        }
         msg.className = "msg ok";
         msg.textContent = "resolved";
         refresh();
@@ -225,6 +271,9 @@ function gatePanel(caseId, view, card) {
 
   if (reasons) box.append(reasons);
   box.append(el("label", null, "Resolver role"), role);
+  if (prologDown) {
+    box.append(el("div", "role-note", "Prolog is down: only a shift lead can answer this gate."));
+  }
   if (correction) box.append(el("label", null, "Corrected acuity"), correction);
   box.append(options, msg);
   return box;

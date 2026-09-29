@@ -87,8 +87,8 @@ system is most tempted to break under load, which is when it matters most.
 
 ### Safe Fallbacks
 
-Two defined safe behaviors for a component outage, each falling toward the safe
-direction, and neither breaking a Hard Constraint. The direction follows from what breaks
+Defined safe behaviors for a component outage, each falling toward the safe
+direction, and none breaking a Hard Constraint. The direction follows from what breaks
 if we continue: the classifier guards accuracy (compromisable for a while), the validator
 guards safety (not compromisable - it needs a human substitute).
 
@@ -103,7 +103,43 @@ guards safety (not compromisable - it needs a human substitute).
   safety-and-approval guarantee holds by substituting a human validator for the automated
   one; routing _all_ cases, not just suspicious ones, is the safe choice, because without
   the validator the system cannot tell safe from unsafe. Cost: the human approval queue
-  spikes - quantified in the capacity model.
+  spikes - quantified in the capacity model. The validator's rules run on two engines,
+  Prolog (the safety rules) and Datalog (who wrote the acuity, and whether the clinical
+  data it was judged on is still there); if either cannot answer, the check has no
+  verdict at all, not a failing one. The charge nurse therefore has nothing to correct:
+  the gate offers "revalidate", which runs the check again once the engine is back, or
+  "escalate further". Each revalidation uses a correction round, so a long outage hands
+  the case to a shift lead instead of looping. An outage must never keep a patient from
+  treatment, so a shift lead may also clear the case to the queue without the check. The
+  case is then recorded as cleared by a shift lead, never as passed, and treatment may
+  start. Only a check that could not run can be cleared this way: a real safety failure
+  still needs a correction and a new pass.
+- **Privacy check (OPA) unavailable - skip the model, degrade.** OPA proves that the
+  payload handed to the model carries no patient identifier. If it cannot answer and the
+  regex identifier scan finds nothing, the payload is not proven clean, so it never
+  reaches the model: the case takes the classifier-down path (the nurse's acuity, the
+  discrepancy gate off, flagged for later review) and continues to safety validation.
+  An identifier the regex scan does find still halts the case, OPA or not.
+- **Monitor (sweeper) unavailable - continue, humans watch the clock.** The pipeline
+  never calls the monitor; it only stores timer rows in Postgres. Cases keep flowing to
+  the queue, but nothing time-based fires: reassessment timers, gate and senior
+  reminders, CRM write-back retries, and the sweep that looks for unwatched cases. The
+  board shows "Monitor down" from the missing heartbeat, so staff watch waiting times
+  and open gates by hand. On restart the sweeper finds the overdue timers and fires them.
+- **An authorization engine unavailable - a shift lead signs instead.** OPA authorizes
+  moves to treatment and releases; Prolog decides who may answer a gate. No outage may
+  block treatment or release, so when the engine cannot answer, a shift lead signs before
+  the action, and the facts the engine would have checked are checked in plain code: a
+  move needs a passed safety check and approval, a release needs a valid reason. A real
+  refusal from a working engine is never overridden. A CRM write-back whose authorization
+  cannot be checked is retried, never dropped. While OPA or Prolog is down, reminders and
+  reassessment timers also wait and are retried once it is back, so staff watch the clock
+  by hand, as for a monitor outage.
+
+Every degraded case records which component was down (`degraded`: `acuity_classifier`,
+`opa`, `prolog`, `datalog`, `safety_validation`, `crm`), and a shift-lead sign-off in
+place of an engine records `opa_signoff`, `prolog_signoff` or `safety_signoff`. The board shows each once
+on the card and lists, in the case panel, what the case went without because of it.
 
 ### Assumptions
 
