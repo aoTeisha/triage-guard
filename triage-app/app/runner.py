@@ -69,7 +69,7 @@ def case_lock(case_id: str, timeout_seconds: float = 5.0):
     `pg_advisory_lock`: a stuck holder must time out into a clear refusal,
     not hang the caller indefinitely.
 
-    # ponytail: 50ms poll, busy-loop. Fine for a ward's request volume;
+    # 50ms poll, busy-loop. Fine for a ward's request volume;
     # LISTEN/NOTIFY or a condition variable if contention ever shows up in
     # a profile.
     """
@@ -287,7 +287,7 @@ def all_case_summaries(exclude_case_id: str | None = None) -> list[dict[str, Any
     """One row per case ever started, as `{case_id, control_state,
     stable_patient_id}`. Backs the I19 duplicate-active-case check.
 
-    # ponytail: one graph.get_state() per case — same trade-off
+    # one graph.get_state() per case — same trade-off
     # board/repo.py's CheckpointRepo already makes for a board refresh. Fine
     # at current volume; past a few hundred cases, write a `cases` summary
     # row (case_id, control_state, stable_patient_id) alongside each

@@ -37,7 +37,7 @@ def reassessment_required(state: TriageState) -> dict[str, Any]:
     """
     waits = state.refile_waits + 1
     due_at = timers.due_in(REASSESSMENT_REMINDER_DELAY_MINUTES)
-    # ponytail: one rung, straight to the charge nurse, where the approval gate
+    # one rung, straight to the charge nurse, where the approval gate
     # has a two-step ladder. Add a second rung if reminders go unanswered in
     # practice — the recipient lookup in `fire.notify` is where it would go.
     timers.schedule(timers.connection(), case_id=state.case_id,

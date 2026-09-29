@@ -69,7 +69,7 @@ def _check_invariants(conn: psycopg.Connection, graph) -> None:
     never touches timer state — a timer the sweeper keeps refusing is
     evidence, not a mess to tidy away.
     """
-    # ponytail: one graph.get_state per distinct live case per tick. Fine for
+    # one graph.get_state per distinct live case per tick. Fine for
     # a ward's worth of cases; cache by checkpoint id if it ever isn't.
     try:
         timer_rows = timers.all_rows(conn)

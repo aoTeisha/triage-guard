@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 RULES = Path(__file__).parent / "rules" / "monitor.pl"
 SAFETY_RULES = Path(__file__).parent / "rules" / "safety.pl"
 
-# ponytail: one process-wide engine behind one lock. pyswip's engine is a
+# one process-wide engine behind one lock. pyswip's engine is a
 # global and is not thread-safe; the board's FastAPI threadpool reaches
 # `actor_is_charge` from several threads. Per-thread engines if this lock
 # ever shows up in a profile.
