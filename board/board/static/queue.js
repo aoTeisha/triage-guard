@@ -67,13 +67,6 @@ function renderCounters(c) {
     counter("longest wait", formatWait(c.longest_wait_min)),
     counter("avg wait", formatWait(Math.round(c.avg_wait_min))),
   );
-  // No sweeper heartbeat: cases still flow, but nothing time-based fires until
-  // it is back, so the people on shift have to watch the clock themselves.
-  // The red outage strip already says so when it is the simulated switch.
-  if (c.monitor_degraded && !isDown("monitor")) {
-    box.prepend(el("div", "monitor-down",
-                   "⚠ Monitor down — reminders and reassessment timers paused"));
-  }
 }
 
 // A notification has no id of its own: the list is rebuilt from the audit log
