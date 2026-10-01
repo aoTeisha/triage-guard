@@ -49,25 +49,32 @@ through to release.
 
 ### Authorities
 
-- **Decision authority - the Flow.** The Flow decides; the agents, including the
-  Acuity Classifier, only propose. The
-  classifier emits a proposed acuity and a confidence; the Flow passes that
-  proposal through the safety layers, and its steps write the results to state.
+- **Decision authority - the graph.** The graph is the LangGraph state graph that
+  carries a case from intake to release. It decides; the agents, including the Acuity
+  Classifier, only propose. The classifier emits a proposed acuity and a confidence, the
+  graph passes that proposal through the safety layers, and its nodes write the results
+  to state.
 - **Execution authority - the Tool Gateway.** It is the single execution point against
-  the outside world for the irreversible treatment-move. The Flow authorizes the
+  the outside world for the irreversible treatment-move. The graph authorizes the
   move; the Gateway executes it. This split between the decider and the executor is what
   creates the UNKNOWN risk modeled later: the component that decides never gets certainty
   from the component that executes.
 - **Human authority - the charge nurse or shift lead**, reached through the Human
-  Escalation bridge. Required for acuity discrepancies (a gap of two or more between the
-  nurse's and the system's acuity) and for safety-validation failures. The bridge conveys
-  the question and returns the human's decision but holds no authority itself; the
-  authority rests with the authorized person behind it. Human authority is _not_ required
-  when the nurse and system agree, or for an ordinary release, so the human is a gate for
-  contested and unsafe cases only, not a bottleneck on every case.
+  Escalation bridge. A case goes to a human for one of four reasons: an acuity
+  discrepancy (a gap of two or more between the nurse's and the system's acuity), a
+  safety-validation failure, a safety validator that could not run, or a classifier
+  confidence below the threshold (0.70) on a case that otherwise passed. A gap of one is
+  settled automatically in favor of the nurse's acuity. Prolog checks that whoever
+  answers the gate holds a charge role (charge nurse or shift lead), and a case handed
+  up to a senior must be answered by a shift lead. The bridge conveys the question and
+  returns the human's decision but holds no authority itself; the authority rests with
+  the person behind it. When the nurse and the system agree and the classifier is
+  confident, no human is asked, so the gate only sees the cases that need one. Release
+  happens outside the gate: a charge nurse or shift lead signs it with a valid reason
+  (discharge, against medical advice, transfer, admit).
 
 The LLM never has a direct arrow to an irreversible action. The path is: classifier
-proposes → Flow → safety validation and approval → Tool Gateway executes. Three
+proposes → graph → safety validation and approval → Tool Gateway executes. Three
 steps sit between the proposal and the irreversible act.
 
 ### Hard Constraints
@@ -159,19 +166,21 @@ rather than facts.
 We mark these explicitly rather than invent a value. An explicit unknown is honest; a
 made-up number looks like a fact until it fails in production.
 
-- **Per-agent retry budgets are undefined in the spec.** We do not invent a number. What
-  we do fix is that a retry budget exists, that it must be finite (an irreversible action
-  cannot be retried indefinitely), and that it differs per agent. The value depends on
-  data we do not yet have - real Gateway response times, real timeout rates,
-  reconciliation duration - so it has to be decided from data, not feel. This controls the
-  treatment-move UNKNOWN problem modeled next.
-- **The safety-fail branch of the human-approval gate is undefined.** The gate is entered
-  for two different reasons: an acuity discrepancy (resolved - the nurse chooses the
-  system's or the nurse's acuity) and a safety-validation failure (unresolved). For the
-  safety-fail reason, the nurse's options, where each option sends the case, and whether
-  it requires charge role are all undefined, so a case can currently reach the gate on a
-  safety-fail and hit a dead end. This is the highest-value gap to close before code,
-  because it is a known hole, not a hypothetical one.
+- **The right per-agent retry budgets are unknown.** What is fixed is that a retry budget
+  exists, that it is finite (an irreversible action cannot be retried indefinitely), and
+  that it differs per agent. The code runs on working defaults kept in one table: the
+  classifier 2 retries, safety validation 1, the CRM 2, the human bridge 2, and the
+  identifier-stripping step 0, because a deterministic step that fails will fail the same
+  way again. The real values depend on data we do not yet have - real response times,
+  real timeout rates, reconciliation duration - so the defaults are placeholders until
+  that data replaces them.
+- **The right correction-round limit is unknown.** The safety-fail branch of the gate
+  (section 2) bounds how many correct-and-revalidate rounds a case may take before it is
+  handed to a shift lead. The code uses a working default of 3, with the same status as
+  the retry budgets.
+- **The right confidence threshold is unknown.** A case that passed safety validation
+  still goes to a charge nurse when the classifier's confidence is below a threshold.
+  The working default is 0.70.
 
 ---
 
@@ -179,12 +188,13 @@ made-up number looks like a fact until it fails in production.
 
 - The exit boundary is asymmetric: release is final, treatment is not (re-triage can
   follow), so the system must keep watching a case after treatment starts.
-- The decision/execution split (Flow authorizes, Gateway executes) is the origin
+- The decision/execution split (graph authorizes, Gateway executes) is the origin
   of the UNKNOWN risk modeled next.
 - Two live assumptions rest on actors outside the boundary: nurse acuity, and a "done"
   receipt meaning treatment truly started.
-- Two genuine unknowns are flagged rather than guessed (retry budget; the safety-fail
-  branch), and both feed directly into the next modeling steps.
+- Three numbers are flagged as unknown rather than settled (retry budgets, the
+  correction-round limit, the confidence threshold). The code runs on working defaults
+  for each, kept in one table so they can be replaced from data.
 
 ---
 
@@ -192,10 +202,12 @@ made-up number looks like a fact until it fails in production.
 
 ## 2. The Safety-Fail Branch of the Human-Approval Gate
 
-_A case can enter the approval gate for two different reasons. The acuity-discrepancy
-reason is specified elsewhere; the safety-fail reason is resolved here. The resolution
+_A case can enter the approval gate for four reasons: an acuity discrepancy, a
+safety-validation failure, a validator that could not run, and low classifier
+confidence. For a discrepancy or low confidence, the charge nurse settles the acuity and
+the case is validated again. The safety-fail reason is resolved here. The resolution
 holds to two constraints: never bypass safety or approval, and never silently return the
-same case to the queue without changing `acuity`, `clinical_status`, or `safety_verdict`._
+same case to the queue without changing its `acuity`._
 
 ### The core distinction: correction versus override
 
@@ -211,21 +223,22 @@ never a _request for permission to skip_.
    "override and proceed" action.
 
 2. **Correction (charge role required).** The charge nurse corrects the data in the
-   webform. A safety-fail is a high-risk exception, so it requires `actor_is_charge`,
-   consistent with the discrepancy branch. The system **enforces that at least one of**
-   `acuity`, `clinical_status`, or `safety_verdict` **actually changed**; if nothing
-   changed, the submission is rejected as "correction required." This satisfies the spec's
-   second constraint and prevents an infinite fail → gate → same-input → fail loop.
+   webform. A safety-fail is a high-risk exception, so it requires a charge role (charge
+   nurse or shift lead), consistent with the discrepancy branch. The system **enforces
+   that the `acuity` actually changed**; if it did not, the submission is rejected as
+   "correction required." This satisfies the second constraint and prevents an infinite
+   fail → gate → same-input → fail loop. Instead of correcting, the charge nurse may
+   choose "escalate further", which hands the case to a shift lead at once.
 
-3. **Revalidate.** Safety validation runs **again** on the corrected version, via the
-   reassessment path. If it passes, the case proceeds normally. If it fails again, it
+3. **Revalidate.** Safety validation runs **again** on the corrected version, straight
+   from the gate. If it passes, the case proceeds normally. If it fails again, it
    returns to the gate.
 
 4. **Loop guard.** There is a maximum number of correction rounds. When exhausted, the
-   case **escalates to a more senior clinician on shift** (for example the attending
-   physician) rather than looping forever. The exact maximum is another value we do not
-   invent here; it is fixed from data, like the machine retry budget. What is fixed now is
-   that a finite bound and an escalation target exist.
+   case **escalates to a shift lead**, who must answer the gate, rather than looping
+   forever. Once a shift lead holds the case, rounds no longer count. The maximum is a
+   working default of 3, to be replaced from data like the machine retry budgets. What is
+   fixed is that a finite bound and an escalation target exist.
 
 5. **Queue position while waiting.** The case leaves the **normal queue order** - it does
    not compete for a bed on a disputed acuity - but it does **not disappear**. It sits in
@@ -262,9 +275,9 @@ the button.
 - The architecture should contain **no safety-override path at all** - a conclusion that
   was not obvious from the business request and became clear only by modeling the two
   entry reasons of the same gate side by side.
-- A **third undefined budget** appears (the human correction-round limit), parallel to the
-  machine retry budget. Both are finite, both escalate on exhaustion, both are fixed from
-  data rather than guessed.
+- A **human budget** appears (the correction-round limit), parallel to the machine retry
+  budgets. Both are finite, both escalate on exhaustion, and both run on working defaults
+  until real data replaces them.
 - The gate needs its own **waiting service-level target**, because a case parked for
   correction is out of the acuity queue and could otherwise be forgotten.
 
@@ -284,7 +297,7 @@ is no direct arrow from the LLM to an irreversible action, by design._
 
 **Inside the boundary**
 
-- **Flow** - decision authority. Its steps write state.
+- **Graph** - decision authority. Its nodes write state.
 - **Acuity Classifier** - the LLM; proposes only.
 - **Safety Validation** - the binding safety gate.
 - **Human Escalation bridge** - the conduit to the human authority.
@@ -295,7 +308,8 @@ is no direct arrow from the LLM to an irreversible action, by design._
 **Outside the boundary**
 
 - **Intake nurse (via webform)** - human actor; supplies the case and the proposed acuity.
-- **Charge nurse** - human authority; resolves discrepancies and safety failures.
+- **Charge nurse / shift lead** - human authority; answers the approval gate and signs
+  releases. A shift lead takes cases handed up from a charge nurse.
 - **CRM** - source of patient history; not always available.
 - **Downstream treatment system** - what the Gateway actually drives to start treatment.
 
@@ -308,25 +322,25 @@ deliberate, not an inconsistency._
 
 | From → To                 | Message                                                                                                             | Meaning                                                                                  |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Intake nurse → Flow       | `CASE_SUBMITTED { complaint, vitals, nurse_proposed_acuity }`                                                       | A new case enters; carries the nurse's proposed acuity among other fields.               |
-| Flow → Acuity Classifier  | `classify_request { case_payload }`                                                                                 | Ask for an acuity proposal. Payload carries **no identifiers**.                          |
-| Acuity Classifier → Flow  | `ActionProposal { proposed_acuity, confidence }`                                                                    | A proposal, not a fact; the Flow decides what to do with it.                             |
-| Flow → Safety Validation  | `ValidationRequest { case_payload, proposed_acuity }`                                                               | Check the proposal against the case before any write.                                    |
-| Safety Validation → Flow  | `SafetyVerdict { pass \| fail, reason }`                                                                            | A binding verdict; `reason` drives the correction path on `fail`.                        |
-| Flow → CRM                | `HistoryLookup { patient_id }`                                                                                      | The only arrow that carries the identifier.                                              |
-| CRM → Flow                | `PatientHistory { prior_visits, conditions }`                                                                       | History merged into the current case.                                                    |
-| Flow → Human Escalation   | `EscalationRequest { case, reason: discrepancy \| safety_fail }`                                                    | Reason determines which question the human gets.                                         |
-| Human Escalation → Flow   | `ApprovalToken { decision, actor_is_charge, approval_id, expires_at }`                                              | An authenticated, time-bounded decision - must be re-checked as valid at execution time. |
-| Flow → Tool Gateway       | `ActionRequest { move_to_treatment, request_id, action_hash, idempotency_key, issued_at, approval_id, expires_at }` | The irreversible act - sent only after `safety_passed ∧ approved`.                       |
+| Intake nurse → Graph      | `CASE_SUBMITTED { complaint, vitals, nurse_proposed_acuity }`                                                       | A new case enters; carries the nurse's proposed acuity among other fields.               |
+| Graph → Acuity Classifier | `classify_request { case_payload }`                                                                                 | Ask for an acuity proposal. Payload carries **no identifiers**.                          |
+| Acuity Classifier → Graph | `ActionProposal { proposed_acuity, confidence }`                                                                    | A proposal, not a fact; the graph decides what to do with it.                            |
+| Graph → Safety Validation | `ValidationRequest { case_payload, proposed_acuity }`                                                               | Check the proposal against the case before any write.                                    |
+| Safety Validation → Graph | `SafetyVerdict { pass \| fail, reason }`                                                                            | A binding verdict; `reason` drives the correction path on `fail`.                        |
+| Graph → CRM               | `HistoryLookup { patient_id }`                                                                                      | The only arrow that carries the identifier.                                              |
+| CRM → Graph               | `PatientHistory { prior_visits, conditions }`                                                                       | History merged into the current case.                                                    |
+| Graph → Human Escalation  | `EscalationRequest { case, reason: discrepancy \| safety_fail \| validator_down \| low_confidence }`                | Reason determines which question the human gets.                                         |
+| Human Escalation → Graph  | `ApprovalToken { decision, resolver_role, approval_id, expires_at }`                                                | An authenticated, time-bounded decision - must be re-checked as valid at execution time. |
+| Graph → Tool Gateway      | `ActionRequest { move_to_treatment, request_id, action_hash, idempotency_key, issued_at, approval_id, expires_at }` | The irreversible act - sent only after `safety_passed ∧ approved`.                       |
 | Tool Gateway → Downstream | `move_to_treatment { case_id, idempotency_key }`                                                                    | The execution against the outside world.                                                 |
 | Downstream → Tool Gateway | `ToolReceipt { started \| failed }` - **or nothing (timeout)**                                                      | Three outcomes, not two - the missing receipt is the UNKNOWN.                            |
-| Flow → Audit Store        | `AuditRecord { action, actor, timestamp, before → after, reason }`                                                  | Every state change is recorded - the auditability constraint.                            |
+| Graph → Audit Store       | `AuditRecord { action, actor, timestamp, before → after, reason }`                                                  | Every state change is recorded - the auditability constraint.                            |
 
 ### Authority separation - why the arrows are shaped this way
 
 The diagram separates three authorities so that no single component can both decide and
 act. The Acuity Classifier only emits an `ActionProposal`; it never writes state and has
-no path to execution. The Flow is the sole decider, and its steps write state:
+no path to execution. The graph is the sole decider, and its nodes write state:
 every proposal, verdict, and approval converges on it, and only it authorizes action. The
 Tool Gateway is the single execution point for the irreversible treatment-move, reached
 only after `SafetyVerdict = pass` and, where required, an `ApprovalToken` from the charge
@@ -338,11 +352,11 @@ never arrive - the origin of the UNKNOWN problem modeled next.
 ### Two boundary facts the diagram makes checkable
 
 - **The identifier stops at the CRM lookup.** `patient_id` travels only on the
-  Flow ↔ CRM arrows. Every arrow into the classifier and the safety validator
+  graph ↔ CRM arrows. Every arrow into the classifier and the safety validator
   carries `case_payload` with no identifiers. If any arrow forwarded `patient_id` toward
   the model, that would be a visible violation of the privacy boundary.
 - **Two different kinds of return arrow.** `SafetyVerdict` is a binding verdict (the
-  Flow must respect it); `ApprovalToken` is a time-bounded token (the Flow
+  graph must respect it); `ApprovalToken` is a time-bounded token (the graph
   must re-verify it is still valid at execution time). Naming them differently keeps the
   distinction visible: a proposal is weighed, a verdict is obeyed, a token is verified.
 
@@ -350,7 +364,7 @@ never arrive - the origin of the UNKNOWN problem modeled next.
 
 ## 4. Execution State Machine
 
-> **Future design, not a current requirement.** This describes an external ward system that this project will never have (decided 2026-09-19; the single-execution-writer invariant was dropped for the same reason). Today a move into treatment is a board column change, guarded by I5 and I6.
+> **Future design, not a current requirement.** This describes an external ward system that this project does not have. Today a move into treatment is a board column change that OPA authorizes only when the case passed safety validation (or a shift lead cleared it while the check could not run) and is approved, for a nurse, charge nurse, or shift lead.
 
 _This section models the **treatment-move execution**, the only irreversible
 side effect in the system. The aim is to make the UNKNOWN explicit. A timeout is not a
@@ -390,36 +404,36 @@ transition - and, where relevant, the source of evidence it relies on.
 
 | Event                  | Transition                       | Producer     | Evidence source                     |
 | ---------------------- | -------------------------------- | ------------ | ----------------------------------- |
-| `send_request`         | READY → PENDING                  | Flow         | -                                   |
+| `send_request`         | READY → PENDING                  | Graph        | -                                   |
 | `receipt_started`      | PENDING → CONFIRMED              | Tool Gateway | downstream system                   |
 | `receipt_failed`       | PENDING → FAILED                 | Tool Gateway | downstream system                   |
-| `timeout`              | PENDING → UNKNOWN                | Flow         | its own timer                       |
-| `reconcile_result`     | RECONCILING → CONFIRMED / FAILED | Flow         | Audit Store (+ downstream re-query) |
-| `retry`                | FAILED → PENDING                 | Flow         | its own retry counter               |
-| `retry_limit_reached`  | FAILED → ESCALATED_TO_HUMAN      | Flow         | its own retry counter               |
-| `reconcile_unresolved` | RECONCILING → UNKNOWN            | Flow         | - (source unreachable)              |
+| `timeout`              | PENDING → UNKNOWN                | Graph        | its own timer                       |
+| `reconcile_result`     | RECONCILING → CONFIRMED / FAILED | Graph        | Audit Store (+ downstream re-query) |
+| `retry`                | FAILED → PENDING                 | Graph        | its own retry counter               |
+| `retry_limit_reached`  | FAILED → ESCALATED_TO_HUMAN      | Graph        | its own retry counter               |
+| `reconcile_unresolved` | RECONCILING → UNKNOWN            | Graph        | - (source unreachable)              |
 
 **Producer versus evidence source.** The producer is the component allowed to _cause_ the
 transition, not whichever component supplied a fact along the way. For `reconcile_result`
-the Audit Store answers the question "did the move happen?", but the Flow is the
+the Audit Store answers the question "did the move happen?", but the graph is the
 producer: it starts the reconciliation, reads the source, decides what the answer means,
 and writes the new state. The Audit Store is the evidence source, the way the classifier
 is the evidence source for an acuity decision - it informs, it does not decide.
 
-**Why almost every event is produced by the Flow.** Only events that originate in
+**Why almost every event is produced by the graph.** Only events that originate in
 the outside world - `receipt_started`, `receipt_failed` - belong to the Tool Gateway.
-Every other event is a decision or a measurement derived from state the Flow alone
+Every other event is a decision or a measurement derived from state the graph alone
 holds: the timer for `timeout`, the retry counter for `retry` and `retry_limit_reached`,
 the reconciliation outcome for `reconcile_result`. That is a consequence of the
-Flow owning the state (below): any event derived from state is its to produce.
+graph owning the state (below): any event derived from state is its to produce.
 
 ### State owner
 
-The critical state variable `execution_state` has a single owner: **one Flow step**.
-Most transitions are derived from state that step holds, so the owner has to be
+The critical state variable `execution_state` has a single owner: **one graph node**.
+Most transitions are derived from state that node holds, so the owner has to be
 single. If two components could write `execution_state`, they would race: the Gateway
-writing `CONFIRMED` at the same moment the step writes `timeout → UNKNOWN`. A
-single owner rules that out. The Gateway reports facts (receipts), and that one step
+writing `CONFIRMED` at the same moment the node writes `timeout → UNKNOWN`. A
+single owner rules that out. The Gateway reports facts (receipts), and that one node
 alone turns facts and timers into state.
 
 ### Forbidden transition
@@ -451,7 +465,7 @@ Gateway can recognize it as the same action and refuse to start treatment twice.
 
 ## 5. Interface Contract & Failure Handling
 
-> **Future design, not a current requirement.** This describes an external ward system that this project will never have (decided 2026-09-19; the single-execution-writer invariant was dropped for the same reason). Today a move into treatment is a board column change, guarded by I5 and I6.
+> **Future design, not a current requirement.** This describes an external ward system that this project does not have. Today a move into treatment is a board column change that OPA authorizes only when the case passed safety validation (or a shift lead cleared it while the check could not run) and is approved, for a nurse, charge nurse, or shift lead.
 
 _This section defines what may cross the interface for the irreversible treatment-move,
 and what the system does when it cannot tell whether the move happened. The contract and
@@ -489,7 +503,7 @@ The three runtime checks all guard against the same thing - the world moving bet
 preparation and execution:
 
 - **Validity still holds (`expires_at`).** An approval is checked as valid when it
-  arrives, but time passes before the Flow sends the action, so the case may have
+  arrives, but time passes before the graph sends the action, so the case may have
   waited in the queue, or gone through reconciliation. If `expires_at` has passed, the
   approval is stale and the action is no longer backed by a live approval. So the check is
   `now < expires_at`, verified in the moment before sending.
@@ -500,7 +514,7 @@ preparation and execution:
   different action, and can only be checked once the final action is known.
 - **The approval is bound and authorized (`approval_id`).** Not enough that an
   `approval_id` exists: it must belong to _this_ case (not lifted from another), and it
-  must come from an authorized signer (`actor_is_charge`). This blocks two attacks - an
+  must come from an authorized signer (a charge role in `resolver_role`). This blocks two attacks - an
   approval stolen from another case, and an approval from someone not permitted to give
   one.
 
@@ -530,7 +544,7 @@ receipt.
   evidence the move did not occur - never from `UNKNOWN`. Every retry carries the **same**
   `idempotency_key`. The retry count is bounded; on exhaustion the case escalates to a
   human.
-- **Reconciliation.** From `UNKNOWN`, before any further attempt, the Flow asks the
+- **Reconciliation.** From `UNKNOWN`, before any further attempt, the graph asks the
   source of truth whether the move happened. The answer maps to `CONFIRMED` (happened -
   leave it) or `FAILED` (did not - safe to try). A reconciliation is a query and changes
   nothing in the world, so it is safe to repeat.
@@ -550,7 +564,7 @@ retry → confirm, and each junction needs its own record.
 | `request_id`, `idempotency_key`, `issued_at`                                      | what was sent, and when               | identifying a duplicate execution |
 | `tool_receipt` **or** `timeout@T` (no receipt)                                    | what came back, or that nothing did   | why the case entered `UNKNOWN`    |
 | `reconcile_record { queried_at, source, result: done \| not_done \| unresolved }` | what reconciliation found             | justifying the retry              |
-| `approval_id`, `actor_is_charge`, `expires_at`                                    | who approved, and under what validity | legal defense / no-bypass         |
+| `approval_id`, `resolver_role`, `expires_at`                                      | who approved, and under what validity | legal defense / no-bypass         |
 
 The one that is easy to miss is `reconcile_record`. Without it, the trail shows "timeout,
 then retry, then success" but cannot show that a check confirmed the retry was safe. If a
@@ -637,7 +651,7 @@ Only two things lower ρ below 1:
 - **Lower λ** - send fewer cases to the human gate in the first place. This is the
   architectural lever, and it connects back to the failure model: when Safety Validation
   is down, _every_ case is routed to a human, which is exactly what floods the queue. In
-  normal operation only genuinely contested cases (discrepancy or safety-fail) need a
+  normal operation only contested or uncertain cases (discrepancy, safety-fail, low confidence) need a
   human; keeping the gate strict about what it escalates keeps λ down.
 
 ### Architecture decision - separate reversible containment from the irreversible act
@@ -648,7 +662,7 @@ reversibility:
 | Type                         | Actions                                 | Handling                                                  |
 | ---------------------------- | --------------------------------------- | --------------------------------------------------------- |
 | **Reversible (containment)** | Queue placement / re-ordering by acuity | Automatic, fast, no human                                 |
-| **Irreversible**             | Move to treatment · patient release     | Under safety validation + human approval, never automatic |
+| **Irreversible**             | Move to treatment · patient release     | Started by a person, authorized by OPA, never automatic   |
 
 **Reversible containment: queue position.** The moment the system suspects a patient is
 high-acuity, it moves them up the queue automatically, protecting them from a dangerous
@@ -666,7 +680,13 @@ directions:
   patient is no longer queued or monitored, so a wrong release means we have lost the
   ability to keep watching. Risk: stopping monitoring too early.
 
-Both stay under safety validation and human approval, and never run automatically.
+Neither runs automatically, and each has its own guard. A move to treatment needs a
+passed safety check (or a shift lead's clearance while the check could not run) and an
+approval: the case either cleared without a gate or a charge nurse answered one. Any
+nurse may then start it. A release needs a charge nurse or shift lead and a valid reason
+(discharge, against medical advice, transfer, admit). It skips safety validation
+because it starts no treatment. When treatment finishes, the case moves to a sign-off
+column and waits there for release.
 
 **Why this meets the target.** Separating the two lowers λ at the human gate. The bulk of
 activity - continuous queue management - never touches a human, so it does not enter the
@@ -689,13 +709,13 @@ cross-checked. Everything lines up:
 
 - **Execution authority = Tool Gateway** - the same in the Canvas, the Diagram, the State
   Machine, and the Contract.
-- **State owner = one Flow step** - the same in the Canvas, the Diagram, and
+- **State owner = one graph node** - the same in the Canvas, the Diagram, and
   the State Machine, which names the single owner of `execution_state`.
 - **Every event producer exists as a component.** The catalog's producers are the
-  Flow and the Tool Gateway, and both appear in the Diagram.
+  graph and the Tool Gateway, and both appear in the Diagram.
 - **Timing fields are consistent.** `expires_at` and the retry budget appear the same way
-  wherever they are relevant. The retry budget is consistently an undefined-but-finite
-  value, not a guessed number - "not yet defined everywhere" is itself consistent.
+  wherever they are relevant. The retry budgets are consistently finite working defaults
+  from one table, marked as placeholders to be replaced from data.
 - **The Waiting Room Monitor** is noted as intentionally omitted from the reduced context
   diagram, so no view contradicts another.
 
@@ -741,7 +761,7 @@ The response is the reversibility split, now monitored. Lower λ first, because 
 cheap and immediate: reversible actions (automatic queue placement) bypass the human gate
 entirely and must never be routed through it, so confirm that path is carrying its share
 and that only genuinely irreversible or contested cases (move-to-treatment, release,
-discrepancy, safety-fail) reach the gate. If reversible work is leaking into the human
+discrepancy, safety-fail, validator down, low confidence) reach a human. If reversible work is leaking into the human
 queue, that is the λ to cut. Only if λ cannot be reduced further, raise μ by paging an
 additional charge nurse - the scarce, expensive lever.
 
@@ -761,7 +781,7 @@ concern. The system around it answers a different set of questions: who is allow
 decide and act, what must be true before an irreversible action happens, what happens when
 a component is unavailable or returns nothing, and how every action is recorded so it can
 be reconstructed afterward. The classifier is one component inside that system, and it
-only proposes; the Flow decides, safety validation gates, the Tool Gateway
+only proposes; the graph decides, safety validation gates, the Tool Gateway
 executes, and the audit store records. The model optimizes for being _right_; the system
 has to stay safe even when the model is wrong, unavailable, or uncertain. That is why
 almost all of the design is about authorities, states, failure handling, and evidence, and
