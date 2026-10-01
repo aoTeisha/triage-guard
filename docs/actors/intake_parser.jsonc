@@ -1,6 +1,6 @@
 {
   // Deterministic webform validator. Proposes DATA_PARSED; never writes State.
-  // Spec arrows 3 -> 4 (valid), 16 (missing fields), 17 (failed), 18 (invalid/injection).
+  // Spec arrows 3 -> 4 (valid), 16 (missing fields), 17 (failed), 18 (invalid).
   "actor": "Intake Parser Agent",
   "type": "Validator (deterministic)",
   "reads": "webform / structured intake (mock)",

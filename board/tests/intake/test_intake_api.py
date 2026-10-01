@@ -443,3 +443,13 @@ def test_demo_cases_needs_no_patient_lookup():
 def test_static_files_are_always_rechecked_by_the_browser():
     """A stale cached script against fresh HTML once left the form without its fields."""
     assert client.get("/static/intake.js").headers["cache-control"] == "no-cache"
+
+
+def test_the_injection_scenario_no_longer_exists():
+    """The form has no free-text box, so there is nothing for an injection to ride in."""
+    response = client.post(
+        "/api/submit", json={"national_id": "300000005", "submission_type": "injection"}
+    )
+    assert response.status_code == 422
+
+    assert "injection" not in client.get("/api/demo-cases").json()["cases"]

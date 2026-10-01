@@ -53,7 +53,7 @@ docker compose -f db/docker-compose.yml up -d  # shared Postgres — checkpoints
 cp triage-app/.env.example triage-app/.env      # optional — mock mode needs nothing in it
 cd triage-app
 uv sync
-uv run triage-guard            # clean / missing / failed / injection
+uv run triage-guard            # clean / missing / failed
 uv run pytest                  # offline, no LLM key needed
 uv run sweeper                 # waiting-room monitor — fires reassessment timers
 ```

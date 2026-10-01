@@ -80,7 +80,7 @@ STATIC_DIR = Path(__file__).with_name("static")
 NOTIFY_TRANSITIONS = {
     Transition.MISSING_FIELDS.value,        # intake was missing required fields
     Transition.SUBMISSION_UNUSABLE.value,   # scan failed / erroneous file
-    Transition.INVALID_INPUT.value,         # injection attempt refused
+    Transition.INVALID_INPUT.value,         # the submission was refused as invalid
     Transition.APPROVAL_REQUESTED.value,    # a charge nurse's approval was requested
     Transition.ESCALATION_RECORDED.value,   # a charge nurse answered an escalation
     Transition.REASSESSMENT_DUE.value,      # a reassessment timer fired

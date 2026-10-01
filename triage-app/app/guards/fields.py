@@ -21,9 +21,8 @@ REQUIRED_FIELDS = (
     "chief_complaint",
     "vitals",
 )
-# `free_text` is not required: the model never reads it (I12), and the real-case
-# form is structured only. When a submission carries it, the injection check
-# still scans it.
+# `free_text` is not required: the model never reads it, and the real-case
+# form is structured only.
 
 # What a nurse may supply when completing an incomplete intake. Routing
 # metadata is fixed by the original submission and never re-supplied.

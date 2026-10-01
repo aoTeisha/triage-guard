@@ -39,12 +39,6 @@ def test_failed_has_no_clinical_fields():
     assert case["case_id"]
 
 
-def test_injection_free_text_contains_attack():
-    case = build_case(FOUND, "300000005", "injection")
-
-    assert "ignore previous instructions" in case["free_text"].lower()
-
-
 def test_national_id_always_from_typed_id_not_lookup():
     """The payload carries the number the nurse typed. A mismatched record must
     not leak its internal id into the submission — `resolving_identity` is the
@@ -61,7 +55,7 @@ def test_national_id_always_from_typed_id_not_lookup():
 
 
 @pytest.mark.parametrize("lookup", [FOUND, NOT_FOUND, DB_ERROR])
-@pytest.mark.parametrize("submission_type", ["clean", "missing", "failed", "injection"])
+@pytest.mark.parametrize("submission_type", ["clean", "missing", "failed"])
 def test_all_lookup_outcomes_produce_a_valid_case(lookup, submission_type):
     """A case is built the same way regardless of whether the lookup found
     a record, found nothing, or the CRM was unreachable — all three continue

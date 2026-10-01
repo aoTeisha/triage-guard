@@ -30,7 +30,7 @@ triage-app/
 uv sync
 cp .env.example .env        # optional — mock mode needs nothing in it
 
-uv run triage-guard         # clean / missing / failed / injection
+uv run triage-guard         # clean / missing / failed
 uv run pytest
 uv run plot                 # regenerate docs/diagrams/control-plane.mmd
 uv run visualize-graph      # open the graph as a live Mermaid diagram in the browser

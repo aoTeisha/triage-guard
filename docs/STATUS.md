@@ -107,7 +107,8 @@ the normal missing-fields route. `POST /api/submit` takes either `fields` or
 `submission_type`, never both and never neither, and refuses unknown field names or
 values outside their allowed range with a 422. `free_text` is no longer a required
 field (`app/guards/fields.py`): the model never reads it, and the real-case form has
-no prose box. When a submission does carry it, the injection check still scans it.
+no prose box. The injection demo scenario and the free-text injection detector
+were removed on 2026-10-01: with no prose field there is nothing for them to scan.
 "Demo case scenarios" keeps the fixed payloads, and `GET /api/demo-cases` returns each
 one so the form can show exactly what will be sent before the nurse submits.
 

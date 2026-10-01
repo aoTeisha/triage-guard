@@ -145,17 +145,6 @@ def test_an_unusable_submission_stops():
 
 
 @respx.mock
-def test_injection_is_rejected_and_never_classified():
-    _crm()
-
-    body = _submit("injection")
-
-    assert body["outcome"] == "INVALID_INPUT_DETECTED"
-    assert body["reason"].startswith("injection")
-    assert body["acuity"] is None
-
-
-@respx.mock
 def test_submission_survives_a_crm_outage():
     """Fail-open: a CRM outage degrades the case, it does not block intake."""
     _crm(503, {"detail": "db_error"})

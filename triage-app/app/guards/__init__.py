@@ -9,14 +9,13 @@ and an invariant cannot depend on a probabilistic model.
 
 from .fields import (ACUITY_LEVELS, CHIEF_COMPLAINTS, NURSE_SUPPLIED_FIELDS, REQUIRED_FIELDS, is_esi_level,
                      missing_fields, nothing_usable, not_required_fields_complete, unusable_fields)
-from .injection import detect_injection
 from .validity import not_input_is_valid, required_fields_complete_and_valid
 
 
 def classify_intake_payload(payload: dict) -> str:
     """Deterministic four-way intake outcome as a plain string, for the Flow's
     router. Same priority order as the state_machine's classify_intake:
-    injection > nothing-usable > gaps > clean. No LLM — the payload decides.
+    invalid > nothing-usable > gaps > clean. No LLM — the payload decides.
     """
     if not_input_is_valid(payload)[0]:
         return "INVALID_INPUT_DETECTED"
@@ -37,7 +36,6 @@ __all__ = [
     "nothing_usable",
     "unusable_fields",
     "not_required_fields_complete",
-    "detect_injection",
     "not_input_is_valid",
     "required_fields_complete_and_valid",
     "classify_intake_payload",

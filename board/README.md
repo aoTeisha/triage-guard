@@ -142,7 +142,6 @@ already document.
 | missing | missing fields — no acuity is ever guessed |
 | failed | nothing usable received |
 | gap | a nurse/system acuity disagreement of two or more — pauses for a charge nurse |
-| injection | rejected before anything reaches the model |
 
 `gap` is the interesting one: it suspends the case at the human-approval gate
 and waits. Resolving it as `nurse` rather than `charge_nurse` produces a `BLK`
