@@ -62,7 +62,17 @@ def test_a_field_the_policy_does_not_name_is_refused(field):
 @pytest.mark.parametrize("key", ["name", "national_id", "stable_patient_id", "date_of_birth", "dob", "phone", "email"])
 def test_an_identifier_key_is_refused_inside_an_approved_container(key):
     reasons = refused({**CLEAN, "history": {**CLEAN["history"], key: "x"}})
-    assert any(key in r for r in reasons)
+    assert f'identifier key "{key}" at history.{key}' in reasons
+
+
+@pytest.mark.parametrize("case_id,reason", [
+    ({"name": "Dana"}, 'identifier key "name" at case_id.name'),
+    ({"visits": [{"national_id": "1"}]}, 'identifier key "national_id" at case_id.visits.0.national_id'),
+])
+def test_an_identifier_key_is_refused_where_no_allow_list_looks(case_id, reason):
+    """No rule reads the shape of `case_id`, so the any-depth identifier rule is
+    the only thing between this value and the model."""
+    assert refused({**CLEAN, "case_id": case_id}) == [reason]
 
 
 # ---- closed values ---------------------------------------------------------------

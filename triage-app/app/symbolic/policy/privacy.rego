@@ -55,7 +55,9 @@ deny_reasons contains sprintf("field %q is not approved for the model", [f]) if 
 }
 
 deny_reasons contains sprintf("identifier key %q at %s", [key, concat(".", [sprintf("%v", [p]) | some p in path])]) if {
-	some [path, _] in walk(input.payload)
+	# Relation form only: `some [path, _] in walk(...)` iterates the elements of
+	# each tuple, binds `path` to a string, and the rule silently never fires.
+	walk(input.payload, [path, _])
 	key := path[count(path) - 1]
 	key in identifier_keys
 }
