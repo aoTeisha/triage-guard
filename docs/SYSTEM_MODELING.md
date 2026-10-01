@@ -41,8 +41,7 @@ release, and is responsible for acuity classification, queue ordering, safety
 validation, and human approval, including re-triage.
 
 Outside the boundary: the CRM (source of patient history, not always available), the
-Tool Gateway and the downstream system that actually starts treatment, and the treating
-clinical staff. The exit is asymmetric: **release** is a final, clean exit, while
+intake nurse, the charge nurse and shift lead, and the treating clinical staff. The exit is asymmetric: **release** is a final, clean exit, while
 **treatment started** is not necessarily final - a case can return from treatment to
 re-triage if the patient's condition changes, so the system keeps accompanying the case
 through to release.
@@ -54,11 +53,11 @@ through to release.
   Classifier, only propose. The classifier emits a proposed acuity and a confidence, the
   graph passes that proposal through the safety layers, and its nodes write the results
   to state.
-- **Execution authority - the Tool Gateway.** It is the single execution point against
-  the outside world for the irreversible treatment-move. The graph authorizes the
-  move; the Gateway executes it. This split between the decider and the executor is what
-  creates the UNKNOWN risk modeled later: the component that decides never gets certainty
-  from the component that executes.
+- **Execution authority - the staff, through the board.** A move to treatment and a
+  release are actions a person starts on the board. The graph receives the request, asks
+  OPA whether it is allowed, and only then changes the case; a refusal leaves the case
+  where it was. Sections 4 and 5 model a future design in which a Tool Gateway executes
+  the move against an external ward system, which is where the UNKNOWN risk comes from.
 - **Human authority - the charge nurse or shift lead**, reached through the Human
   Escalation bridge. A case goes to a human for one of four reasons: an acuity
   discrepancy (a gap of two or more between the nurse's and the system's acuity), a
@@ -74,8 +73,8 @@ through to release.
   (discharge, against medical advice, transfer, admit).
 
 The LLM never has a direct arrow to an irreversible action. The path is: classifier
-proposes → graph → safety validation and approval → Tool Gateway executes. Three
-steps sit between the proposal and the irreversible act.
+proposes → graph → safety validation and approval → a person requests the move → OPA
+authorizes it. Four steps sit between the proposal and the irreversible act.
 
 ### Hard Constraints
 
@@ -153,12 +152,14 @@ on the card and lists, in the case panel, what the case went without because of 
 - **The nurse always supplies a correct proposed acuity at intake.** If this is wrong,
   the classifier-down fallback rests entirely on the nurse's acuity, and a mis-triage
   propagates unchecked, because the cross-check is the thing disabled during that outage.
-- **When the Tool Gateway returns a "done" receipt, treatment actually started.** If this
-  is wrong, the system believes a patient is in treatment when they are not, and the
-  patient silently drops out of both the queue and active care.
+- **When a nurse moves a case to treatment on the board, treatment actually started.**
+  If this is wrong, the system believes a patient is in treatment when they are not, and
+  the patient silently drops out of both the queue and active care. In the future Tool
+  Gateway design (sections 4 and 5), the same assumption moves to the Gateway's "done"
+  receipt.
 
 Both assumptions share a shape: even when the system is "working," it trusts an actor
-outside its own boundary - the nurse, the Gateway. That is what makes them assumptions
+outside its own boundary - the intake nurse's acuity, the treating nurse's move. That is what makes them assumptions
 rather than facts.
 
 ### Unknowns
@@ -188,10 +189,11 @@ made-up number looks like a fact until it fails in production.
 
 - The exit boundary is asymmetric: release is final, treatment is not (re-triage can
   follow), so the system must keep watching a case after treatment starts.
-- The decision/execution split (graph authorizes, Gateway executes) is the origin
-  of the UNKNOWN risk modeled next.
-- Two live assumptions rest on actors outside the boundary: nurse acuity, and a "done"
-  receipt meaning treatment truly started.
+- The graph decides and a person starts each irreversible action, which OPA must allow.
+  Splitting execution out to an external Tool Gateway, as sections 4 and 5 model for the
+  future, is what would create the UNKNOWN risk.
+- Two live assumptions rest on actors outside the boundary: nurse acuity, and a move on
+  the board meaning treatment truly started.
 - Three numbers are flagged as unknown rather than settled (retry budgets, the
   correction-round limit, the confidence threshold). The code runs on working defaults
   for each, kept in one table so they can be replaced from data.
@@ -299,11 +301,17 @@ is no direct arrow from the LLM to an irreversible action, by design._
 
 - **Graph** - decision authority. Its nodes write state.
 - **Acuity Classifier** - the LLM; proposes only.
-- **Safety Validation** - the binding safety gate.
-- **Human Escalation bridge** - the conduit to the human authority.
-- **Tool Gateway** - execution authority; the single execution point for the
-  irreversible treatment-move.
-- **Audit Store** - the append-only record of every state change.
+- **Safety Validation** - the binding safety gate, run on Prolog (the safety rules) and
+  Datalog (who wrote the acuity, and whether its data is still there).
+- **OPA** - checks that the payload for the model carries no identifier, and authorizes
+  moves to treatment, releases, and the monitor's notifications and CRM write-backs.
+- **Human Escalation bridge** - the gate pause: the graph stops and waits for a charge
+  nurse's or shift lead's answer, which arrives through the board.
+- **Board** - the staff's interface: the intake webform, the queue, the open gates, and
+  the move and release actions.
+- **Monitor** - the background sweeper. It fires reassessment timers and gate reminders,
+  watches cases parked at a gate, and writes the visit back to the CRM after release.
+- **Audit log** - the append-only record of every state change, kept on the case.
 
 **Outside the boundary**
 
@@ -311,54 +319,51 @@ is no direct arrow from the LLM to an irreversible action, by design._
 - **Charge nurse / shift lead** - human authority; answers the approval gate and signs
   releases. A shift lead takes cases handed up from a charge nurse.
 - **CRM** - source of patient history; not always available.
-- **Downstream treatment system** - what the Gateway actually drives to start treatment.
-
-_Not shown: the Waiting Room Monitor exists in the system (it watches cases parked for
-correction, per the safety-fail resolution), but it is omitted from this reduced context
-diagram, which shows only the decision-and-execution path. Its omission here is
-deliberate, not an inconsistency._
 
 ### Arrows (semantics)
 
 | From → To                 | Message                                                                                                             | Meaning                                                                                  |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Intake nurse → Graph      | `CASE_SUBMITTED { complaint, vitals, nurse_proposed_acuity }`                                                       | A new case enters; carries the nurse's proposed acuity among other fields.               |
+| Intake nurse → Board      | `CASE_SUBMITTED { complaint, vitals, nurse_proposed_acuity }`                                                       | A new case enters; carries the nurse's proposed acuity among other fields.               |
+| Board → Graph             | start · resume `{ gate answer \| MOVE_REQUESTED \| RELEASE_REQUESTED, actor_role }`                                  | Starts a run, or resumes a paused one with what a person just did.                       |
+| Graph → Board             | `CaseView`                                                                                                          | The case as the board shows it: column, acuity, open gate, degraded components.          |
 | Graph → Acuity Classifier | `classify_request { case_payload }`                                                                                 | Ask for an acuity proposal. Payload carries **no identifiers**.                          |
 | Acuity Classifier → Graph | `ActionProposal { proposed_acuity, confidence }`                                                                    | A proposal, not a fact; the graph decides what to do with it.                            |
 | Graph → Safety Validation | `ValidationRequest { case_payload, proposed_acuity }`                                                               | Check the proposal against the case before any write.                                    |
 | Safety Validation → Graph | `SafetyVerdict { pass \| fail, reason }`                                                                            | A binding verdict; `reason` drives the correction path on `fail`.                        |
-| Graph → CRM               | `HistoryLookup { patient_id }`                                                                                      | The only arrow that carries the identifier.                                              |
+| Graph → CRM               | `HistoryLookup { patient_id }`                                                                                      | With the write-back, the only arrows that carry the identifier.                          |
 | CRM → Graph               | `PatientHistory { prior_visits, conditions }`                                                                       | History merged into the current case.                                                    |
 | Graph → Human Escalation  | `EscalationRequest { case, reason: discrepancy \| safety_fail \| validator_down \| low_confidence }`                | Reason determines which question the human gets.                                         |
-| Human Escalation → Graph  | `ApprovalToken { decision, resolver_role, approval_id, expires_at }`                                                | An authenticated, time-bounded decision - must be re-checked as valid at execution time. |
-| Graph → Tool Gateway      | `ActionRequest { move_to_treatment, request_id, action_hash, idempotency_key, issued_at, approval_id, expires_at }` | The irreversible act - sent only after `safety_passed ∧ approved`.                       |
-| Tool Gateway → Downstream | `move_to_treatment { case_id, idempotency_key }`                                                                    | The execution against the outside world.                                                 |
-| Downstream → Tool Gateway | `ToolReceipt { started \| failed }` - **or nothing (timeout)**                                                      | Three outcomes, not two - the missing receipt is the UNKNOWN.                            |
-| Graph → Audit Store       | `AuditRecord { action, actor, timestamp, before → after, reason }`                                                  | Every state change is recorded - the auditability constraint.                            |
+| Human Escalation → Graph  | `ApprovalToken { decision, resolver_role }`                                                                         | The human's answer; Prolog checks the role before the graph acts on it.                  |
+| Graph → OPA               | `PolicyQuery { privacy \| move \| release, case facts, actor_role }`                                                | Is the payload clean; may this person move or release this case.                         |
+| OPA → Graph               | `allow \| deny, reasons`                                                                                            | A refusal is logged and the case stays where it was.                                     |
+| Monitor → Graph           | `TimerFired`                                                                                                        | Resumes a case when its reassessment is due. Reminders go to staff, not the graph.       |
+| Monitor → CRM             | `VisitWriteback { patient_id, visit }`                                                                              | After release, the visit is written to the patient's record; retried until it lands.     |
+| Graph → Audit log         | `AuditRecord { action, actor, timestamp, before → after, reason }`                                                  | Every state change is recorded - the auditability constraint.                            |
 
 ### Authority separation - why the arrows are shaped this way
 
 The diagram separates three authorities so that no single component can both decide and
 act. The Acuity Classifier only emits an `ActionProposal`; it never writes state and has
 no path to execution. The graph is the sole decider, and its nodes write state:
-every proposal, verdict, and approval converges on it, and only it authorizes action. The
-Tool Gateway is the single execution point for the irreversible treatment-move, reached
-only after `SafetyVerdict = pass` and, where required, an `ApprovalToken` from the charge
-nurse. So there is no arrow from the classifier, or any agent, to the Gateway: routing an
-irreversible act straight from a probabilistic proposer would let an unvalidated,
-unapproved decision reach the real world. The `ToolReceipt` arrow is dashed because it may
-never arrive - the origin of the UNKNOWN problem modeled next.
+every proposal, verdict, and approval converges on it. An irreversible action starts with
+a person on the board, and the graph carries it out only after OPA allows it: a move
+needs `SafetyVerdict = pass` (or a shift lead's clearance while the check could not run)
+and an approval. So there is no arrow from the classifier, or any agent, to the board or
+to OPA: routing an irreversible act straight from a probabilistic proposer would let an
+unvalidated, unapproved decision reach the patient.
 
 ### Two boundary facts the diagram makes checkable
 
-- **The identifier stops at the CRM lookup.** `patient_id` travels only on the
-  graph ↔ CRM arrows. Every arrow into the classifier and the safety validator
+- **The identifier stops at the CRM.** `patient_id` travels only on the graph ↔ CRM
+  arrows and the monitor's write-back to the CRM. Every arrow into the classifier and the safety validator
   carries `case_payload` with no identifiers. If any arrow forwarded `patient_id` toward
   the model, that would be a visible violation of the privacy boundary.
-- **Two different kinds of return arrow.** `SafetyVerdict` is a binding verdict (the
-  graph must respect it); `ApprovalToken` is a time-bounded token (the graph
-  must re-verify it is still valid at execution time). Naming them differently keeps the
-  distinction visible: a proposal is weighed, a verdict is obeyed, a token is verified.
+- **Three different kinds of return arrow.** `ActionProposal` is weighed (the graph may
+  overrule it), `SafetyVerdict` is obeyed (the graph must respect it), and
+  `ApprovalToken` is verified (Prolog checks the answerer's role before the graph acts on
+  it). OPA's `allow | deny` is checked again at the moment of each move or release, not
+  carried over from an earlier answer.
 
 ---
 
@@ -408,16 +413,16 @@ transition - and, where relevant, the source of evidence it relies on.
 | `receipt_started`      | PENDING → CONFIRMED              | Tool Gateway | downstream system                   |
 | `receipt_failed`       | PENDING → FAILED                 | Tool Gateway | downstream system                   |
 | `timeout`              | PENDING → UNKNOWN                | Graph        | its own timer                       |
-| `reconcile_result`     | RECONCILING → CONFIRMED / FAILED | Graph        | Audit Store (+ downstream re-query) |
+| `reconcile_result`     | RECONCILING → CONFIRMED / FAILED | Graph        | Audit log (+ downstream re-query)   |
 | `retry`                | FAILED → PENDING                 | Graph        | its own retry counter               |
 | `retry_limit_reached`  | FAILED → ESCALATED_TO_HUMAN      | Graph        | its own retry counter               |
 | `reconcile_unresolved` | RECONCILING → UNKNOWN            | Graph        | - (source unreachable)              |
 
 **Producer versus evidence source.** The producer is the component allowed to _cause_ the
 transition, not whichever component supplied a fact along the way. For `reconcile_result`
-the Audit Store answers the question "did the move happen?", but the graph is the
+the Audit log answers the question "did the move happen?", but the graph is the
 producer: it starts the reconciliation, reads the source, decides what the answer means,
-and writes the new state. The Audit Store is the evidence source, the way the classifier
+and writes the new state. The Audit log is the evidence source, the way the classifier
 is the evidence source for an acuity decision - it informs, it does not decide.
 
 **Why almost every event is produced by the graph.** Only events that originate in
@@ -707,17 +712,18 @@ Each metric is tied to a requirement or an assumption, with a threshold and a re
 The five documents (Canvas, Context Diagram, State Machine, Contract, Capacity) were
 cross-checked. Everything lines up:
 
-- **Execution authority = Tool Gateway** - the same in the Canvas, the Diagram, the State
-  Machine, and the Contract.
-- **State owner = one graph node** - the same in the Canvas, the Diagram, and
-  the State Machine, which names the single owner of `execution_state`.
-- **Every event producer exists as a component.** The catalog's producers are the
-  graph and the Tool Gateway, and both appear in the Diagram.
+- **Execution authority** - today a person on the board, authorized by OPA, the same in
+  the Canvas and the Diagram. The State Machine and the Contract describe the future Tool
+  Gateway and say so, so they do not contradict it.
+- **State owner = one graph node** - the same in the Canvas and the State Machine, which
+  names the single owner of `execution_state`.
+- **Every event producer exists as a component.** The catalog's producers are the graph,
+  which appears in the Diagram, and the Tool Gateway, which belongs to the future design.
 - **Timing fields are consistent.** `expires_at` and the retry budget appear the same way
   wherever they are relevant. The retry budgets are consistently finite working defaults
   from one table, marked as placeholders to be replaced from data.
-- **The Waiting Room Monitor** is noted as intentionally omitted from the reduced context
-  diagram, so no view contradicts another.
+- **The Monitor** appears in the Diagram as the sweeper that watches parked cases, as
+  the safety-fail resolution requires.
 
 ### Monitoring map
 
@@ -781,8 +787,8 @@ concern. The system around it answers a different set of questions: who is allow
 decide and act, what must be true before an irreversible action happens, what happens when
 a component is unavailable or returns nothing, and how every action is recorded so it can
 be reconstructed afterward. The classifier is one component inside that system, and it
-only proposes; the graph decides, safety validation gates, the Tool Gateway
-executes, and the audit store records. The model optimizes for being _right_; the system
+only proposes; the graph decides, safety validation gates, OPA authorizes, staff
+execute, and the audit log records. The model optimizes for being _right_; the system
 has to stay safe even when the model is wrong, unavailable, or uncertain. That is why
 almost all of the design is about authorities, states, failure handling, and evidence, and
 almost none of it about the classifier's accuracy.
@@ -790,20 +796,19 @@ almost none of it about the classifier's accuracy.
 ### Why there is no safety-override path
 
 An early, non-obvious question is what happens when safety validation fails and a human
-has to intervene. The human-approval gate is entered for two different reasons - an acuity
-discrepancy and a safety-validation failure - and the second needs its own resolution.
+has to intervene. The human-approval gate is entered for several reasons, among them an
+acuity discrepancy and a safety-validation failure, and the second needs its own resolution.
 The design conclusion is that the system contains no safety-override path at all: a
 safety failure is a request to _correct and revalidate_, never permission to skip the
-check. The reason is that the moment an "ignore safety"
-button exists, it can also be used on a case the validator genuinely flagged as dangerous
-
-- so the safe design is to never build the button. A one-line request to "help triage
-  patients safely" could never have implied that rule; the model is what exposed it.
+check. The reason is that the moment an "ignore safety" button exists, it can also be
+used on a case the validator genuinely flagged as dangerous, so the safe design is to
+never build the button. A one-line request to "help triage patients safely" could never
+have implied that rule; the model is what exposed it.
 
 ### The assumption that would force a redesign
 
-The load-bearing assumption is that a "done" receipt from the Tool Gateway means treatment
-actually started. The whole reconciliation design trusts the sources it queries. If a receipt, or
+In the future Tool Gateway design (sections 4 and 5), the load-bearing assumption is
+that a "done" receipt from the Gateway means treatment actually started. The whole reconciliation design trusts the sources it queries. If a receipt, or
 the audit record behind it, can report "done" when nothing happened, then reconciliation
 can resolve `UNKNOWN` to `CONFIRMED` for a case that never entered treatment - and the
 patient silently drops out of both the queue and active care, with no alarm, because the
