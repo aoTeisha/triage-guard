@@ -9,11 +9,14 @@ object, and the spec table can be checked line by line.
 from __future__ import annotations
 
 import inspect
+import re
+from pathlib import Path
 
 from app.graph import UNIMPLEMENTED_STATES, build_graph, routers
 from app.states import State
 
 DEGRADE_NODES = {"classifier_fallback", "safety_fallback"}
+DIAGRAMS_MD = Path(__file__).resolve().parents[2] / "docs" / "diagrams.md"
 
 
 def _graph():
@@ -135,3 +138,23 @@ def test_graph_renders_a_complete_mermaid_diagram():
     mermaid = build_graph().get_graph().draw_mermaid()
     for state in node_names():
         assert state in mermaid
+
+
+def _diagram_pairs() -> set[tuple[str, str]]:
+    """Every `a --> b` arrow in the stateDiagram block of docs/diagrams.md."""
+    block = DIAGRAMS_MD.read_text().split("```mermaid\nstateDiagram-v2", 1)[1].split("```", 1)[0]
+    return set(re.findall(r"^\s*(\S+)\s*-->\s*(\S+)", block, re.M))
+
+
+def test_diagram_names_exactly_the_spec_states():
+    """The hand-drawn diagram uses the spec's state names, all of them, and
+    nothing else. A refusal is a self-loop, so `action_denied` is never drawn."""
+    drawn = {n for pair in _diagram_pairs() for n in pair} - {"[*]"}
+    assert drawn == {s.value for s in State} - {State.ACTION_DENIED.value}
+
+
+def test_diagram_draws_every_wired_state_edge():
+    """Every edge the graph wires between two spec states has an arrow."""
+    spec = {s.value for s in State}
+    wired = {(s, t) for s, t in edges() if s in spec and t in spec}
+    assert wired <= _diagram_pairs(), wired - _diagram_pairs()

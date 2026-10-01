@@ -10,129 +10,71 @@ _The diagram groups, agents, and numbered arrows below match [`../assets/triage-
 
 ![Triage Guard architecture](../assets/triage-guard-system.png)
 
-```mermaid
-flowchart LR
-  subgraph IN["Input channels"]
-    PDF["PDF document<br/>(triage questionnaire)"]
-    WEB["Website form"]
-  end
-  API["API Gateway"]
-
-  subgraph INTAKE["Intake / ingestion"]
-    ROUTER["Channel Router"]
-    NORM["Input Normalizer<br/>unified message<br/>(mock data · no live OCR)"]
-  end
-
-  subgraph USR["Understanding, safety & routing"]
-    PII["PII / sensitive-data filter<br/>(remove id · name · surname)"]
-    POL["Policy Gate"]
-    SENT["Sentiment / Urgency<br/>(distress · pain)"]
-  end
-
-  subgraph CORE["Agent Core"]
-    ORCH["Orchestrator Agent<br/>state machine · planner<br/>sole writer to State"]
-    IP["Intake Parser Agent<br/>(LLM)"]
-    ACL["Acuity Classifier Agent<br/>(LLM)"]
-    SV["Safety Validation Agent<br/>Prolog · Datalog · Z3 · OPA"]
-    HE["Human Escalation Agent"]
-    WM["Waiting Room Monitor Agent"]
-    AUD["Audit Agent"]
-  end
-
-  STATE[("State<br/>Control · Data · World")]
-
-  subgraph KM["Knowledge & Memory"]
-    KB["Knowledge Base"]
-    VDB["Vector DB<br/>(policies)"]
-    CRM["CRM<br/>(patient profile + history)"]
-    SESS["Session Memory"]
-  end
-
-  subgraph MON["Monitoring & Evaluation"]
-    LOGS["Logs + Traces"]
-    EVAL["Evaluation Pipeline<br/>(tests + regression)"]
-    DASH["Metrics Dashboard"]
-    FB["User / Agent feedback"]
-  end
-
-  NOTIFY["Notify user<br/>15 reassessment · 16 missing fields<br/>17 rescan/manual · 18 wrong doc<br/>19 accepted · 20 approval"]
-
-  PDF -- "1a" --> API
-  WEB -- "1b" --> API
-  API --> ROUTER --> NORM
-  NORM -- "2 message normalized" --> ORCH
-
-  ORCH -- "5 redact + route" --> PII
-  PII --> POL --> SENT
-  SENT -- "6 redact/route done" --> ORCH
-
-  ORCH -- "3 invoke: parse data" --> IP
-  IP -. "4 propose: Data_Parsed" .-> ORCH
-  ORCH -- "7 invoke: classify" --> ACL
-  ACL -. "8 propose: acuity + confidence" .-> ORCH
-  ORCH -- "9 invoke: validate" --> SV
-  SV -. "10 propose: verdict" .-> ORCH
-  ORCH -- "11 invoke: request approval" --> HE
-  HE -. "12 propose: escalation needed?" .-> ORCH
-  ORCH -- "13 invoke: start timer" --> WM
-  WM -. "14 trigger: reassessment / deterioration" .-> ORCH
-
-  ORCH == "sole writer" ==> STATE
-  ORCH -- "emit: event log" --> AUD
-  ORCH -- "fetch / patch patient data" --> CRM
-  SV -. "read policies" .-> VDB
-  ORCH -. "read" .-> KB
-  ORCH -. "read / write" .-> SESS
-  ORCH -. "15-20 notify" .-> NOTIFY
-
-  AUD --> LOGS
-  LOGS --> EVAL
-  LOGS --> DASH
-  FB --> EVAL
-```
-
 ## State-machine diagram
 
-The central control-plane state machine is built from the specification's Transitions table. All the details, such as guards, actions, world effects, and every agent-failure edge, remain in that table. This diagram shows the full control-plane flow from start to finish.
+The central control-plane state machine, drawn from the states in the specification's Transitions table and the edges the running graph wires. Guards, actions and world effects stay in that table. Each arrow is labelled with the transition name the audit trail records for it.
+
+How to read it:
+
+- A self-loop is a step that ran again without moving the case: a retry after malformed output, a refused action (`blk`), a hand-off to a shift lead (`senior_escalation`), or a board move inside the queue (`move_confirmed`, `formal_validation`).
+- "nurse acuity" marks the degrade path: the model is skipped or unusable and the case continues on the nurse's own acuity, with the acuity gate off.
+- `release` closes the card. A charge nurse can release a patient from any state where the case is paused for a person, which is every state with a `release` arrow.
 
 ```mermaid
 stateDiagram-v2
     direction TB
-    [*] --> intake_received : 1a CASE_SUBMITTED
+    [*] --> intake_received : entry
+    intake_received --> parsing : normalized
 
-    intake_received --> parsing : 2 MESSAGE_NORMALIZED
+    parsing --> data_parsed : submission_valid
+    parsing --> missing_fields_requested : missing_fields
+    parsing --> submission_failed : submission_unusable
+    parsing --> input_rejected : invalid_input
 
-    parsing --> data_parsed : 4 DATA_PARSED (fields ok)
-    parsing --> missing_fields_requested : 16 MISSING_FIELDS (case 2)
-    parsing --> scan_failed : 17 PARSE_FAILED (case 3)
-    parsing --> erroneous_file_rejected : 18 WRONG_DOC (case 4)
+    missing_fields_requested --> parsing : fields_resubmitted
+    submission_failed --> parsing : fields_resubmitted
+    input_rejected --> [*] : run ends
 
-    missing_fields_requested --> parsing : 1b.x FIELDS_SUBMITTED
-    scan_failed --> intake_received : rescan or manual entry
-    erroneous_file_rejected --> intake_received : resubmit correct doc
+    data_parsed --> resolving_identity : lookup
+    resolving_identity --> redacting_routing : crm_found / crm_new / af_db
+    resolving_identity --> resolving_identity : retry
+    resolving_identity --> input_rejected : duplicate_case
 
-    data_parsed --> redacting_routing : 5 redact + route
-    redacting_routing --> classifying : 6 redact done
-    classifying --> acuity_proposed : 8 ACUITY_PROPOSED
+    redacting_routing --> classifying : payload_clean
+    redacting_routing --> redacting_routing : v_retry
+    redacting_routing --> safety_validating : privacy_gate_down (nurse acuity)
+    redacting_routing --> agent_failed : v_halt_pii
 
-    acuity_proposed --> safety_validating : 9a/9b agree or minor gap
-    acuity_proposed --> awaiting_human_approval : 9c gap >= 2
+    classifying --> acuity_proposed : acuity_proposed
+    classifying --> classifying : v_retry_classifier
+    classifying --> safety_validating : v_exhausted_classifier (nurse acuity)
 
-    safety_validating --> verdict_proposed : 10 safety_pass
-    safety_validating --> awaiting_human_approval : 10-fail (no safety_pass)
+    acuity_proposed --> safety_validating : acuity_agree / acuity_gap_minor
+    acuity_proposed --> awaiting_human_approval : acuity_gap_major
 
-    verdict_proposed --> awaiting_human_approval : 11 escalation_needed
-    verdict_proposed --> monitoring : 11 pass
+    safety_validating --> verdict_proposed : safety_passed
+    safety_validating --> awaiting_human_approval : safety_failed
+    safety_validating --> safety_validating : v_retry_safety
+    safety_validating --> awaiting_human_approval : v_exhausted_safety (validator down)
 
-    awaiting_human_approval --> safety_validating : 1b.z acuity resolved
-    awaiting_human_approval --> monitoring : safety branch (open question)
+    verdict_proposed --> monitoring : cleared_to_queue
+    verdict_proposed --> awaiting_human_approval : escalation_needed
 
-    monitoring --> reassessment_required : 14 timeout / deterioration
-    reassessment_required --> parsing : 15 nurse re-files
-    monitoring --> case_closed : REL release (nurse-signed)
+    awaiting_human_approval --> safety_validating : gate_acuity_resolved / gate_safety_corrected / gate_revalidate
+    awaiting_human_approval --> monitoring : gate_safety_waived
+    awaiting_human_approval --> awaiting_human_approval : senior_escalation / blk
 
+    monitoring --> monitoring : move_confirmed / formal_validation / blk
+    monitoring --> reassessment_required : reassessment_due
+    reassessment_required --> parsing : front_door_rerun
+
+    agent_failed --> redacting_routing : af_recover
+
+    missing_fields_requested --> case_closed : release
+    submission_failed --> case_closed : release
+    awaiting_human_approval --> case_closed : release
+    monitoring --> case_closed : release
+    reassessment_required --> case_closed : release
+    agent_failed --> case_closed : release
     case_closed --> [*]
-
-    redacting_routing --> agent_failed : AF PII filter down (halt)
-    agent_failed --> [*]
 ```
