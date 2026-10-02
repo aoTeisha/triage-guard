@@ -93,6 +93,34 @@ def test_a_complaint_that_is_not_a_code_is_unusable():
         == ["chief_complaint"]
 
 
+@pytest.mark.parametrize("vitals", [
+    {"pain_score": 7},                       # not a vital sign the model may see
+    {"hr": "ninety"},                        # text where a number belongs
+    {"hr": "104"},
+    {"spo2": True},                          # bool counts as int in Python, not to the policy
+    {"temp_c": float("nan")},
+    {"bp": "high"},
+    {"bp": 120},
+    {"bp": "120/80\n"},                      # Python's `$` would pass this; RE2's does not
+    "hr 104, bp 148/92",                     # not a dict at all
+    [104],
+])
+def test_vitals_the_privacy_policy_would_refuse_are_unusable(vitals):
+    """Refused here, the nurse fixes them at the intake pause. Let through, the
+    privacy policy refuses them three nodes later and the case halts (I12)."""
+    assert guards.unusable_fields({**CLEAN, "vitals": vitals}) == ["vitals"]
+
+
+@pytest.mark.parametrize("vitals", [
+    CLEAN["vitals"],
+    {},
+    {"hr": 104, "rr": 18, "bp": "90/60", "spo2": 98.5, "temp_c": 36},
+    {"hr": None, "bp": None},                # an absent reading, as it is to the policy
+])
+def test_vitals_of_the_allowed_shape_are_usable(vitals):
+    assert guards.unusable_fields({**CLEAN, "vitals": vitals}) == []
+
+
 def test_an_unusable_acuity_goes_back_to_the_nurse_not_to_rejection():
     """A typo is not an attack. It routes like a missing field, so the case keeps
     its arrival time and the patient keeps their place (I10).

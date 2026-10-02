@@ -5,6 +5,9 @@ chief_complaint; these tests pin the value scan that can.
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import pytest
 
 from app.actors.normalizer import build_model_payload
@@ -96,8 +99,38 @@ def test_the_payload_builder_keeps_only_what_the_policy_names():
 
 def test_an_id_typed_into_a_history_label_is_redacted_before_verification():
     payload = build_model_payload("c1", DEMO_CASES["clean"],
-                                  {"known_conditions": ["copd, id 123456789"], "prior_visits": []})
-    assert payload["history"]["known_conditions"] == ["copd, id [REDACTED_ID]"]
+                                  {"known_conditions": ["copd id 123456789"], "prior_visits": []})
+    assert payload["history"]["known_conditions"] == ["copd id [REDACTED_ID]"]
+
+
+def test_a_condition_the_policy_would_refuse_is_left_out_of_the_models_view():
+    """Like a malformed prior visit: a CRM label that is not a short label must not
+    halt every later case for the patient at the privacy policy. The rest stay."""
+    history = {"known_conditions": ["Hypertension", "type 2 diabetes, on metformin",
+                                    "a" * 41, "", None, 3, "copd\n"],
+               "prior_visits": []}
+    payload = build_model_payload("c1", DEMO_CASES["clean"], history)
+    assert payload["history"]["known_conditions"] == ["hypertension"]
+    assert verify_no_identifiers(payload)[0]
+
+
+def _seeded_conditions() -> list[str]:
+    """Every condition label the CRM stub seeds, read from the literal in its
+    seed file — the crm-stub package is its own project, not importable here."""
+    seed = Path(__file__).resolve().parents[2] / "crm-stub" / "crm" / "seed.py"
+    for node in ast.parse(seed.read_text()).body:
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", None) == "PATIENTS":
+            return [c for row in ast.literal_eval(node.value) for c in row[4]]
+    raise AssertionError("PATIENTS not found in crm-stub/crm/seed.py")
+
+
+def test_every_seeded_condition_reaches_the_model():
+    conditions = _seeded_conditions()
+    assert conditions
+    payload = build_model_payload("c1", DEMO_CASES["clean"],
+                                  {"known_conditions": conditions, "prior_visits": []})
+    assert payload["history"]["known_conditions"] == [c.lower() for c in conditions]
+    assert verify_no_identifiers(payload)[0]
 
 
 def test_an_id_typed_into_the_complaint_never_reaches_the_model(run):

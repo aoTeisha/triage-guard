@@ -14,6 +14,7 @@ stored; this file constructs, that file decides.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.guards.fields import is_esi_level
@@ -22,11 +23,16 @@ from app.guards.identifiers import redact_identifiers
 # The model's view of a prior visit: when, and how acute. The notes are prose.
 VISIT_FIELDS = ("date", "acuity")
 
+# A condition label is short and plain: a name, not a paragraph. Kept in sync by
+# hand with `label_pattern` in app/symbolic/policy/privacy.rego;
+# tests/symbolic/test_opa_privacy.py catches drift.
+LABEL_PATTERN = r"^[a-z0-9][a-z0-9 ()/-]{0,39}$"
+
 
 def model_history(history: dict[str, Any] | None) -> dict[str, Any] | None:
-    """The CRM history reduced to what the policy allows: condition labels, and
-    prior visits as (date, acuity). Name and date of birth were already stripped
-    at identity resolution; this drops the prose."""
+    """The CRM history reduced to what the policy allows: short condition labels,
+    and prior visits as (date, acuity). Name and date of birth were already
+    stripped at identity resolution; this drops the prose."""
     if not history:
         return None
     # Only visits with a date and an ESI level: a malformed row in the CRM must
@@ -34,8 +40,13 @@ def model_history(history: dict[str, Any] | None) -> dict[str, Any] | None:
     # stays in the CRM for humans; it just is not part of the model's view.
     visits = [{k: v.get(k) for k in VISIT_FIELDS} for v in history.get("prior_visits") or []
               if isinstance(v, dict) and v.get("date") and is_esi_level(v.get("acuity"))]
+    # The same for condition labels: one the policy would refuse ("type 2
+    # diabetes, on metformin") is left out of the model's view, not sent to halt
+    # the case. `fullmatch`: Python's `$` also matches before a trailing newline.
+    conditions = [c.lower() for c in history.get("known_conditions") or []
+                  if isinstance(c, str) and re.fullmatch(LABEL_PATTERN, c.lower())]
     return {
-        "known_conditions": [str(c).lower() for c in history.get("known_conditions") or []],
+        "known_conditions": conditions,
         "prior_visits": visits,
     }
 
