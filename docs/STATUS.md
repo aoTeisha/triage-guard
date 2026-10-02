@@ -610,7 +610,7 @@ and one has no runtime caller — listed here rather than left to be discovered.
 
 ## Submission items (audited 2026-09-26 against the requirements PDF)
 
-15 of the 21 required items exist. Every item that needs *working code* is done —
+16 of the 21 required items exist. Every item that needs *working code* is done —
 OPA, Z3, Prolog, Datalog, temporal logic, the state machine, the neuro-symbolic
 split. What is left is mostly writing.
 
@@ -634,7 +634,8 @@ split. What is left is mostly writing.
 
 - [ ] **(18) Test table with results.** 453 tests pass and nothing maps them to the
       requirement each one covers. Mostly a generation job from what already exists.
-- [ ] **(20) Presentation.** The requirements give an 11-slide structure; nothing exists.
+- [x] **(20) Presentation.** Done 2026-10-02: `docs/Triage_Guard_Presentation.pptx`,
+      13 slides, checked against the code and `SPECIFICATION.md`.
 - [ ] **(21) Demo showing a block, not only a success.** `uv run triage-guard` walks a
       clean case end to end. The requirement asks for a blocked path too — a `BLK` row
       from an unauthorized actor, or a safety failure going to the gate.
