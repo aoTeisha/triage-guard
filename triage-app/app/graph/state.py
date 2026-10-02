@@ -72,6 +72,9 @@ class TriageState(BaseModel):
 
     # ---- The redacted payload actually sent to the acuity-classifying model ----
     redacted_payload: dict[str, Any] = Field(default_factory=dict)
+    # OPA could not prove `redacted_payload` clean (engine down), so the model is
+    # skipped for this triage. Set on every redaction pass.
+    payload_unverified: bool = False
 
     # ---- Acuity: how urgent the case is, and who decided ----------------------
     nurse_proposed_acuity: Optional[int] = None
@@ -119,7 +122,13 @@ class TriageState(BaseModel):
     release_reason: Optional[str] = None
 
     # ---- Human approval gate ----------------------------------------------------
-    escalation_reason: Optional[str] = None      # "discrepancy" | "safety_fail"
+    escalation_reason: Optional[str] = None      # "discrepancy" | "safety_fail" | "validator_down"
+    # Safety engines that could not answer at the latest safety check ("prolog",
+    # "datalog"). Replaced, not appended: empty once the check runs again.
+    validator_down: list[str] = Field(default_factory=list)
+    # A shift lead cleared the case while the safety check could not run. Never
+    # counts as a pass: `safety_passed` stays False.
+    safety_waived: bool = False
     human_decision: Optional[str] = None
     resolver_role: Optional[str] = None
     # Role of whoever is driving the current attempted action (e.g. "nurse",

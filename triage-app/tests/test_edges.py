@@ -8,10 +8,15 @@ object, and the spec table can be checked line by line.
 
 from __future__ import annotations
 
-from app.graph import UNIMPLEMENTED_STATES, build_graph
+import inspect
+import re
+from pathlib import Path
+
+from app.graph import UNIMPLEMENTED_STATES, build_graph, routers
 from app.states import State
 
 DEGRADE_NODES = {"classifier_fallback", "safety_fallback"}
+DIAGRAMS_MD = Path(__file__).resolve().parents[2] / "docs" / "diagrams.md"
 
 
 def _graph():
@@ -62,13 +67,15 @@ def test_data_parsed_leads_to_identity_lookup():
     assert (State.DATA_PARSED.value, State.RESOLVING_IDENTITY.value) in edges()
 
 
-def test_redaction_can_halt_but_classification_is_the_only_way_forward():
-    """PAYLOAD_CLEAN forward, V_HALT_PII sideways. Critical-closed: no third option."""
+def test_redaction_halts_on_a_leak_and_skips_the_model_when_opa_is_down():
+    """PAYLOAD_CLEAN forward, V_HALT_PII sideways, PRIVACY_GATE_DOWN around the
+    model to the nurse's acuity. A found leak still halts; nothing else does."""
     targets = {t for s, t in edges() if s == State.REDACTING_ROUTING.value}
     assert targets == {
         State.CLASSIFYING.value,
         State.AGENT_FAILED.value,
         State.REDACTING_ROUTING.value,     # V_RETRY self-loop
+        "classifier_fallback",             # OPA down: payload not proven clean
     }
 
 
@@ -95,15 +102,17 @@ def test_acuity_gap_has_exactly_two_destinations():
     }
 
 
-def test_the_gate_returns_to_safety_never_straight_to_monitoring():
-    """Correct-and-revalidate, never override.
+def test_the_gate_returns_to_safety_or_queues_only_on_a_shift_lead_clear():
+    """Correct-and-revalidate, never override a verdict.
 
-    A resolved gate must re-run safety validation. An edge from the gate directly
-    to monitoring would be an approval bypass.
+    A resolved gate re-runs safety validation. Its one edge straight to the queue
+    is a shift lead clearing a case whose safety check could not run, and the
+    router takes it only on that answer.
     """
     targets = {t for s, t in edges() if s == State.AWAITING_HUMAN_APPROVAL.value}
     assert State.SAFETY_VALIDATING.value in targets
-    assert State.MONITORING.value not in targets
+    assert State.MONITORING.value in targets
+    assert "GATE_SAFETY_WAIVED" in inspect.getsource(routers.route_gate)
 
 
 def test_a_refused_gate_loops_back_to_the_gate():
@@ -115,10 +124,11 @@ def test_a_refused_gate_loops_back_to_the_gate():
     assert State.ACTION_DENIED.value not in {s for s, _ in edges()} | {t for _, t in edges()}
 
 
-def test_monitoring_is_only_reachable_through_a_passing_verdict():
-    """No path may reach the queue without passing safety validation."""
+def test_monitoring_is_only_reachable_through_a_verdict_or_a_shift_lead_clear():
+    """No path reaches the queue without a passing safety verdict, except a shift
+    lead clearing a case whose safety check could not run."""
     into_monitoring = {s for s, t in edges() if t == State.MONITORING.value}
-    assert into_monitoring == {State.VERDICT_PROPOSED.value}
+    assert into_monitoring == {State.VERDICT_PROPOSED.value, State.AWAITING_HUMAN_APPROVAL.value}
 
 
 def test_graph_renders_a_complete_mermaid_diagram():
@@ -128,3 +138,23 @@ def test_graph_renders_a_complete_mermaid_diagram():
     mermaid = build_graph().get_graph().draw_mermaid()
     for state in node_names():
         assert state in mermaid
+
+
+def _diagram_pairs() -> set[tuple[str, str]]:
+    """Every `a --> b` arrow in the stateDiagram block of docs/diagrams.md."""
+    block = DIAGRAMS_MD.read_text().split("```mermaid\nstateDiagram-v2", 1)[1].split("```", 1)[0]
+    return set(re.findall(r"^\s*(\S+)\s*-->\s*(\S+)", block, re.M))
+
+
+def test_diagram_names_exactly_the_spec_states():
+    """The hand-drawn diagram uses the spec's state names, all of them, and
+    nothing else. A refusal is a self-loop, so `action_denied` is never drawn."""
+    drawn = {n for pair in _diagram_pairs() for n in pair} - {"[*]"}
+    assert drawn == {s.value for s in State} - {State.ACTION_DENIED.value}
+
+
+def test_diagram_draws_every_wired_state_edge():
+    """Every edge the graph wires between two spec states has an arrow."""
+    spec = {s.value for s in State}
+    wired = {(s, t) for s, t in edges() if s in spec and t in spec}
+    assert wired <= _diagram_pairs(), wired - _diagram_pairs()

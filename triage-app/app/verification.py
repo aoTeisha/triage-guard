@@ -33,6 +33,9 @@ from app.labels import Transition
 class Violation(str, Enum):
     RECOVERABLE = "recoverable"
     STRUCTURAL = "structural"
+    # The checker itself could not answer. Not the output's fault: take the
+    # component's degrade path instead of retrying or halting.
+    UNAVAILABLE = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -88,9 +91,12 @@ def verify_redacted_payload(payload: dict[str, Any]) -> VerificationResult:
     Structural by definition: an identifier in the model-facing payload is a
     privacy-invariant breach, and re-running the same drop on the same input would
     leak it again. Never retried.
+
+    OPA down with nothing found is `UNAVAILABLE`, carrying the payload in
+    `checked` so the case can keep it, but never hand it to the model.
     """
     ok, why = verify_no_identifiers(payload)
-    if not ok:
+    if ok is False:
         return VerificationResult(
             passed=False, violations=(why,), category=Violation.STRUCTURAL
         )
@@ -101,6 +107,10 @@ def verify_redacted_payload(payload: dict[str, Any]) -> VerificationResult:
             passed=False,
             violations=("redacted payload is not keyed by case_id",),
             category=Violation.RECOVERABLE,
+        )
+    if ok is None:
+        return VerificationResult(
+            passed=False, violations=(why,), category=Violation.UNAVAILABLE, checked=payload
         )
     return _passed(payload)
 
@@ -134,7 +144,11 @@ _SAFETY_VERDICTS = frozenset({Transition.SAFETY_PASSED, Transition.SAFETY_FAILED
 # charge nurse has answered, in the same triage.
 _NEEDS_HUMAN = frozenset({Transition.ACUITY_GAP_MAJOR, Transition.ESCALATION_NEEDED,
                           Transition.SAFETY_FAILED, Transition.V_EXHAUSTED_SAFETY})
-_HUMAN_ANSWERED = frozenset({Transition.GATE_ACUITY_RESOLVED, Transition.GATE_SAFETY_CORRECTED})
+_HUMAN_ANSWERED = frozenset({Transition.GATE_ACUITY_RESOLVED, Transition.GATE_SAFETY_CORRECTED,
+                             Transition.GATE_REVALIDATE})
+# Sends a case back to safety after a failure. A revalidation after the checker
+# was down counts the same as a correction: it needs a new pass, and it uses a round.
+_BACK_TO_SAFETY = frozenset({Transition.GATE_SAFETY_CORRECTED, Transition.GATE_REVALIDATE})
 
 # What the current triage has established so far. Re-filing a case sends it
 # back through intake from scratch (a `front_door_rerun` record) and starts a
@@ -150,6 +164,7 @@ _FRESH_TRIAGE = {
     "correcting": False,    # a correction is waiting for its safety verdict
     "revalidated": 0,       # corrections sent back to safety before a senior took over
     "senior": False,        # a shift lead holds the case; rounds stop counting
+    "waived": False,        # a shift lead cleared the case while the check could not run
 }
 
 
@@ -207,11 +222,18 @@ def check_trace(audit_log: list[dict[str, Any]]) -> VerificationResult:
             tri["answered"] = True
         if t == Transition.SENIOR_ESCALATION:
             tri["senior"] = True
-        if t == Transition.GATE_SAFETY_CORRECTED:
+        if t in _BACK_TO_SAFETY:
             tri["corrected"] = tri["correcting"] = True
+
+        if t == Transition.GATE_SAFETY_WAIVED:
+            if tri["verdict"] != Transition.V_EXHAUSTED_SAFETY:
+                flag(i, "no bypass", "safety cleared by a shift lead, but the check had not failed to run")
+            else:
+                tri["waived"] = tri["answered"] = True
 
         if t in _SAFETY_VERDICTS:
             tri["verdict"] = t
+            tri["waived"] = False
             if tri["correcting"] and not tri["senior"]:
                 tri["revalidated"] += 1
                 if tri["revalidated"] > MAX_CORRECTION_ROUNDS:
@@ -224,7 +246,9 @@ def check_trace(audit_log: list[dict[str, Any]]) -> VerificationResult:
                 tri["failed"], tri["corrected"], tri["fixed"] = True, False, False
 
         if t == Transition.CLEARED_TO_QUEUE:
-            if tri["verdict"] != Transition.SAFETY_PASSED:
+            if tri["waived"]:
+                pass    # the check could not run and a shift lead cleared the case
+            elif tri["verdict"] != Transition.SAFETY_PASSED:
                 flag(i, "no bypass", "cleared_to_queue without safety_passed in this triage")
             elif tri["needs_human"] and not tri["answered"]:
                 flag(i, "no bypass", "cleared_to_queue before the required human answer")

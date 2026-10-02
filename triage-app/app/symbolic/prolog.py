@@ -9,21 +9,30 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from app import outages
+
 if TYPE_CHECKING:
     from pyswip import Prolog
 
 RULES = Path(__file__).parent / "rules" / "monitor.pl"
 SAFETY_RULES = Path(__file__).parent / "rules" / "safety.pl"
 
-# ponytail: one process-wide engine behind one lock. pyswip's engine is a
+# one process-wide engine behind one lock. pyswip's engine is a
 # global and is not thread-safe; the board's FastAPI threadpool reaches
 # `actor_is_charge` from several threads. Per-thread engines if this lock
 # ever shows up in a profile.
 _lock = threading.Lock()
 
 
-@lru_cache(maxsize=1)
 def _engine() -> "Prolog":
+    """The loaded engine, unless the outage switch has Prolog down. The switch is
+    checked here on every call, since the engine itself is loaded once."""
+    outages.check("prolog")
+    return _loaded_engine()
+
+
+@lru_cache(maxsize=1)
+def _loaded_engine() -> "Prolog":
     # Imported here, not at module scope: pyswip's `_find_swipl()` runs at
     # import time and raises immediately if SWI-Prolog isn't installed. A
     # module-scope import would then fail the whole app's import (every
@@ -98,7 +107,12 @@ def may_resolve_gate(role: str, *, senior_required: bool) -> tuple[bool, str]:
     try:
         holds = _holds(f"may_resolve_gate({atom(role)}, {str(senior_required).lower()})")
     except PrologEngineError as exc:
-        return False, f"gate refused: prolog engine unavailable: {exc}"
+        # The engine cannot answer: a shift lead answers the gate instead, since
+        # a shift lead may answer any gate. Never a block with nobody able to act.
+        if role == "shift_lead":
+            return True, "authorized by shift lead: Prolog unavailable"
+        return False, (f"gate refused: Prolog unavailable, shift lead sign-off required "
+                       f"(role {role!r}): {exc}")
     if holds:
         return True, (f"{role} may decide" if not senior_required else "a shift lead must decide")
     if senior_required:

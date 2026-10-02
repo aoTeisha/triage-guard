@@ -4,7 +4,6 @@
     uv run triage-guard             # clean case, full happy path
     uv run triage-guard missing     # missing_fields — required fields absent
     uv run triage-guard failed      # submission_unusable — nothing usable
-    uv run triage-guard injection   # invalid_input — prompt injection rejected
     uv run plot                     # write the control-plane diagram
 
 Mock by default: no LLM, no running CRM stub, no key. `TRIAGE_LLM=live` calls a

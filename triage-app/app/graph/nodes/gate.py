@@ -10,7 +10,7 @@ from typing import Any
 
 from app.actors import human_bridge
 from app.budgets import GATE_REMINDER_DELAY_MINUTES, SENIOR_REMINDER_DELAY_MINUTES
-from app.deterministic import assign_order_key, audit, audit_denial, bucket_for
+from app.deterministic import SHIFT_LEAD_STANDS_IN, assign_order_key, audit, audit_denial, bucket_for
 from app.graph.nodes._shared import is_release, release_case
 from app.graph.state import TriageState
 from app.guards import is_esi_level
@@ -59,6 +59,7 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
             "acuity_gap": state.acuity_gap,
             "safety_verdict": state.safety_verdict.model_dump() if state.safety_verdict else None,
         },
+        senior_required=state.senior_required,
     )
 
     if is_release(response):
@@ -88,6 +89,13 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
         return base | {
             "audit_log": [recorded, audit_denial(state.case_id, State.AWAITING_HUMAN_APPROVAL, why)],
         }
+    stood_in = why.startswith(SHIFT_LEAD_STANDS_IN)
+    if stood_in:
+        # Prolog could not answer and a shift lead answered instead.
+        base["degraded"] = ["prolog_signoff"]
+    # Who decided a gate row: Prolog, or the shift lead standing in for it.
+    engines = [] if stood_in else ["Prolog"]
+    signed = f" ({why})" if stood_in else ""
 
     if reason in human_bridge.ACUITY_REASONS:
         chosen = (
@@ -104,11 +112,11 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
             "audit_log": [recorded,
                           audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
                                 "apply_human_acuity",
-                                f"charge nurse resolved acuity: {chosen}",
+                                f"charge nurse resolved acuity: {chosen}{signed}",
                                 Transition.GATE_ACUITY_RESOLVED,
                                 # Machine-readable provenance, not only prose: the
                                 # Datalog check reads who wrote an acuity (I3).
-                                resolver_role=resolver)],
+                                resolver_role=resolver, engines=engines)],
         }
 
     if decision == "escalate_further" and not state.senior_required:
@@ -116,8 +124,49 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
         return base | {
             "audit_log": [recorded,
                           audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
-                                "escalate_further", f"{resolver} escalated to a senior",
-                                Transition.SENIOR_ESCALATION)],
+                                "escalate_further", f"{resolver} escalated to a senior{signed}",
+                                Transition.SENIOR_ESCALATION, engines=engines)],
+        }
+
+    if decision == human_bridge.CLEAR_BY_SHIFT_LEAD:
+        # The safety check could not run and a shift lead takes responsibility
+        # for queueing the patient without it. Only for a check that could not
+        # run: a real failure still needs a correction.
+        refusal = (
+            "clear refused: only a safety check that could not run may be cleared"
+            if reason != human_bridge.VALIDATOR_DOWN
+            else f"clear refused: shift lead sign-off required (role {resolver!r})"
+            if resolver != "shift_lead" else None
+        )
+        if refusal:
+            return base | {"audit_log": [recorded, audit_denial(
+                state.case_id, State.AWAITING_HUMAN_APPROVAL, refusal, layer="gate (shift-lead clear)")]}
+        return base | {
+            "safety_waived": True,
+            "approved": True,
+            "degraded": [*base.get("degraded", []), "safety_signoff"],
+            "audit_log": [recorded,
+                          audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
+                                "waive_safety_check",
+                                f"shift lead cleared the case without the safety check "
+                                f"({', '.join(state.validator_down) or 'validator'} down){signed}",
+                                Transition.GATE_SAFETY_WAIVED, resolver_role=resolver, engines=[])],
+        }
+
+    if reason == human_bridge.VALIDATOR_DOWN and decision == "revalidate":
+        # The check could not run, so there is nothing to correct: ask for it
+        # again. Still a round, so a long outage hands the case to a shift lead
+        # once the correction rounds run out, instead of looping forever.
+        return base | {
+            "correction_rounds": state.correction_rounds + 1,
+            "safety_passed": False,
+            "audit_log": [recorded,
+                          audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
+                                "request_revalidation",
+                                f"round {state.correction_rounds + 1}: safety check could not run "
+                                f"({', '.join(state.validator_down) or 'validator'} down); re-running it{signed}",
+                                Transition.GATE_REVALIDATE, resolver_role=resolver,
+                                engines=engines)],
         }
 
     # Safety-fail branch: correct and revalidate. No override path exists.
@@ -138,8 +187,9 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
         "audit_log": [recorded,
                       audit(state.case_id, State.AWAITING_HUMAN_APPROVAL,
                             "apply_correction",
-                            f"correction round {state.correction_rounds + 1}: {changes}; re-running safety",
-                            Transition.GATE_SAFETY_CORRECTED, resolver_role=resolver)],
+                            f"correction round {state.correction_rounds + 1}: {changes}; re-running safety{signed}",
+                            Transition.GATE_SAFETY_CORRECTED, resolver_role=resolver,
+                            engines=engines)],
     }
     if "acuity" in changes:
         new = changes["acuity"]

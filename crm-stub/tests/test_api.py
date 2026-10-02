@@ -57,6 +57,19 @@ def test_patch_writeback(client):
     assert got["record"]["prior_visits"][-1]["notes"] == "sprain"
 
 
+def test_list_patients_gives_the_picker_id_and_name_only(client):
+    r = client.get("/patients")
+    assert r.status_code == 200
+    patients = r.json()["patients"]
+    assert {"national_id": "300000001", "name": "Alon Mizrahi"} in patients
+    assert all(set(p) == {"national_id", "name"} for p in patients)
+
+
+def test_list_patients_db_error_is_503(client):
+    client.post("/admin/simulate-down", params={"enabled": True})
+    assert client.get("/patients").status_code == 503
+
+
 def test_simulate_down_toggle_back(client):
     client.post("/admin/simulate-down", params={"enabled": True})
     assert client.get("/health").json()["available"] is False

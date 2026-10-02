@@ -28,6 +28,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from app import outages
 from app.actors import load_mock, load_persona
 from app.schemas import AcuityProposal
 
@@ -73,6 +74,7 @@ def classify(payload: dict[str, Any]) -> AcuityProposal:
     Raises on transport failure so the graph's RetryPolicy can see it - swallowing the
     exception here would make the retry budget unreachable.
     """
+    outages.check("llm")
     if not live_mode():
         # MOCK - edit mocks/acuity_classifier.json, or set TRIAGE_LLM=live.
         return AcuityProposal.model_validate(load_mock("acuity_classifier"))

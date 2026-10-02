@@ -188,7 +188,7 @@ def test_notify_cancels_a_reminder_for_a_gate_thats_already_resolved(conn, graph
 def test_notify_stops_sending_once_the_recipients_budget_is_spent(conn, graph, run, monkeypatch):
     monkeypatch.setattr(fire, "NOTIFICATION_BUDGET_PER_WINDOW", 1)
     state, pending, thread = run(GAP_CASE)
-    timers.record_notification(conn, case_id="someone-else", reason="x", channel="notification_strip",
+    timers.record_notification(conn, case_id=thread, reason="x", channel="notification_strip",
                                 recipient_class="assigned_nurse")
     timer = {"timer_id": "t4", "case_id": thread, "kind": "gate_reminder", "schedule_seq": 0,
              "due_at": "2000-01-01T00:00:00Z"}
@@ -196,7 +196,23 @@ def test_notify_stops_sending_once_the_recipients_budget_is_spent(conn, graph, r
     outcome = fire.notify(conn, timer, graph=graph)
 
     assert outcome == "FAILED"
-    assert conn.execute("SELECT COUNT(*) FROM notifications WHERE case_id=%s", (thread,)).fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM notifications WHERE case_id=%s", (thread,)).fetchone()[0] == 1
+
+
+def test_notify_budget_does_not_cross_cases(conn, graph, run, monkeypatch):
+    # A different case's sends never spend this case's budget — the whole
+    # point of scoping the count per case_id.
+    monkeypatch.setattr(fire, "NOTIFICATION_BUDGET_PER_WINDOW", 1)
+    state, pending, thread = run(GAP_CASE)
+    timers.record_notification(conn, case_id="someone-else", reason="x", channel="notification_strip",
+                                recipient_class="assigned_nurse")
+    timer = {"timer_id": "t4", "case_id": thread, "kind": "gate_reminder", "schedule_seq": 0,
+             "due_at": "2000-01-01T00:00:00Z"}
+
+    outcome = fire.notify(conn, timer, graph=graph)
+
+    assert outcome == "DELIVERED"
+    assert conn.execute("SELECT COUNT(*) FROM notifications WHERE case_id=%s", (thread,)).fetchone()[0] == 1
 
 
 def test_dispatch_flags_timer_gap_on_a_severely_overdue_fire(conn, graph, run):

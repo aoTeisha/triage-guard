@@ -25,10 +25,17 @@ from langgraph.types import interrupt
 from app.actors import load_mock
 
 # Reasons the gate can be entered. One control state, two causes (§ Transitions:
-# ACUITY_GAP_MAJOR for the acuity discrepancy, SAFETY_FAILED / AF_SAFETY for the safety branch).
+# ACUITY_GAP_MAJOR for the acuity discrepancy, SAFETY_FAILED for the safety branch,
+# AF_SAFETY / V_EXHAUSTED_SAFETY when the safety check could not run).
 DISCREPANCY = "discrepancy"
 LOW_CONFIDENCE = "low_confidence"
 SAFETY_FAIL = "safety_fail"
+# The safety check could not run (an engine down). Nothing to correct: the
+# charge nurse asks for the check again, or hands the case up.
+VALIDATOR_DOWN = "validator_down"
+# A shift lead's answer to VALIDATOR_DOWN: queue the case without the check, so an
+# outage never keeps a patient from treatment.
+CLEAR_BY_SHIFT_LEAD = "clear_by_shift_lead"
 
 # Reasons that end in the human choosing an acuity. Both present the same question
 # ("which level is right?"); they differ only in what prompted the ask.
@@ -38,20 +45,25 @@ _OPTIONS: dict[str, list[str]] = {
     DISCREPANCY: ["use_nurse_acuity", "use_system_acuity"],
     LOW_CONFIDENCE: ["use_nurse_acuity", "use_system_acuity"],
     SAFETY_FAIL: ["corrected", "escalate_further"],
+    VALIDATOR_DOWN: ["revalidate", "escalate_further", CLEAR_BY_SHIFT_LEAD],
 }
 
 
-def request_decision(reason: str, case: dict[str, Any]) -> dict[str, Any]:
+def request_decision(
+    reason: str, case: dict[str, Any], *, senior_required: bool = False
+) -> dict[str, Any]:
     """Pause the run and surface the gate to a human.
 
-    Returns whatever the resumer supplied — a mapping with at least `decision` and
+    Returns whatever the resumer supplied: a mapping with at least `decision` and
     `resolver_role`. The caller is responsible for authorizing the resolver; this
-    bridge only carries the message.
+    bridge only carries the message. `required_role` names who `may_resolve_gate`
+    will actually accept: a shift lead once the correction loop has escalated,
+    a charge nurse otherwise.
     """
     return interrupt(
         {
             "gate": reason,
-            "required_role": "charge_nurse",
+            "required_role": "shift_lead" if senior_required else "charge_nurse",
             "options": _OPTIONS[reason],
             **case,
         }

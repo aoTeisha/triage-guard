@@ -158,6 +158,20 @@ class CRMRepository:
             return FetchResult(FetchStatus.NOT_FOUND)
         return FetchResult(FetchStatus.FOUND, self._row_to_record(row))
 
+    def list_patients(self) -> Optional[list[PatientRecord]]:
+        """Every registered patient, by name. None when the DB is down."""
+        if self._down():
+            return None
+        try:
+            conn = self._connect()
+            try:
+                rows = conn.execute("SELECT * FROM patients ORDER BY name").fetchall()
+            finally:
+                conn.close()
+        except psycopg.Error:
+            return None
+        return [self._row_to_record(r) for r in rows]
+
     def patch_patient_data(self, stable_patient_id: str, visit_data: dict) -> PatchResult:
         """Write this visit back into the patient's history.
 

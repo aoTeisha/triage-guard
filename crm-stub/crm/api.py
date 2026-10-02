@@ -46,6 +46,16 @@ def health():
     return {"available": repo.is_available()}
 
 
+@app.get("/patients")
+def list_patients():
+    """Every registered patient, for the intake form's patient picker: the
+    number a nurse selects by, and the name that tells them who it is."""
+    records = repo.list_patients()
+    if records is None:
+        raise HTTPException(status_code=503, detail="db_error")
+    return {"patients": [{"national_id": r.national_id, "name": r.name} for r in records]}
+
+
 @app.get("/patients/by-national-id/{national_id}")
 def get_patient_by_national_id(national_id: str):
     """Resolve the number a patient carries into their internal id.

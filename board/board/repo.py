@@ -21,7 +21,7 @@ from app.views import CaseCard, card_from_state
 class CheckpointRepo:
     """Read the checkpointer directly.
 
-    # ponytail: one state load per case per refresh, and no server-side filter.
+    # one state load per case per refresh, and no server-side filter.
     # Fine to ~100 cases on one box. Past that, write a `board_cards` projection
     # row at the end of start_case/resume_case and read the board off that table
     # instead — same three methods, so only this class changes.

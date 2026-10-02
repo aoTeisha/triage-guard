@@ -17,7 +17,6 @@ uv sync
 uv run triage-guard            # clean case — full happy path
 uv run triage-guard missing    # missing_fields — required fields absent
 uv run triage-guard failed     # submission_unusable — nothing usable
-uv run triage-guard injection  # invalid_input — prompt injection rejected
 uv run pytest                  # 92 tests, offline, ~40s
 uv run plot                    # regenerate docs/diagrams/control-plane.mmd
 uv run visualize-graph         # open the graph as a live Mermaid diagram in the browser

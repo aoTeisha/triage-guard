@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 import psycopg
 
+from app import outages
 from app.budgets import TIMER_GAP_GRACE_MINUTES
 from app.monitor import fire, timers
 from app.runner import config_for
@@ -69,7 +70,7 @@ def _check_invariants(conn: psycopg.Connection, graph) -> None:
     never touches timer state — a timer the sweeper keeps refusing is
     evidence, not a mess to tidy away.
     """
-    # ponytail: one graph.get_state per distinct live case per tick. Fine for
+    # one graph.get_state per distinct live case per tick. Fine for
     # a ward's worth of cases; cache by checkpoint id if it ever isn't.
     try:
         timer_rows = timers.all_rows(conn)
@@ -93,6 +94,11 @@ def _check_invariants(conn: psycopg.Connection, graph) -> None:
 
 def run_once(conn: psycopg.Connection, *, worker_id: str, graph=None) -> list[dict]:
     """One tick. Returns the newly claimed (`DUE`) rows."""
+    if outages.is_down("monitor"):
+        # The outage switch has the monitor down: behave like a dead sweeper. No
+        # heartbeat, so the board shows "Monitor down"; no timers fired, so they
+        # wait in Postgres and fire on the first tick after it comes back.
+        return []
     g = graph or real_graph()
     timers.heartbeat(conn, worker_id=worker_id)
 

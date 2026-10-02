@@ -24,6 +24,7 @@ from langgraph.errors import NodeError
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, RetryPolicy
 
+from app.actors.safety import ValidatorUnavailable
 from app.budgets import RETRY_BUDGET
 from app.events import Event
 from app.graph import nodes, routers
@@ -85,12 +86,14 @@ def _retry_policy(state: State) -> RetryPolicy | None:
 # returned something unusable.
 
 
-def _crash(state: TriageState, node: State, agent: str, error: NodeError) -> dict:
+def _crash(state: TriageState, node: State, agent: str, error: NodeError,
+          engines: list[str] | None = None) -> dict:
+    extra = {"engines": engines} if engines else {}
     return {
         "audit_log": [
             nodes.audit(state.case_id, node, "alert_technician",
                         f"{agent} raised after its retry budget: {error.error}",
-                        Transition.AF_RECOVER)
+                        Transition.AF_RECOVER, **extra)
         ]
     }
 
@@ -110,8 +113,12 @@ def _on_safety_error(state: TriageState, error: NodeError) -> Command:
     the model: route every case to a charge nurse so the rule "nothing skips
     approval" still holds even while the validator is down.
     """
+    down = getattr(error.error, "engines", None) if isinstance(error.error, ValidatorUnavailable) else None
     return Command(
-        update=_crash(state, State.SAFETY_VALIDATING, "safety_validation", error),
+        update=_crash(state, State.SAFETY_VALIDATING, "safety_validation", error,
+                      engines=["Prolog", "Datalog"])
+        # Which engine could not answer, so the fallback and the board can name it.
+        | {"validator_down": down or []},
         goto="safety_fallback",
     )
 
@@ -224,9 +231,12 @@ def build_graph(checkpointer=None):
         State.REDACTING_ROUTING,
         routers.route_after_redaction,
         {
-            Route.PROCEED: State.CLASSIFYING,
-            Route.RETRY:   State.REDACTING_ROUTING,
-            Route.HALT:    State.AGENT_FAILED,
+            Route.PROCEED:  State.CLASSIFYING,
+            Route.RETRY:    State.REDACTING_ROUTING,
+            Route.HALT:     State.AGENT_FAILED,
+            # OPA could not prove the payload clean: never hand it to the
+            # model; fall back to the nurse's acuity like a classifier outage.
+            Route.DEGRADED: "classifier_fallback",
         },
     )
 
@@ -285,6 +295,8 @@ def build_graph(checkpointer=None):
         routers.route_gate,
         {
             Route.PROCEED:   State.SAFETY_VALIDATING,
+            # The safety check could not run and a shift lead cleared the case.
+            Route.CLEARED:   State.MONITORING,
             # Not a terminal: the gate refuses the attempt (its own BLK row)
             # and re-pauses, so an unauthorized click from the board leaves
             # the case exactly as resolvable as before, with its reminder

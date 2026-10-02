@@ -73,17 +73,6 @@ def test_unusable_submission_stops(run):
     assert transitions(state)[-1] == Transition.SUBMISSION_UNUSABLE
 
 
-def test_injection_is_rejected_before_anything_is_classified(run):
-    """The spec's forbidden sequence is 'injection reaches the model'."""
-    state, _, _ = run(DEMO_CASES["injection"])
-
-    assert state["control_state"] == State.INPUT_REJECTED.value
-    assert transitions(state)[-1] == Transition.INVALID_INPUT
-    assert state["redacted_payload"] == {}
-    assert state["system_proposed_acuity"] is None
-    assert Transition.ACUITY_PROPOSED not in transitions(state)
-
-
 def test_missing_fields_case_gets_no_invented_queue_position(run):
     """`nurse_proposed_acuity` is mandatory and never inferred, so a case without
     one cannot be given an order_key — and must not be given a guessed acuity to fake it.

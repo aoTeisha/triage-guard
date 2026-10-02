@@ -3,21 +3,14 @@
 from __future__ import annotations
 
 from .fields import missing_fields
-from .injection import detect_injection
 
 
 def not_input_is_valid(payload: dict) -> tuple[bool, str]:
-    """¬`input_is_valid` = ¬schema_matches ∨ injection_detected(free_text) —
-    the guard on INVALID_INPUT.
+    """¬`input_is_valid` = ¬schema_matches — the guard on INVALID_INPUT.
 
-    Injection is checked first and its reason wins outright: a payload that is
-    both malformed and hostile is reported as "injection", never
-    "invalid_schema". Mislabelling it would route a security event into the
-    ordinary schema-error bucket.
+    The one structural requirement is a string case id: without it the case
+    cannot be recorded, so it is rejected rather than sent back for completion.
     """
-    detected, label = detect_injection(payload.get("free_text") or "")
-    if detected:
-        return True, f"injection ({label})"
     if not isinstance(payload.get("case_id"), str):
         return True, "invalid_schema"
     return False, "input is valid"

@@ -1,7 +1,146 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-26 (Z3 proofs, the real safety validator, the acuity range
-guard, and national-ID identity resolution. Previous entry below.)
+**Last updated:** 2026-09-29 (an outage switch on the board: take the LLM, OPA, Prolog,
+Datalog or the monitor down for every patient, and the degrade paths it needed so no
+outage blocks treatment or release. Previous entry below.)
+
+**2026-09-29.** No commits yet (working tree only).
+
+*An outage switch, and the outages it exposed.* A "System health" button in the board
+header (shown when the board runs with `DEMO_OUTAGES=1`, which `.env`
+sets for the board and the sweeper) opens a toggle per component. A component switched
+off stays off for every patient and every action until it is switched back, and a red
+strip under the header names it. The flags live in a Postgres table,
+`component_outages`, read through `app/outages.py`, so the board and the sweeper, two
+processes, see the same outage. Each component checks its flag at the lowest call into
+it (the classifier call, `opa.evaluate`, `prolog._engine`, Datalog's provenance and
+invariant passes) and raises the same kind of error a real outage would, so the system's
+own handling reacts. The monitor's switch makes the sweeper skip its tick and its
+heartbeat, so the board shows "Monitor down" and timers wait in Postgres until it is back.
+
+Switched on and left on, the outages showed that several paths simply stopped. Now:
+
+- *OPA down.* The privacy check that runs before the model cannot prove the payload
+  clean, so the model is skipped and the case takes the classifier-down path (nurse's
+  acuity, gap gate off, flagged), instead of halting. A regex-found identifier still
+  halts. OPA also authorizes moves and releases: when it cannot answer, only a shift lead
+  may sign, before the action, and plain Python still checks what OPA would have (a move
+  needs a passed safety check and approval; a release needs a valid reason). A CRM
+  write-back timer whose OPA check cannot answer is retried, not cancelled.
+- *Prolog or Datalog down.* The safety check has no verdict, so the case goes to a new
+  gate reason, `validator_down`, whose options are "revalidate" (no change needed; uses a
+  correction round), "escalate further", and "clear without the check", which only a
+  shift lead may choose: the case queues as cleared by a shift lead (`safety_waived`,
+  never `safety_passed`), and a move to treatment accepts that in place of a pass. Prolog
+  also decides who may answer a gate: when it cannot answer, a shift lead answers.
+- *LLM down.* Unchanged: nurse's acuity, flagged.
+
+A shift lead standing in is written into the audit record ("authorized by shift lead:
+OPA unavailable") and marks the case degraded. Every degraded case names the component
+on its card chip and lists, in a "Running degraded" box in the case panel, what it went
+without. Move and release get a role picker that defaults to shift lead while OPA is down;
+the gate's picker does the same while Prolog is down. Technician alerting for outages is
+left for later. New tests: `triage-app/tests/test_outages.py`,
+`test_outage_authorization.py`, `test_component_down.py`, and
+`board/tests/intake/test_outage_switch.py`.
+
+**2026-09-28.** No commits yet (working tree only).
+
+*A safety-fail demo scenario, and why it needed one.* None of the board's six demo
+scenarios ever made the safety validator actually fail. Its five Prolog rules
+(`triage-app/app/symbolic/rules/safety.pl`) only catch a case that contradicts
+itself, something the graph is built never to produce on its own, so there was no
+well-formed submission that would trip one. That also meant the "Escalate further"
+and "Corrected" buttons on the gate panel, and the `senior_reminder` timer behind
+them, were real and already tested in `triage-app`, but nobody had ever seen them on
+the board itself. A new scenario, `safety_fail`, closes that gap the same way the
+existing trace-violation demo does: it fakes one input, then lets the real code react
+to it for real. Picking "Safety validation failure" on the board sends an otherwise
+ordinary case through `/api/submit`, which wraps that one call in a patch of
+`app.actors.safety.validate` (`board/board/intake.py`) returning a fixed "fail"
+verdict. Everything downstream, from there, is the unmodified graph: `safety_validating`
+writes the verdict into the audit log for real, `awaiting_human_approval` genuinely
+pauses with `escalation_reason="safety_fail"`, and a charge nurse can genuinely
+correct and resubmit or escalate to a shift lead from the board UI. The patch is
+scoped to a single `start_case()` call, not left running, but it does still affect
+the whole process for that moment, so it assumes one person driving the demo at a
+time. Four new tests cover it: `board/tests/intake/test_case_lifecycle.py`.
+
+*The gate's own message was wrong once a case escalated.* Using the new demo
+scenario surfaced a real bug: after "Escalate further" handed a case to a shift
+lead, the board still showed a chip reading "awaiting charge nurse" and a resolver
+picker defaulting to `charge_nurse`, both of which the gate would then refuse. The
+cause was in `human_bridge.request_decision` (`triage-app/app/actors/human_bridge.py`):
+its `required_role` field was hardcoded to `"charge_nurse"`, ignoring
+`senior_required` entirely. It now reads `"shift_lead"` once a case has escalated,
+and that value flows through `app/views.py`'s `CaseCard` and `case_view()` (a new
+`senior_required` field on each) to the board, where the card chip
+(`board/board/static/queue.js`) now reads "awaiting shift lead" and the resolver
+picker (`board/board/static/case-actions.js`) now defaults to it. One new test in
+`triage-app/tests/test_gates.py` pins the interrupt payload itself, not just the
+state field, since the payload is what a stale UI had actually been reading.
+
+Test counts, collected: board 147 (was 143), triage-app 562 collected plus 1
+deselected (`test_live_llm.py`).
+
+**2026-09-27.** Five commits today.
+
+*The intake service is part of the board.* The board's detail panel already showed the
+gate form and the re-filing form, but it posted both to `intake-channel` on port 8001,
+which needed a CORS allow-list to accept them. The board now serves everything on
+:8002, and `intake-channel/` is deleted. The nine writes that re-enter a paused case
+(four the board had, five that moved over) all go through
+`board/board/commands.py::answer_pause`. It takes the case lock and checks the pause
+inside the lock, so a second request can't slip in between the check and the write.
+The gate path had that race before. No endpoint's reply changed: the board's four
+still return `{"status": "ok"}` or `{"status": "denied", "detail": ...}`, the five
+that moved over still return the bare case view, and no existing test's expected value
+was edited. Board tests are split into `tests/board/` and `tests/intake/`, each with
+its own autouse database fixtures. The frontend is split too: `board.js` shrank, and
+`case-actions.js`, `intake.js`, `labels.js`, `panel.js` and `queue.js` hold the rest.
+
+*A nurse can file a real case.* The new-case panel has two modes. "Real case" shows
+the same fields as the re-file form, and none of them is free text. The nurse picks
+the chief complaint from a list, picks the proposed ESI level from a list, and types
+the vitals as numbers. The form sends exactly those values. A blank field is left out of the payload, so the case takes
+the normal missing-fields route. `POST /api/submit` takes either `fields` or
+`submission_type`, never both and never neither, and refuses unknown field names or
+values outside their allowed range with a 422. `free_text` is no longer a required
+field (`app/guards/fields.py`): the model never reads it, and the real-case form has
+no prose box. The injection demo scenario and the free-text injection detector
+were removed on 2026-10-01: with no prose field there is nothing for them to scan.
+"Demo case scenarios" keeps the fixed payloads, and `GET /api/demo-cases` returns each
+one so the form can show exactly what will be sent before the nurse submits.
+
+*Trace-violation demo.* A sixth demo scenario runs a clean case, then plants fake
+records in its audit log that skip every guard, so the post-run trace check has
+something to catch. The nurse picks which rule to break: no bypass, single treatment
+start, correct then revalidate, bounded correction loop, audit record structure, or
+nothing changes after close. Each planted sequence breaks that one rule and no other
+(`board/board/mock_cases.py::TRACE_VIOLATIONS`). `runner.plant_audit_records` writes
+them as if from `monitoring`, so the case stays paused where it was and still answers
+a real move. Planted records are marked `planted_by_demo`, show in the case panel's
+red alert, and stay out of the notification strip.
+
+*Patients come from the CRM.* The National ID box is now a dropdown filled from
+`GET /api/patients`, backed by a new `GET /patients` on the CRM stub. `/api/submit`
+refuses a national ID the CRM doesn't know (422, "patient not registered in the
+CRM"). If the CRM is down, the submit still goes through, because that's an outage and
+not an unknown patient. The lookup reply is masked: initials for the name, the last
+four digits of the national ID, and an age band in place of the birth date. Known
+conditions and prior visits are shown in full, since the nurse needs them.
+
+*Notifications can be dismissed.* Each notification has a ✕ button. The dismissal is
+stored in the browser (`localStorage`) and never reaches the server, so another
+nurse's screen still shows it. Clicking ✕ does not open the case panel behind it.
+
+*Smaller fixes.* The board sends `cache-control: no-cache` for the page and its
+scripts, after a cached script paired with fresh HTML left the new-case form without
+its fields. A released card no longer shows a reminder chip. The moves section in the
+case panel stacks its buttons in rows, with release and its reason on a separate row.
+
+Collected tests (not re-run for this entry): board 143, triage-app 556 (plus 1
+deselected), crm-stub 20.
 
 **Previous:** 2026-09-25 (Langfuse traces now carry case, patient and outcome, and
 the "Triage Guard" dashboard is seeded; treatment-move execution machine marked dropped,
@@ -62,16 +201,18 @@ case's audit log and reports any break of I5 (no bypass), I6 (single treatment s
 I7 (correct, then revalidate), I8 (bounded correction loop), I18 (audit record
 structure) or I20 (nothing changes after close), naming the exact record. It only
 reports; the demo run prints it as `trace_safety`. Every open case view runs it now
-too, not only the demo run: intake-channel's submit and resume responses and the
-board's case detail panel all carry `trace_safety` and `trace_violations` on every
-fetch, and both pages show a red banner naming each violation when one turns up.
+too, not only the demo run: the submit and resume responses and the board's case
+detail panel all carry `trace_safety` and `trace_violations` on every fetch, and the
+panel shows a red banner naming each violation when one turns up. The
+trace-violation demo scenario on the board plants records that break one chosen rule,
+to show the check firing.
 
 **The waiting-room monitor is built.** `docs/plans/2026-09-15-waiting-room-service-design.md`
 is now implemented, not just agreed: durable per-case timers, the sweeper that fires
 them, and the failure/reconciliation model it was designed around
 (`triage-app/app/monitor/`). It runs as its own process (`uv run sweeper`), separate
 from any one `triage-guard` run or the other services. The VS Code "All services"
-launch starts it (`.vscode/launch.json`); run separately, a case that reaches
+launch starts it (`.env`); run separately, a case that reaches
 `monitoring` with no sweeper running schedules a reassessment timer that never fires.
 A dead sweeper shows as "monitor degraded" on the board (heartbeat, `board/api.py`).
 
@@ -81,7 +222,7 @@ A dead sweeper shows as "monitor degraded" on the board (heartbeat, `board/api.p
       commits and starts a reminder timer, then a new pause node
       (`awaiting_reassessment_submission`, `triage-app/app/graph/nodes/reassessment.py`)
       genuinely freezes the case until a nurse submits fresh vitals and a chief
-      complaint. `POST /reassess/{case_id}` (`intake-channel/channel/api.py`) answers
+      complaint. `POST /api/case/{case_id}/reassess` (`board/board/intake.py`) answers
       it; the board's case panel has a form that calls it directly. `REASSESSMENT
       REQUIRED` on the board now actually populates (`clinical_status` is written on
       entry, which it wasn't before) and a case parked there for 15 minutes with no
@@ -108,8 +249,11 @@ A dead sweeper shows as "monitor degraded" on the board (heartbeat, `board/api.p
 
 ## What's left (scan 2026-09-24)
 
-Every test suite is green: triage-app 453 (plus 1 deselected), board 50, intake-channel
-48, crm-stub 18. The two tests that used to fail while the CRM stub was running now
+Every test suite was green at the last full run: triage-app 554 (plus 1 deselected),
+board 116 (1 skipped), crm-stub 18. Today's commits raised the collected counts to 556,
+143 and 20. `intake-channel` no longer exists as its own service — it was merged into
+the board on 2026-09-27; see the entry at the top of this file. The two tests that used
+to fail while the CRM stub was running now
 force the outage themselves with `monkeypatch`, so nothing depends on a service being
 absent. The suite does need the Postgres container up (`db/docker-compose.yml`), SWI-
 Prolog installed, and the `opa` binary on PATH — on Windows that is
@@ -309,7 +453,7 @@ scope here. Two new board endpoints (`POST /api/case/{case_id}/move-to-treatment
 — rather than writing case state directly; the in-graph guards
 `move_authorized` / `release_authorized` (`app/deterministic.py`) do the actual
 authorization check, and a refusal is a normal 200 response
-(`status: "denied"`), not an HTTP error. `board.js` gained two new buttons
+(`status: "denied"`), not an HTTP error. The board UI (`case-actions.js`) gained two new buttons
 ("Start treatment", "Release patient") in the case detail panel. Full
 design/build notes, scope cuts, and the post-implementation review rounds:
 `docs/superpowers/plans/2026-09-17-treatment-move-and-release/`.

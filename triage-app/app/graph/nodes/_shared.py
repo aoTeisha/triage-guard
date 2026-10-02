@@ -6,7 +6,7 @@ from typing import Any
 
 from app import crm_client
 from app.budgets import CRM_WRITEBACK_RETRY_MINUTES
-from app.deterministic import audit, audit_denial, now_iso, release_authorized
+from app.deterministic import SHIFT_LEAD_STANDS_IN, audit, audit_denial, now_iso, release_authorized
 from app.events import Event
 from app.graph.state import TriageState
 from app.guards import is_esi_level
@@ -59,13 +59,18 @@ def release_case(state: TriageState, answer: dict[str, Any], at: State) -> dict[
         writeback = audit(state.case_id, State.CASE_CLOSED, "crm_writeback_deferred",
                           f"CRM unreachable; the visit will be retried every "
                           f"{CRM_WRITEBACK_RETRY_MINUTES} min until it lands")
+    # OPA could not answer and a shift lead signed instead: say so, and mark the
+    # case as having run without it.
+    stood_in = why.startswith(SHIFT_LEAD_STANDS_IN)
     return {
         "actor_role": actor_role,
         "control_state": State.CASE_CLOSED.value,
         "clinical_status": ClinicalStatus.PATIENT_RELEASED.value,
         "released_at": released_at,
         "release_reason": reason,
+        "degraded": ["opa_signoff"] if stood_in else [],
         "audit_log": [writeback,
                       audit(state.case_id, State.CASE_CLOSED, "sign_release",
-                            f"release signed: {reason}", Transition.RELEASE)],
+                            f"release signed: {reason}" + (f" ({why})" if stood_in else ""),
+                            Transition.RELEASE, engines=[] if stood_in else ["OPA"])],
     }

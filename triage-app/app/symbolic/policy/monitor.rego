@@ -44,16 +44,21 @@ deny_reasons contains "notification_budget_exhausted" if {
 # --- move: waiting room -> treatment ----------------------------------------
 move_roles := {"nurse", "charge_nurse", "shift_lead"}
 
+# A pass, or a shift lead's clearance while the safety check could not run.
+safety_settled if input.case.safety_passed == true
+
+safety_settled if input.case.safety_waived == true
+
 allow if {
 	input.action == "move"
-	input.case.safety_passed == true
+	safety_settled
 	input.case.approved == true
 	input.actor_role in move_roles
 }
 
 deny_reasons contains "move refused: safety not passed" if {
 	input.action == "move"
-	input.case.safety_passed != true
+	not safety_settled
 }
 
 deny_reasons contains "move refused: not approved" if {

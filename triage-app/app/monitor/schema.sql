@@ -83,3 +83,10 @@ CREATE TABLE IF NOT EXISTS escalations (
 -- refresh; without these each read is a sequential scan.
 CREATE INDEX IF NOT EXISTS notifications_sent_at ON notifications (sent_at DESC);
 CREATE INDEX IF NOT EXISTS escalations_raised_at ON escalations (raised_at DESC);
+
+-- The outage switch (`app/outages.py`): a component listed here is treated as
+-- down by every process until its row is deleted. Read only when DEMO_OUTAGES=1.
+CREATE TABLE IF NOT EXISTS component_outages (
+  component  TEXT PRIMARY KEY,
+  since      TIMESTAMPTZ NOT NULL DEFAULT now()
+);

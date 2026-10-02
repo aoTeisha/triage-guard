@@ -12,6 +12,7 @@ import pytest
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command
 
+from app import runner
 from app.graph import build_graph
 from app.labels import Transition
 from app.runner import hydrate
@@ -75,11 +76,14 @@ def test_a_resolved_gate_re_runs_safety_before_the_queue(graph, run):
     assert resumed["safety_passed"] is True
 
 
-def test_the_pause_survives_a_rebuilt_graph():
+def test_the_pause_survives_a_rebuilt_graph(monkeypatch):
     """The real test of durability: throw the graph object away between the pause
     and the resume, as a restarted process would.
     """
     dsn = _throwaway_db()
+    # The duplicate-case check reads `runner.DSN`, fixed at import to the real
+    # store — without this, an open demo case for the same patient rejects the run.
+    monkeypatch.setattr(runner, "DSN", dsn)
     cfg = {"configurable": {"thread_id": "case-gap"}}
     try:
         with PostgresSaver.from_conn_string(dsn) as saver_a:
@@ -178,6 +182,23 @@ def test_escalate_further_hands_the_case_to_a_shift_lead_at_once(graph, run, mon
         "SELECT COUNT(*) FROM timers WHERE case_id=%s AND kind='senior_reminder'",
         (DEMO_CASES["clean"]["case_id"],),
     ).fetchone()[0] == 1
+
+
+def test_the_re_pause_after_escalation_asks_for_a_shift_lead(graph, run, monkeypatch):
+    """The interrupt payload itself must say who can now answer it — a stale
+    'charge_nurse' here is what fed a stale UI chip/dropdown after escalation."""
+    from app.mock_cases import DEMO_CASES
+    from app.runner import pending
+
+    _failing_safety(monkeypatch)
+    _, _, thread = run(DEMO_CASES["clean"])
+
+    cfg = {"configurable": {"thread_id": thread}}
+    result = graph.invoke(
+        Command(resume={"decision": "escalate_further", "resolver_role": "charge_nurse"}), cfg
+    )
+
+    assert pending(result)["required_role"] == "shift_lead"
 
 
 def test_the_senior_reminder_goes_to_a_shift_lead(graph, run, monkeypatch, conn):

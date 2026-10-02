@@ -37,25 +37,28 @@ _saver_cm = None  # kept alive for the process's lifetime; see `graph()` below.
 
 
 class CaseClosedError(RuntimeError):
-    """Raised by `start_case` when `thread_id` already belongs to a closed
-    case (I20) — resubmitting that case_id would re-enter its LangGraph
-    thread from START and mutate fields that are supposed to be final.
+    """Raised by `start_case` when `thread_id` already belongs to a closed case
+    — a closed case's fields (acuity, clinical status, control state) never
+    change again, and resubmitting that case_id would re-enter its LangGraph
+    thread from START and mutate them anyway.
     """
 
 
 class CaseLockTimeout(RuntimeError):
     """Raised by `case_lock` when another writer still holds the case's lock
-    past `timeout_seconds` (I22) — refuse rather than let two writers
-    interleave against the same LangGraph thread.
+    past `timeout_seconds` — no two staff actions may mutate the same case at
+    the same time, so this refuses rather than let two writers interleave
+    against the same LangGraph thread.
     """
 
 
 @contextmanager
 def case_lock(case_id: str, timeout_seconds: float = 5.0):
-    """Postgres advisory lock keyed by `case_id` (I22): serializes concurrent
-    staff actions against the same case across every process that can write
-    one — `intake-channel` (via `start_case`/`resume_case`) and `board` (via
-    its own resume endpoints).
+    """Postgres advisory lock keyed by `case_id`: serializes concurrent staff
+    actions against the same case — no two may mutate it at the same time —
+    across every process that can write one: the board (via
+    `board.commands.answer_pause` and, for case creation, `start_case`) and the
+    offline CLI (via `start_case`/`resume_case`).
 
     `DSN` is read here, not captured at import — tests monkeypatch
     `runner.DSN` directly (see `tests/conftest.py`'s `checkpoint_db`
@@ -66,7 +69,7 @@ def case_lock(case_id: str, timeout_seconds: float = 5.0):
     `pg_advisory_lock`: a stuck holder must time out into a clear refusal,
     not hang the caller indefinitely.
 
-    # ponytail: 50ms poll, busy-loop. Fine for a ward's request volume;
+    # 50ms poll, busy-loop. Fine for a ward's request volume;
     # LISTEN/NOTIFY or a condition variable if contention ever shows up in
     # a profile.
     """
@@ -140,8 +143,13 @@ def hydrate(result: Any) -> dict[str, Any]:
     return TriageState.model_validate(values).model_dump()
 
 
-def _pending(result: dict[str, Any]) -> dict[str, Any] | None:
-    """The interrupt payload if the run paused, else None."""
+def pending(result: dict[str, Any]) -> dict[str, Any] | None:
+    """The interrupt payload if the run paused, else None.
+
+    Public because `board.commands.answer_pause` needs it to build a case view
+    for a run it invoked itself, and reaching across modules for a private name
+    is worse than a rename with two call sites.
+    """
     interrupts = result.get("__interrupt__") if isinstance(result, dict) else None
     if not interrupts:
         return None
@@ -159,8 +167,9 @@ def start_case(
     repeated runs of the same fixture do not accumulate onto one another's
     checkpointed audit trail.
 
-    Also takes a lock keyed by whichever id the submission carries (I19), held
-    for the whole invoke — not just `resolving_identity`'s own duplicate-case check.
+    Also takes a lock keyed by whichever id the submission carries — a patient
+    with an active case cannot get a second one opened via intake — held for
+    the whole invoke, not just `resolving_identity`'s own duplicate-case check.
     `all_case_summaries` only sees a case once its first checkpoint has
     committed, so two `start_case` calls for the same patient, neither of
     which has written a checkpoint yet, would otherwise both pass the check
@@ -172,7 +181,8 @@ def start_case(
     thread = thread_id or case["case_id"]
     # A first submission carries the national id and no internal one yet, so the
     # lock takes whichever is present. Both identify the same patient, and the key
-    # is a transient lock name — it is never stored on the case (I11).
+    # is a transient lock name — it is never stored on the case; patient
+    # identifiers live only in the CRM.
     patient_key = case.get("national_id") or case.get("stable_patient_id")
     with ExitStack() as stack:
         if patient_key:
@@ -191,7 +201,7 @@ def start_case(
                 config_for(thread),
             )
             record_outcome(span, existing, result)
-    return hydrate(result), _pending(result)
+    return hydrate(result), pending(result)
 
 
 def resume_case(
@@ -203,7 +213,22 @@ def resume_case(
         with case_trace(case_id, "case-resume", before) as span:
             result = graph().invoke(Command(resume=decision), config_for(case_id))
             record_outcome(span, before, result)
-    return hydrate(result), _pending(result)
+    return hydrate(result), pending(result)
+
+
+def plant_audit_records(case_id: str, records: list[dict[str, Any]]) -> None:
+    """Append records to a case's audit log without running any node — demo only.
+
+    This deliberately skips every guard, so the after-run trace check has
+    something to catch. Only for a case paused at `awaiting_reassessment`,
+    where a clean case always ends. The write is attributed to `monitoring`,
+    whose plain edge leads back into that same pause, so the case stays paused
+    where it was. Attributing it to the paused node would instead advance the
+    case to its next step.
+    """
+    with case_lock(case_id):
+        graph().update_state(config_for(case_id), {"audit_log": records},
+                             as_node=State.MONITORING.value)
 
 
 def snapshot(case_id: str) -> dict[str, Any]:
@@ -262,7 +287,7 @@ def all_case_summaries(exclude_case_id: str | None = None) -> list[dict[str, Any
     """One row per case ever started, as `{case_id, control_state,
     stable_patient_id}`. Backs the I19 duplicate-active-case check.
 
-    # ponytail: one graph.get_state() per case — same trade-off
+    # one graph.get_state() per case — same trade-off
     # board/repo.py's CheckpointRepo already makes for a board refresh. Fine
     # at current volume; past a few hundred cases, write a `cases` summary
     # row (case_id, control_state, stable_patient_id) alongside each

@@ -2,8 +2,8 @@
 
 Two shapes live here, and nothing else:
 
-    case_view(state, pending)   the detail view — was `channel/api.py::_view`,
-                                now shared by intake-channel and the board
+    case_view(state, pending)   the detail view, shared by every board endpoint
+                                that answers a pause or creates a case
     CaseCard / card_from_state  the board's card DTO, a strict subset
 
 Both are *projections*: they read `TriageState` and return plain data. Neither
@@ -75,13 +75,18 @@ def case_view(state: dict[str, Any], pending: dict[str, Any] | None) -> dict[str
         "acuity_gap": state.get("acuity_gap"),
         "safety_passed": state.get("safety_passed"),
         # The validator's reasons, verbatim: a charge nurse answering a safety
-        # failure has to know what to correct (I7), not only that it failed.
+        # failure has to know what to correct before the case can pass safety
+        # again, not only that it failed.
         "safety_reasons": list(getattr(state.get("safety_verdict"), "reasons", None)
                                or (state.get("safety_verdict") or {}).get("reasons", [])
                                if state.get("safety_verdict") else []),
+        "senior_required": state.get("senior_required", False),
         "approved": state.get("approved"),
         "release_reason": state.get("release_reason"),
-        "degraded": state.get("degraded", []),
+        "degraded": list(dict.fromkeys(state.get("degraded") or [])),
+        # Safety engines that could not answer at the latest check, for the
+        # validator-down gate to name.
+        "validator_down": state.get("validator_down", []),
         "flags": state.get("flags", []),
         "gate": pending,
         "audit_log": state.get("audit_log", []),
@@ -114,6 +119,11 @@ class CaseCard(BaseModel):
     flags: list[str] = []
     degraded: list[str] = []
     gate_pending: bool = False
+    # True once the correction loop has escalated: the gate now needs a
+    # shift lead, not a charge nurse.
+    senior_required: bool = False
+    # Why the gate is open (only while it is): the board words who must answer from it.
+    gate_reason: Optional[str] = None
 
 
 def waited_minutes(arrival_time: str | None, now: datetime | None = None) -> int:
@@ -188,8 +198,10 @@ def card_from_state(
         waited_min=waited_minutes(wait_basis, now),
         order_key=tuple(order_key) if order_key else None,
         flags=list(state.get("flags") or []),
-        degraded=list(state.get("degraded") or []),
+        degraded=list(dict.fromkeys(state.get("degraded") or [])),
         gate_pending=at_gate or control_state == State.AWAITING_HUMAN_APPROVAL.value,
+        senior_required=bool(state.get("senior_required")),
+        gate_reason=state.get("escalation_reason") if at_gate or control_state == State.AWAITING_HUMAN_APPROVAL.value else None,
     )
 
 

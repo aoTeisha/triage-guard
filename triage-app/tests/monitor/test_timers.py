@@ -141,12 +141,26 @@ def test_record_notification_persists_and_dedupes_by_case_and_reason(conn):
 
 def test_notification_count_in_window_counts_recent_sends(conn):
     timers.record_notification(conn, case_id="c1", reason="r1", channel="strip", recipient_class="charge_nurse")
-    timers.record_notification(conn, case_id="c2", reason="r2", channel="strip", recipient_class="charge_nurse")
-    timers.record_notification(conn, case_id="c3", reason="r3", channel="strip", recipient_class="technician")
+    timers.record_notification(conn, case_id="c1", reason="r2", channel="strip", recipient_class="charge_nurse")
+    timers.record_notification(conn, case_id="c1", reason="r3", channel="strip", recipient_class="technician")
 
-    assert timers.notification_count_in_window(conn, recipient_class="charge_nurse", window_minutes=60) == 2
-    assert timers.notification_count_in_window(conn, recipient_class="technician", window_minutes=60) == 1
-    assert timers.notification_count_in_window(conn, recipient_class="charge_nurse", window_minutes=0) == 0
+    assert timers.notification_count_in_window(
+        conn, case_id="c1", recipient_class="charge_nurse", window_minutes=60) == 2
+    assert timers.notification_count_in_window(
+        conn, case_id="c1", recipient_class="technician", window_minutes=60) == 1
+    assert timers.notification_count_in_window(
+        conn, case_id="c1", recipient_class="charge_nurse", window_minutes=0) == 0
+
+
+def test_notification_count_in_window_scoped_per_case(conn):
+    # One case's reminders don't spend another case's budget.
+    timers.record_notification(conn, case_id="c1", reason="r1", channel="strip", recipient_class="charge_nurse")
+    timers.record_notification(conn, case_id="c2", reason="r2", channel="strip", recipient_class="charge_nurse")
+
+    assert timers.notification_count_in_window(
+        conn, case_id="c1", recipient_class="charge_nurse", window_minutes=60) == 1
+    assert timers.notification_count_in_window(
+        conn, case_id="c2", recipient_class="charge_nurse", window_minutes=60) == 1
 
 
 def test_heartbeat_status_degraded_when_no_worker_has_ever_beaten(conn):

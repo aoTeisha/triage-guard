@@ -14,3 +14,7 @@ output/
 
 # Git worktrees used for isolated plan execution
 .worktrees/
+
+# Planning docs (local only)
+docs/plans/
+docs/superpowers/

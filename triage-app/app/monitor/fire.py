@@ -83,7 +83,8 @@ def _context(conn, timer: dict[str, Any], *, graph) -> dict[str, Any]:
         # `control_state` still shows the previous node.
         "pause_active": pause is not None and pause in snapshot.next,
         "notify_count": timers.notification_count_in_window(
-            conn, recipient_class=recipient, window_minutes=NOTIFICATION_WINDOW_MINUTES),
+            conn, case_id=timer["case_id"], recipient_class=recipient,
+            window_minutes=NOTIFICATION_WINDOW_MINUTES),
         "notify_budget": NOTIFICATION_BUDGET_PER_WINDOW,
         "recipient_class": recipient,
     }
@@ -247,8 +248,13 @@ def writeback(conn, timer: dict[str, Any], *, graph) -> str:
                          "case": {"control_state": snapshot.get("control_state"),
                                   "stable_patient_id": snapshot.get("stable_patient_id")}})
     if not gate["allow"]:
-        timers.set_state(conn, timer["timer_id"], "CANCELLED",
-                         last_error="opa denied writeback: " + "; ".join(gate["deny_reasons"]))
+        why = "; ".join(gate["deny_reasons"])
+        if all(r.startswith("engine_unavailable:opa") for r in gate["deny_reasons"]):
+            # OPA could not answer, which says nothing about this visit: retry it
+            # like a CRM outage. Cancelling would lose the visit for good.
+            timers.set_state(conn, timer["timer_id"], "FAILED", last_error="opa unavailable: " + why)
+            return "FAILED"
+        timers.set_state(conn, timer["timer_id"], "CANCELLED", last_error="opa denied writeback: " + why)
         return "CANCELLED"
     outcome = crm_client.patch_patient(snapshot["stable_patient_id"],
                                        {"new_visit": crm_client.visit_record(snapshot)})

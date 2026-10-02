@@ -36,6 +36,7 @@ def safety_validating(state: TriageState) -> dict[str, Any]:
     passed = checked.verdict == "pass"
     return {
         "control_state": State.SAFETY_VALIDATING.value,
+        "validator_down": [],
         "safety_verdict": checked.model_dump(),
         "safety_passed": passed,
         "escalation_reason": None if passed else human_bridge.SAFETY_FAIL,
@@ -43,7 +44,7 @@ def safety_validating(state: TriageState) -> dict[str, Any]:
                             "emit_event_log" if passed else "invoke_human_escalation",
                             "safety passed" if passed else "safety failed, human decides",
                             Transition.SAFETY_PASSED if passed else Transition.SAFETY_FAILED,
-                            reasons=checked.reasons)],
+                            reasons=checked.reasons, engines=["Prolog", "Datalog"])],
     }
 
 
@@ -51,13 +52,16 @@ def safety_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
     """AF_SAFETY / V_EXHAUSTED_SAFETY — validator down or unusable.
 
     Deliberately not a halt: route every case to a charge nurse so the
-    no-approval-bypass invariant still holds while the validator is out.
+    no-approval-bypass invariant still holds while the validator is out. The
+    nurse asks for the check again rather than correcting anything, since the
+    input did not cause this. `degraded` names the engine that could not answer
+    when it is known.
     """
     return {
         "control_state": State.SAFETY_VALIDATING.value,
         "safety_passed": False,
-        "escalation_reason": human_bridge.SAFETY_FAIL,
-        "degraded": ["safety_validation"],
+        "escalation_reason": human_bridge.VALIDATOR_DOWN,
+        "degraded": list(state.validator_down) or ["safety_validation"],
         "flags": ["safety_validator_down_all_to_charge"],
         "audit_log": [audit(state.case_id, State.SAFETY_VALIDATING,
                             "invoke_human_escalation",

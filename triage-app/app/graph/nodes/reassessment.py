@@ -37,7 +37,7 @@ def reassessment_required(state: TriageState) -> dict[str, Any]:
     """
     waits = state.refile_waits + 1
     due_at = timers.due_in(REASSESSMENT_REMINDER_DELAY_MINUTES)
-    # ponytail: one rung, straight to the charge nurse, where the approval gate
+    # one rung, straight to the charge nurse, where the approval gate
     # has a two-step ladder. Add a second rung if reminders go unanswered in
     # practice — the recipient lookup in `fire.notify` is where it would go.
     timers.schedule(timers.connection(), case_id=state.case_id,
@@ -56,11 +56,11 @@ def reassessment_required(state: TriageState) -> dict[str, Any]:
 
 def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
     """The re-filing pause: freezes until a nurse submits fresh clinical
-    observations (`POST /reassess/{case_id}` in intake-channel).
+    observations (`POST /api/case/{case_id}/reassess` on the board).
 
     Only the fields a nurse can actually change get overwritten. Everything
     else in `raw_payload` is carried over, and that is load-bearing rather
-    than tidiness: `free_text` and `case_id` are in `REQUIRED_FIELDS` and are
+    than tidiness: `case_id` is in `REQUIRED_FIELDS` and, like `free_text`, is
     only ever supplied by the original submission, so building a payload from
     scratch here would send every re-file to `missing_fields_requested` and
     end the run for a patient who is physically still in the waiting room.
@@ -71,8 +71,9 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
 
     fresh_payload = {
         **state.raw_payload,
-        # Identity is settled; the national id is long gone (I11). Carrying the
-        # internal id lets the front door see an identified patient.
+        # Identity is settled; the national id is long gone — patient identifiers
+        # live only in the CRM. Carrying the internal id lets the front door see
+        # an identified patient.
         "stable_patient_id": state.stable_patient_id,
         "nurse_proposed_acuity": submitted.get("nurse_proposed_acuity"),
         "chief_complaint": submitted.get("chief_complaint"),
@@ -84,7 +85,9 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
         "raw_payload": fresh_payload,
         # A re-file starts a new triage. Values from the last one must not count:
         # a stale `acuity` skipped the gate on a big gap, and a stale `approved`
-        # would let a move through (I4, I5). `order_key` is kept on purpose (I2).
+        # would let the case bypass safety validation in its new triage.
+        # `order_key` is kept on purpose — it changes only when acuity changes,
+        # not on every re-file.
         "acuity": None,
         "acuity_source": None,
         "human_decision": None,
@@ -94,6 +97,13 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
         "approved": False,
         "correction_rounds": 0,
         "senior_required": False,
+        # The last triage's payload and outage marks: a payload left here would
+        # route this triage past a failed privacy check.
+        "redacted_payload": {},
+        "payload_unverified": False,
+        "gate_disabled": False,
+        "validator_down": [],
+        "safety_waived": False,
         # Until the new acuity settles, the case queues by the nurse's new value,
         # as on first intake. Their acuity really changed, so I2 allows it.
         "order_key": assign_order_key(submitted.get("nurse_proposed_acuity"), state.arrival_time)

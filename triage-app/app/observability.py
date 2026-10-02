@@ -188,7 +188,7 @@ def case_trace(case_id: str, operation: str, values: dict[str, Any]):
 
     Everything the LangGraph handler records inside it inherits the session,
     patient, tags and metadata, so the trace table shows `case-start`,
-    `case-resume`, `timer-fire` or `board-action` instead of `LangGraph`.
+    `case-resume` or `timer-fire` instead of `LangGraph`.
     """
     if not tracing_enabled():
         yield _NullSpan()
@@ -268,9 +268,9 @@ class _NullSpan:
 
 
 def flush() -> None:
-    """For one-shot scripts only. Long-running services (board, intake-channel,
-    sweeper) don't call it: the SDK exports in the background every second or
-    so, and flushes on normal process exit.
+    """For one-shot scripts only. Long-running services (board, sweeper) don't
+    call it: the SDK exports in the background every second or so, and
+    flushes on normal process exit.
     """
     if tracing_enabled():
         try:

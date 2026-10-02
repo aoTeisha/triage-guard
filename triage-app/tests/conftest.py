@@ -206,3 +206,16 @@ def checkpoint_db(monkeypatch):
 def transitions(state: dict[str, Any]) -> list[str]:
     """Transition labels from a run's audit trail, in order."""
     return [r["transition"] for r in state.get("audit_log", []) if r.get("transition")]
+
+
+@pytest.fixture
+def outage_switch(conn, monkeypatch):
+    """The outage switch enabled (`app.outages`), every flag cleared before and after."""
+    from app import outages
+
+    monkeypatch.setenv("DEMO_OUTAGES", "1")
+    for component in outages.COMPONENTS:
+        outages.set_down(component, False)
+    yield outages
+    for component in outages.COMPONENTS:
+        outages.set_down(component, False)
