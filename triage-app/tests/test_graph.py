@@ -174,3 +174,29 @@ def test_a_mistyped_acuity_is_fixable_in_place(graph, run):
     assert result["raw_payload"]["nurse_proposed_acuity"] == 2
     assert result["arrival_time"] == first["arrival_time"]
     assert tuple(result["order_key"])[0] == 2
+
+
+def test_a_mistyped_vital_is_fixable_in_place(graph, run):
+    """A vital the privacy policy would refuse ("ninety", an unknown sign) used
+    to reach it and halt the case. Now it waits at the intake fix pause like a
+    mistyped acuity, and the nurse's corrected vitals replace it.
+    """
+    from langgraph.types import Command
+
+    from app.runner import config_for, hydrate
+
+    first, pending, thread = run({**DEMO_CASES["clean"],
+                                  "vitals": {"hr": "ninety", "pain_score": 7}})
+
+    assert pending["intake_fix_pending"] is True
+    assert first["missing_fields"] == ["vitals"]
+    assert first["control_state"] != State.AGENT_FAILED.value
+    assert not first.get("redacted_payload")
+
+    fixed = {"hr": 90, "bp": "120/80", "spo2": 98, "temp_c": 36.8}
+    result = hydrate(graph.invoke(Command(resume={"vitals": fixed}), config_for(thread)))
+
+    assert result["raw_payload"]["vitals"] == fixed
+    assert result["redacted_payload"]["vitals"] == fixed
+    assert result["arrival_time"] == first["arrival_time"]
+    assert result["control_state"] == State.MONITORING.value

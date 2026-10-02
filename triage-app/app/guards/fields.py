@@ -6,6 +6,8 @@ an unusable one is reported unusable. Both go back to the nurse.
 
 from __future__ import annotations
 
+import math
+import re
 from typing import Any
 
 # The mandatory webform fields (SPECIFICATION.md § Context / State variables).
@@ -77,13 +79,47 @@ CHIEF_COMPLAINTS = (
 )
 
 
+# The vital signs the model may see, and the shape of each: numbers, and blood
+# pressure as "120/80". Kept in sync by hand with `vital_fields` and `bp_pattern`
+# in app/symbolic/policy/privacy.rego; tests/symbolic/test_opa_privacy.py catches drift.
+VITAL_FIELDS = ("hr", "rr", "bp", "spo2", "temp_c")
+BP_PATTERN = r"^[0-9]{2,3}/[0-9]{2,3}$"
+
+
+def _is_number(value: Any) -> bool:
+    # bool is not a reading, though Python counts it an int.
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def vitals_usable(vitals: Any) -> bool:
+    """The vitals have the shape the privacy policy allows: only the named signs,
+    each a number or blood pressure as "120/80". `None` is an absent reading, as
+    it is to the policy. `fullmatch`, not `match`: Python's `$` also matches before
+    a trailing newline, and RE2's does not.
+    """
+    if not isinstance(vitals, dict):
+        return False
+    for key, value in vitals.items():
+        if key not in VITAL_FIELDS:
+            return False
+        if value is None:
+            continue
+        if key == "bp":
+            if not (isinstance(value, str) and re.fullmatch(BP_PATTERN, value)):
+                return False
+        elif not _is_number(value):
+            return False
+    return True
+
+
 def unusable_fields(payload: dict) -> list[str]:
     """Present fields whose value the case cannot proceed on.
 
     Acuity, because `order_key` is built from it: an acuity of 0 or 7 would file
-    the patient at a level that does not exist (I1, I4). The complaint, because
-    the model may only see a code from the fixed set (I12) — free text typed here
-    would otherwise be refused three nodes later, by the privacy policy.
+    the patient at a level that does not exist (I1, I4). The complaint and the
+    vitals, because the model may only see a code from the fixed set and numbers
+    (I12) — anything else typed there would otherwise be refused three nodes
+    later, by the privacy policy, and halt the case.
     """
     unusable = []
     acuity = payload.get("nurse_proposed_acuity")
@@ -92,6 +128,9 @@ def unusable_fields(payload: dict) -> list[str]:
     complaint = payload.get("chief_complaint")
     if complaint is not None and complaint not in CHIEF_COMPLAINTS:
         unusable.append("chief_complaint")
+    vitals = payload.get("vitals")
+    if vitals is not None and not vitals_usable(vitals):
+        unusable.append("vitals")
     return unusable
 
 

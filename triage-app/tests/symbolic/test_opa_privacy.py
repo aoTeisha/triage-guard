@@ -13,8 +13,10 @@ import subprocess
 import pytest
 
 from app import esi
+from app.actors.normalizer import LABEL_PATTERN
 from app.deterministic import verify_no_identifiers
-from app.guards import CHIEF_COMPLAINTS
+from app.guards import CHIEF_COMPLAINTS, VITAL_FIELDS
+from app.guards.fields import BP_PATTERN
 from app.symbolic import opa
 
 CLEAN = {
@@ -156,13 +158,18 @@ def test_a_missing_engine_is_never_a_pass(monkeypatch):
 # ---- one vocabulary, not two --------------------------------------------------------
 
 
-def _rego_set(name: str) -> set[str]:
+def _rego_value(name: str):
     completed = subprocess.run(
-        [os.environ.get("OPA_BIN", "opa"), "eval", "-d", str(opa.PRIVACY_POLICY), "--format=raw",
+        [os.environ.get("OPA_BIN", "opa"), "eval", "-d", str(opa.PRIVACY_POLICY), "--format=json",
          f"data.triage.privacy.{name}"],
         capture_output=True, text=True, timeout=5, check=True,
     )
-    return set(json.loads(completed.stdout))
+    # json, not raw: raw prints a string unquoted, which is not JSON.
+    return json.loads(completed.stdout)["result"][0]["expressions"][0]["value"]
+
+
+def _rego_set(name: str) -> set[str]:
+    return set(_rego_value(name))
 
 
 def test_the_complaint_codes_match_python():
@@ -173,3 +180,15 @@ def test_the_complaint_codes_match_python():
 
 def test_the_age_bands_match_python():
     assert _rego_set("age_bands") == set(esi.AGE_BANDS)
+
+
+def test_the_vital_signs_match_python():
+    """`unusable_fields` sends a vital back to the nurse by the same rules the
+    policy refuses it by; two sets that drift would halt a case at the policy."""
+    assert _rego_set("vital_fields") == set(VITAL_FIELDS)
+    assert _rego_value("bp_pattern") == BP_PATTERN
+
+
+def test_the_condition_label_pattern_matches_python():
+    """`model_history` drops the labels this pattern refuses, before the policy sees them."""
+    assert _rego_value("label_pattern") == LABEL_PATTERN

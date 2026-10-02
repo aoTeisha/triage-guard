@@ -2,9 +2,11 @@
 
 **Last updated:** 2026-10-02 (safety rules 2 and 3 now fire in a running case; agreement
 and the classifier-down settle got their own `acuity_source`; Datalog left safety
-validation. Previous entry below.)
+validation. Bad vitals go back to the nurse, and a CRM condition label the privacy
+policy would refuse is left out of the model's view, instead of either halting the case
+at the privacy check. Previous entry below.)
 
-**2026-10-02.** No commits yet (working tree only).
+**2026-10-02.**
 
 *Safety rules 2 and 3 never fired in a running case.* The graph holds `acuity_source`
 as an `AcuitySource` enum, and the Prolog bridge quoted it with `str()`, which gives
@@ -55,6 +57,26 @@ exception the runner commits alive for the runner's lifetime, so no id can be re
 while it is looked up; `tests/test_langgraph_fixes.py` checks that guarantee. Over
 300 stressed runs the pause was lost 0 times with the fix, against about 8% without.
 Remove the module once LangGraph tracks handled exceptions by object.
+
+*Bad values inside approved fields no longer halt the case.* The payload builder only
+copies approved field names, but the values inside them were not cleaned, so OPA
+refused three kinds of value as STRUCTURAL and the case halted with no retry: an
+unknown vital key (`vitals.pain_score`), a vital given as text (`hr: "ninety"`), and a
+CRM condition label that is not a short label (`"type 2 diabetes, on metformin"`). Now:
+
+- *Vitals, from the nurse,* are checked at intake like the complaint:
+  `unusable_fields` (`app/guards/fields.py`) marks `vitals` unusable when it is not a
+  dict, names a sign outside `hr, rr, bp, spo2, temp_c`, or holds a value that is not a
+  number (`bp` must read like `120/80`; `None` is an absent reading). The case waits at
+  the intake fix pause for corrected vitals, and `/submit`, `/fields` and `/reassess`
+  refuse them with a 422, as they already did a bad acuity or complaint.
+- *Condition labels, from the CRM,* that do not match the policy's `label_pattern`
+  (after lowercasing) are dropped by `model_history`, the same way malformed prior
+  visits already were. The label stays in the CRM for humans. Every seeded condition
+  still passes (`tests/test_identifiers.py`).
+- The vital set, the bp pattern and the label pattern are restated in Python;
+  `tests/symbolic/test_opa_privacy.py` now checks them against `privacy.rego`, as it
+  does the complaint codes and age bands.
 
 **2026-09-29.** No commits yet (working tree only).
 
@@ -157,7 +179,8 @@ the chief complaint from a list, picks the proposed ESI level from a list, and t
 the vitals as numbers. The form sends exactly those values. A blank field is left out of the payload, so the case takes
 the normal missing-fields route. `POST /api/submit` takes either `fields` or
 `submission_type`, never both and never neither, and refuses unknown field names or
-values outside their allowed range with a 422. `free_text` is no longer a required
+values outside their allowed range with a 422 (since 2026-10-02 that includes vitals the
+privacy policy would refuse). `free_text` is no longer a required
 field (`app/guards/fields.py`): the model never reads it, and the real-case form has
 no prose box. The injection demo scenario and the free-text injection detector
 were removed on 2026-10-01: with no prose field there is nothing for them to scan.
@@ -326,7 +349,9 @@ correction loop escalating to a shift lead, and the Arrow → Transition rename.
 - [x] **Privacy check.** `policy/privacy.rego`, evaluated by the real engine before a
       payload is stored (I11, I12). An allow-list, not the old six-key deny-list — which
       had been passing the nurse's prose and her proposed level to the model. With it:
-      `chief_complaint` is a code from a fixed set (validated at intake like acuity),
+      `chief_complaint` is a code from a fixed set and the vitals are numbers from a
+      fixed set of signs (both validated at intake like acuity), condition labels the
+      policy would refuse are dropped from the model's view like malformed visits,
       `age_band` is derived from the CRM's date of birth at identity resolution, and
       ESI decision point D is computed against the handbook's table and shown on the
       card. `patient_history` no longer carries name or date of birth in checkpoints.
