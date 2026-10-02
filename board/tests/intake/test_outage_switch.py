@@ -108,16 +108,27 @@ def test_opa_down_the_model_is_skipped_and_a_shift_lead_moves_and_releases(switc
     assert view["control_state"] == "case_closed"
 
 
-@pytest.mark.parametrize("engine", ["prolog", "datalog"])
 @respx.mock
-def test_a_safety_engine_down_goes_to_the_validator_down_gate(switch, engine):
+def test_prolog_down_goes_to_the_validator_down_gate(switch):
     _crm()
-    _down(engine)
+    _down("prolog")
 
     paused = _submit()
 
     assert paused["gate"]["gate"] == "validator_down"
-    assert paused["validator_down"] == [engine]
+    assert paused["validator_down"] == ["prolog"]
+
+
+@respx.mock
+def test_datalog_down_does_not_touch_the_safety_check(switch):
+    """Datalog runs only the sweeper's deadline pass; safety validation is Prolog's."""
+    _crm()
+    _down("datalog")
+
+    body = _submit()
+
+    assert body["control_state"] == "monitoring"
+    assert body.get("validator_down", []) == []
 
 
 @respx.mock

@@ -123,8 +123,8 @@ class TriageState(BaseModel):
 
     # ---- Human approval gate ----------------------------------------------------
     escalation_reason: Optional[str] = None      # "discrepancy" | "safety_fail" | "validator_down"
-    # Safety engines that could not answer at the latest safety check ("prolog",
-    # "datalog"). Replaced, not appended: empty once the check runs again.
+    # Safety engines that could not answer at the latest safety check ("prolog").
+    # Replaced, not appended: empty once the check runs again.
     validator_down: list[str] = Field(default_factory=list)
     # A shift lead cleared the case while the safety check could not run. Never
     # counts as a pass: `safety_passed` stays False.

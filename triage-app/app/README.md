@@ -59,7 +59,7 @@ package permitted to import an LLM client.
 | Acuity Classifier | `actors/acuity_classifier.py` | **LLM** (mock by default) — ESI decision points A/B/C by judgment |
 | Intake Parser | `actors/intake.py` + `guards/` | deterministic |
 | Input Normalizer + PII drop | `actors/normalizer.py` | deterministic |
-| Safety Validation | `actors/safety.py` | deterministic (mock; real = Prolog/Datalog/Z3/OPA) |
+| Safety Validation | `actors/safety.py` | deterministic (Prolog, `symbolic/rules/safety.pl`) |
 | Output Verification | `verification.py` | deterministic |
 | CRM / Patient DB | `crm_client.py` | deterministic |
 | Audit | `deterministic.py:audit` | deterministic |

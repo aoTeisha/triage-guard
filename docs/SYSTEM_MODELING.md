@@ -109,10 +109,8 @@ guards safety (not compromisable - it needs a human substitute).
   safety-and-approval guarantee holds by substituting a human validator for the automated
   one; routing _all_ cases, not just suspicious ones, is the safe choice, because without
   the validator the system cannot tell safe from unsafe. Cost: the human approval queue
-  spikes - quantified in the capacity model. The validator's rules run on two engines,
-  Prolog (the safety rules) and Datalog (who wrote the acuity, and whether the clinical
-  data it was judged on is still there); if either cannot answer, the check has no
-  verdict at all, not a failing one. The charge nurse therefore has nothing to correct:
+  spikes - quantified in the capacity model. The validator's rules run on Prolog; if it
+  cannot answer, the check has no verdict at all, not a failing one. The charge nurse therefore has nothing to correct:
   the gate offers "revalidate", which runs the check again once the engine is back, or
   "escalate further". Each revalidation uses a correction round, so a long outage hands
   the case to a shift lead instead of looping. An outage must never keep a patient from
@@ -143,7 +141,7 @@ guards safety (not compromisable - it needs a human substitute).
   by hand, as for a monitor outage.
 
 Every degraded case records which component was down (`degraded`: `acuity_classifier`,
-`opa`, `prolog`, `datalog`, `safety_validation`, `crm`), and a shift-lead sign-off in
+`opa`, `prolog`, `safety_validation`, `crm`), and a shift-lead sign-off in
 place of an engine records `opa_signoff`, `prolog_signoff` or `safety_signoff`. The board shows each once
 on the card and lists, in the case panel, what the case went without because of it.
 
@@ -301,8 +299,7 @@ is no direct arrow from the LLM to an irreversible action, by design._
 
 - **Graph** - decision authority. Its nodes write state.
 - **Acuity Classifier** - the LLM; proposes only.
-- **Safety Validation** - the binding safety gate, run on Prolog (the safety rules) and
-  Datalog (who wrote the acuity, and whether its data is still there).
+- **Safety Validation** - the binding safety gate, run on Prolog (the safety rules).
 - **OPA** - checks that the payload for the model carries no identifier, and authorizes
   moves to treatment, releases, and the monitor's notifications and CRM write-backs.
 - **Human Escalation bridge** - the gate pause: the graph stops and waits for a charge

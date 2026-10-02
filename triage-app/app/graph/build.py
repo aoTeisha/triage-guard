@@ -116,7 +116,7 @@ def _on_safety_error(state: TriageState, error: NodeError) -> Command:
     down = getattr(error.error, "engines", None) if isinstance(error.error, ValidatorUnavailable) else None
     return Command(
         update=_crash(state, State.SAFETY_VALIDATING, "safety_validation", error,
-                      engines=["Prolog", "Datalog"])
+                      engines=["Prolog"])
         # Which engine could not answer, so the fallback and the board can name it.
         | {"validator_down": down or []},
         goto="safety_fallback",

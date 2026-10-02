@@ -1,8 +1,48 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-09-29 (an outage switch on the board: take the LLM, OPA, Prolog,
-Datalog or the monitor down for every patient, and the degrade paths it needed so no
-outage blocks treatment or release. Previous entry below.)
+**Last updated:** 2026-10-02 (safety rules 2 and 3 now fire in a running case; agreement
+and the classifier-down settle got their own `acuity_source`; Datalog left safety
+validation. Previous entry below.)
+
+**2026-10-02.** No commits yet (working tree only).
+
+*Safety rules 2 and 3 never fired in a running case.* The graph holds `acuity_source`
+as an `AcuitySource` enum, and the Prolog bridge quoted it with `str()`, which gives
+`'AcuitySource.HUMAN_CONFIRMED'`. No rule matched that, so rule 2 (an automatic settle
+on a gap of 2 or more) and rule 3 (`human_confirmed` with no gate decision) were dead.
+The unit tests passed plain strings and could not see it. `prolog.atom` now quotes an
+enum by its value, and `safety.facts_from` hands the engine the value too.
+
+*`human_confirmed` now means a charge nurse decided, and nothing else.* With the enum
+fixed, rule 3 would have failed every case where the nurse and the model agreed, and
+every classifier-down case, since both were also labelled `human_confirmed` with no
+gate decision behind them. A run with nurse 2 and model 2 had been passing only
+because of the bug. Two new values: `agreed` (gap 0, `ACUITY_AGREE`) and
+`nurse_fallback` (the classifier could not be used, so the nurse's level). Only the
+gate's acuity choice and its safety correction set `human_confirmed`. The board shows
+the new values as "nurse and system agreed" and "nurse's level (system unavailable)",
+and `human_confirmed` as "decided by charge nurse".
+
+*Datalog left safety validation.* Its two safety checks could not fail. Acuity writers:
+only the gate writes an acuity, after Prolog's `may_resolve_gate` has authorized the
+resolver. Clinical fields: intake requires `chief_complaint` and `vitals`, and
+redaction keeps them or halts the case. `acuity_provenance` and `prolog.charge_roles`
+are gone. Rule 3 now reads "decided at the gate" straight off this triage's audit log
+(a `GATE_ACUITY_RESOLVED` or `GATE_SAFETY_CORRECTED` record), and the safety audit row
+names Prolog alone. Datalog keeps the sweeper's deadline pass (`tick_invariants`), so
+switching Datalog down no longer sends a case to the `validator_down` gate. Safety
+validation is five rules now, all Prolog's. The presentation follows: slides 3, 5, 8, 10
+and 12 no longer give Datalog a part in the safety check, and slide 8's Datalog card
+shows the deadline rule instead of the writer check.
+
+*Tests.* `tests/test_safety_end_to_end.py` runs real cases through the graph: rules 2
+and 3 each fire on a mislabelled settle, and an agreed level, a classifier-down
+fallback and a level decided at the gate each reach the queue. With the enum fix
+reverted, the rule 2 and rule 3 tests fail. Two tests that are flaky before and after
+this change: `test_component_down.py`'s `test_a_long_outage_hands_the_case_to_a_shift_lead`
+and `test_revalidate_while_still_down_comes_back_to_the_gate` fail on about one run in
+four to eight, and the board's `test_card_fields_are_exactly_the_allow_list` fails on
+an unlisted `gate_reason` field.
 
 **2026-09-29.** No commits yet (working tree only).
 
@@ -265,9 +305,10 @@ correction loop escalating to a shift lead, and the Arrow → Transition rename.
 
 **Core pieces still fake**
 
-- [x] **Safety validator.** Six real rules over Prolog (`rules/safety.pl`, field
-      contradictions) and Datalog (acuity provenance, required clinical fields),
-      each failure carrying a reason that names the contradiction. Written up in
+- [x] **Safety validator.** Five real rules over Prolog (`rules/safety.pl`, field
+      contradictions), each failure carrying a reason that names the contradiction.
+      Datalog's provenance and clinical-field checks were removed on 2026-10-02 as
+      unreachable. Written up in
       SPECIFICATION.md § Safety validation rules. Deliberately holds no clinical
       rule: :727 reserves judgment for the nurse and the classifier. Fails closed.
 - [x] **Privacy check.** `policy/privacy.rego`, evaluated by the real engine before a
@@ -603,7 +644,7 @@ and one has no runtime caller — listed here rather than left to be discovered.
 
 | State | Invariants | Notes |
 | ----- | ---------- | ----- |
-| Enforced as documented | I1, I3, I4, I5, I6, I7, I8, I9, I10, I13, I14, I15, I16, I18, I19, I20, I22 | I1 and I4 gained Z3 proofs; I3 and I13 gained the safety validator's Prolog and Datalog rules |
+| Enforced as documented | I1, I3, I4, I5, I6, I7, I8, I9, I10, I13, I14, I15, I16, I18, I19, I20, I22 | I1 and I4 gained Z3 proofs; I3 and I13 gained the safety validator's Prolog rules |
 | Enforced as documented since 2026-09-26 | I11, I12 | OPA (`policy/privacy.rego`) decides what the model may see: an allow-list of fields with per-field closed shapes, identifier keys refused at any depth. The regex scan for identifiers typed *inside* values stays in Python — its patterns need look-arounds RE2 lacks. The old check was a six-key deny-list; it let `free_text` (prose) and `nurse_proposed_acuity` (the answer the model is meant to cross-check) reach the model on every case |
 | Enforced as documented since 2026-09-26 | I2, I21 | `datalog.history_invariants` re-reads a case's whole checkpoint history — the key moved only with the acuity (or a re-file's new nurse level); the audit log only ever grew. `runner.case_history_check` runs it behind both case endpoints as `history_safety`, beside the audit-log trace check. The "DB constraint" the spec once mentioned for I21 still does not exist; the history check is the enforcement |
 | Enforced as documented since 2026-09-26 | I17 | CRM write-back. The release step writes the visit (date, acuity, complaint code — no identifiers, no prose) and, if the CRM is down, schedules a `crm_writeback` timer the sweeper retries until it lands: BPpy proposes it, Prolog agrees, OPA allows it only for a closed case with an internal id. A release before an acuity settled, or for a patient the CRM has no record of, is recorded as skipped rather than writing a half-visit |

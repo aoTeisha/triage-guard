@@ -33,9 +33,11 @@ violation(source_without_acuity) :- acuity_source(S), S \== none, acuity(none).
 violation(auto_resolved_on_major_gap) :-
     acuity_source(auto_resolved), gap(G), integer(G), G >= 2.
 
-%% 3. A human-confirmed level with no human decision in this triage. The
-%%    decision itself is looked for in the audit log by Datalog; this rule fires
-%%    on its answer.
+%% 3. A human-confirmed level with no human decision in this triage.
+%%    `human_confirmed` means a charge nurse settled the level at the gate and
+%%    nothing else: agreement is `agreed`, the classifier-down settle is
+%%    `nurse_fallback`. `human_decided` is asserted when this triage's audit log
+%%    holds a gate decision (app/actors/safety.py, `decided_at_gate`).
 violation(human_confirmed_without_a_decision) :-
     acuity_source(human_confirmed), \+ human_decided.
 

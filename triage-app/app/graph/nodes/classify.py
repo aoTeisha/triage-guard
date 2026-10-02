@@ -84,7 +84,7 @@ def classifier_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
     if nurse is not None:
         update |= {
             "acuity": nurse,
-            "acuity_source": AcuitySource.HUMAN_CONFIRMED.value,
+            "acuity_source": AcuitySource.NURSE_FALLBACK.value,
             "acuity_bucket": bucket_for(nurse).value,
             "order_key": assign_order_key(nurse, arrival),
         }

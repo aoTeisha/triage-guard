@@ -12,7 +12,6 @@ from typing import Any
 from pyDatalog import pyDatalog
 
 from app import outages
-from app.labels import Transition
 
 # A timer that is still going to do something. Everything else is history.
 LIVE_STATES = {"SCHEDULED", "DUE", "DISPATCHING", "FAILED", "UNKNOWN"}
@@ -174,79 +173,3 @@ def audit_log_is_monotonic(history: list[list[dict[str, Any]]]) -> tuple[bool, s
         if after[:len(before)] != before:
             return False, f"checkpoint {i + 1}: an earlier audit_log record changed"
     return True, ""
-
-
-# Provenance of one case's acuity, and the clinical fields the classifier was
-# supposed to have. Both are joins over facts, which is what Datalog is for:
-# "who wrote this, and were they allowed to" rather than "is this number right".
-SAFETY_RULES = """
-authorized_write(R) <= acuity_write(R) & allowed_role(R)
-unauthorized_write(R) <= acuity_write(R) & ~allowed_role(R)
-missing_field(F) <= required_field(F) & ~present_field(F)
-"""
-
-# What the classifier needs to have judged on. Absent by now means the acuity
-# was decided over data the case does not hold.
-CLINICAL_FIELDS = ("chief_complaint", "vitals")
-
-
-def acuity_provenance(
-    triage_records: list[dict[str, Any]],
-    payload: dict[str, Any],
-    allowed_roles: frozenset[str] | set[str],
-) -> dict[str, Any]:
-    """`{"writers": [...], "unauthorized": [...], "missing_fields": [...], "engine_error": str|None}`
-    for one triage.
-
-    `triage_records` is this triage's slice of the audit log — a re-file starts a
-    new triage, and last triage's charge-nurse decision does not vouch for this
-    one's acuity (I3). `allowed_roles` comes from Prolog rather than a fourth
-    hand-written copy of the role set.
-
-    Facts are rebuilt per call: pyDatalog's knowledge base is process-global.
-
-    Fail-closed, same stance as `prolog.safety_violations`: a pyDatalog fault
-    returns empty lists and a non-empty `engine_error` rather than raising —
-    the caller (`app.actors.safety`) treats that as a reason to fail the
-    verdict, not a crash that skips the node's retry/degrade handling and
-    shows up in the audit log as a generic crash with no engine named.
-    """
-    try:
-        outages.check("datalog")
-        pyDatalog.clear()
-        pyDatalog.load(SAFETY_RULES)
-        # Negated predicates need at least one fact to exist at all (see tick_invariants).
-        pyDatalog.assert_fact("allowed_role", "__never__")
-        pyDatalog.assert_fact("present_field", "__never__")
-
-        for role in allowed_roles:
-            pyDatalog.assert_fact("allowed_role", role)
-        for record in triage_records:
-            if record.get("action") in ("apply_human_acuity", "apply_correction"):
-                pyDatalog.assert_fact("acuity_write", record.get("resolver_role") or "unrecorded")
-        for field in CLINICAL_FIELDS:
-            pyDatalog.assert_fact("required_field", field)
-            if (payload or {}).get(field) is not None:
-                pyDatalog.assert_fact("present_field", field)
-
-        return {
-            "writers": sorted(row[0] for row in _answers("authorized_write(R)")),
-            "unauthorized": sorted(row[0] for row in _answers("unauthorized_write(R)")),
-            "missing_fields": sorted(row[0] for row in _answers("missing_field(F)")),
-            "engine_error": None,
-        }
-    except Exception as exc:  # noqa: BLE001 — an engine fault is a refusal, never a pass
-        return {"writers": [], "unauthorized": [], "missing_fields": [], "engine_error": f"datalog: {exc}"}
-
-
-def current_triage(audit_log: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The records belonging to the triage running now.
-
-    A `front_door_rerun` record is a re-file: everything before it belongs to a
-    finished triage. Same boundary `app.verification.check_trace` uses.
-    """
-    last_rerun = -1
-    for i, record in enumerate(audit_log or []):
-        if record.get("transition") == Transition.FRONT_DOOR_RERUN:
-            last_rerun = i
-    return list(audit_log or [])[last_rerun + 1:]

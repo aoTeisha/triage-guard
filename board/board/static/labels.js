@@ -37,6 +37,7 @@ const DEGRADED_LABELS = {
   acuity_classifier: "AI down",
   opa: "OPA down",
   prolog: "Prolog down",
+  // Only on cases recorded before 2026-10-02, when Datalog was part of the safety check.
   datalog: "Datalog down",
   safety_validation: "safety check down",
   opa_signoff: "shift lead signed (OPA down)",
@@ -70,7 +71,7 @@ const COMPONENT_LABELS = {
   llm: "LLM (AI classifier)",
   opa: "OPA (privacy check, move and release authorization)",
   prolog: "Prolog (safety rules, who may answer a gate)",
-  datalog: "Datalog (who set the acuity)",
+  datalog: "Datalog (missed-deadline check)",
   monitor: "Monitor (timers and reminders)",
 };
 // What switching each one off does, shown under its toggle.
@@ -78,7 +79,7 @@ const COMPONENT_EFFECTS = {
   llm: "new cases use the nurse's acuity",
   opa: "the AI is skipped; a shift lead signs moves and releases; reminders and reassessment timers wait until it is back",
   prolog: "safety check cannot run: a shift lead clears the patient to the queue; only a shift lead answers gates; reminders and reassessment timers wait until it is back",
-  datalog: "safety check cannot run: a shift lead clears the patient to the queue",
+  datalog: "the monitor stops checking for patients whose reassessment timer is missing; cases are not affected",
   monitor: "reminders and reassessment timers pause",
 };
 const FLAG_LABELS = {
@@ -102,8 +103,10 @@ const TRACE_RULE_LABELS = {
 // nurse learn it.
 const SOURCE_LABELS = {
   system: "set by system",
+  agreed: "nurse and system agreed",
   auto_resolved: "auto-resolved (1-level gap)",
-  human_confirmed: "confirmed by nurse",
+  nurse_fallback: "nurse's level (system unavailable)",
+  human_confirmed: "decided by charge nurse",
 };
 
 // Everything below translates the spec's vocabulary into something a person can

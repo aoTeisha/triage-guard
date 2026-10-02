@@ -112,10 +112,9 @@ def route_verdict(state: TriageState) -> Route:
     # through — resolving it does not change `confidence`, so the case would
     # bounce between the gate and safety validation until the recursion limit.
     #
-    # The test is `human_decision`, which only the gate writes. NOT
-    # `acuity_source == human_confirmed`: ACUITY_AGREE sets that when the nurse and
-    # the system merely agree, with no human consulted, so it would suppress the
-    # gate for exactly the cases that never reached one.
+    # The test is `human_decision`, which only the gate writes. Not
+    # `acuity_source == human_confirmed`: the gate sets that only when it settles
+    # an acuity, and a validator-down answer (revalidate, clear) settles none.
     if state.human_decision is not None:
         return Route.CLEARED
     if not confidence_ok(state.confidence, state.gate_disabled):

@@ -5,6 +5,7 @@ what should happen to one claimed timer, with an explanation for every deny.
 from __future__ import annotations
 
 import threading
+from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -51,8 +52,12 @@ def _loaded_engine() -> "Prolog":
 def atom(value: Any) -> str:
     """Quote a Python value as a Prolog atom. Roles and ids arrive from HTTP
     input, so they are never interpolated raw into a goal — a stray quote
-    would otherwise be parsed as Prolog.
+    would otherwise be parsed as Prolog. An enum is quoted by its value:
+    `str()` of `AcuitySource.HUMAN_CONFIRMED` is the member's name, which no
+    rule matches.
     """
+    if isinstance(value, Enum):
+        value = value.value
     text = str(value).replace("\\", "\\\\").replace("'", "\\'")
     return f"'{text}'"
 
@@ -83,21 +88,6 @@ def charge_role(role: str) -> tuple[bool, str]:
     if holds:
         return True, f"{role} holds charge role"
     return False, f"gate refused: role {role!r} is not a charge role"
-
-
-def charge_roles() -> frozenset[str]:
-    """Every role `charge_role/1` holds, read from the engine rather than copied.
-
-    `app.symbolic.datalog.acuity_provenance` needs the same set to decide whether
-    an acuity's writer was authorized; asking Prolog keeps one source. An engine
-    fault returns the empty set, so every writer reads as unauthorized and the
-    verdict fails closed.
-    """
-    with _lock:
-        try:
-            return frozenset(str(row["R"]) for row in _engine().query("charge_role(R)"))
-        except Exception:  # noqa: BLE001 — an engine fault must fail closed, not crash the verdict
-            return frozenset()
 
 
 def may_resolve_gate(role: str, *, senior_required: bool) -> tuple[bool, str]:

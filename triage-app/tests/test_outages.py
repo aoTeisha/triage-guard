@@ -50,15 +50,16 @@ def test_the_opa_hook_is_an_engine_unavailable_answer(outage_switch):
 
 def test_the_prolog_hook(outage_switch):
     outage_switch.set_down("prolog", True)
-    assert prolog.charge_roles() == frozenset()
+    codes, error = prolog.safety_violations({"acuity": 3, "acuity_source": "agreed"})
+    assert codes == [] and "simulated outage: prolog" in error
     outage_switch.set_down("prolog", False)
-    assert "charge_nurse" in prolog.charge_roles()
+    assert prolog.safety_violations({"acuity": 3, "acuity_source": "agreed"})[1] == ""
 
 
 def test_the_datalog_hook(outage_switch):
     outage_switch.set_down("datalog", True)
-    result = datalog.acuity_provenance([], {}, {"charge_nurse"})
-    assert result["engine_error"] and "simulated outage: datalog" in result["engine_error"]
+    with pytest.raises(RuntimeError, match="simulated outage: datalog"):
+        datalog.tick_invariants([], [])
 
 
 def test_the_monitor_hook_skips_the_tick_and_the_heartbeat(outage_switch, conn):

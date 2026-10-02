@@ -44,7 +44,7 @@ def safety_validating(state: TriageState) -> dict[str, Any]:
                             "emit_event_log" if passed else "invoke_human_escalation",
                             "safety passed" if passed else "safety failed, human decides",
                             Transition.SAFETY_PASSED if passed else Transition.SAFETY_FAILED,
-                            reasons=checked.reasons, engines=["Prolog", "Datalog"])],
+                            reasons=checked.reasons, engines=["Prolog"])],
     }
 
 

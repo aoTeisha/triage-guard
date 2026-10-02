@@ -60,7 +60,7 @@ def test_each_intake_outcome_routes_to_its_own_branch(outcome):
 def test_gap_zero_keeps_the_agreed_level(nurse, system):
     final, source, transition = resolve_acuity(nurse, system)
     assert final == nurse
-    assert source is AcuitySource.HUMAN_CONFIRMED
+    assert source is AcuitySource.AGREED
     assert transition is Transition.ACUITY_AGREE
 
 
@@ -101,7 +101,7 @@ def test_every_acuity_pair_lands_in_its_band(nurse, system):
     final, source, transition = resolve_acuity(nurse, system)
     if gap == 0:
         assert (transition, final, source) == (
-            Transition.ACUITY_AGREE, nurse, AcuitySource.HUMAN_CONFIRMED)
+            Transition.ACUITY_AGREE, nurse, AcuitySource.AGREED)
     elif gap == 1:
         assert (transition, final, source) == (
             Transition.ACUITY_GAP_MINOR, nurse, AcuitySource.AUTO_RESOLVED)

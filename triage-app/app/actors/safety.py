@@ -8,36 +8,43 @@ holds, and code cannot tell those apart. So no rule here overturns an acuity.
 
 What it checks is whether the case's record *can be true* — a level with no
 provenance, an automatic settle on a gap that was never automatic, a number
-nobody proposed, a claim that a human decided when the log holds no decision,
-clinical data that has gone missing. Contradictions, not opinions (I3, I13).
+nobody proposed, a claim that a charge nurse decided when this triage's log holds
+no gate decision. Contradictions, not opinions (I3, I13). The rules are Prolog's
+(rules/safety.pl), each one case's fields checked against each other.
 
-Two engines, each on the question it suits:
-
-    Prolog   (rules/safety.pl)  one case's fields against each other
-    Datalog  (symbolic/datalog) who wrote the acuity, and whether the data is there
+Two things it does not check, because nothing upstream lets them happen: who
+wrote the acuity (only the gate writes one, and only after Prolog's
+`may_resolve_gate` has authorized the resolver), and whether `chief_complaint`
+and `vitals` are present (intake requires both, and redaction keeps them or
+halts the case).
 
 Every reason names the field and the contradiction. A verdict of "safety failed"
 would tell a charge nurse nothing to act on, and the course material is explicit
 that a validator's feedback has to be usable: "the feedback must be useful
 information about *why* it failed" (neuro_symbolic_ai_architect_updated.md:271).
 
-An engine that cannot answer is a **fail**, never a pass — the case goes to a
-human, which is the documented degrade (SYSTEM_MODELING.md:101).
+An engine that cannot answer is never a pass — the case goes to a human, which
+is the documented degrade (SYSTEM_MODELING.md:101).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from app.labels import Transition
 from app.schemas import SafetyVerdict
-from app.symbolic import datalog, prolog
+from app.symbolic import prolog
+
+# The gate records that settle an acuity: a charge nurse choosing a level, or
+# correcting one after a failed check. Rule 3 in safety.pl asks for one of these.
+GATE_DECISIONS = frozenset({Transition.GATE_ACUITY_RESOLVED, Transition.GATE_SAFETY_CORRECTED})
 
 
 class ValidatorUnavailable(RuntimeError):
     """Raised when a symbolic engine cannot answer (drives AF_SAFETY).
 
-    `engines` names which ones, lower case ("prolog", "datalog"), so the case
-    can say exactly what is down.
+    `engines` names which ones, lower case ("prolog"), so the case can say
+    exactly what is down.
     """
 
     def __init__(self, engines: list[str], detail: str):
@@ -56,7 +63,7 @@ _EXPLAIN = {
         "a gap of 2 or more is the charge nurse's to settle (I4)",
     "human_confirmed_without_a_decision": lambda c:
         "acuity_source is human_confirmed, but this triage's audit log holds no "
-        "charge-nurse decision (I3)",
+        "charge-nurse decision at the gate (I3)",
     "acuity_matches_no_proposal": lambda c:
         f"acuity is {c.get('acuity')}, which is neither the nurse's "
         f"({c.get('nurse_proposal')}) nor the system's ({c.get('system_proposal')}), "
@@ -67,57 +74,63 @@ _EXPLAIN = {
 }
 
 
-def facts_from(state: Any) -> dict[str, Any]:
-    """The facts the engines reason over, read off the graph state.
+def current_triage(audit_log: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The records belonging to the triage running now.
 
-    A plain mapping, not the state object: the engines receive facts, and keeping
+    A `front_door_rerun` record is a re-file: everything before it belongs to a
+    finished triage, and last triage's decision vouches for nothing in this one
+    (I3). Same boundary `app.verification.check_trace` uses.
+    """
+    last_rerun = -1
+    for i, record in enumerate(audit_log or []):
+        if record.get("transition") == Transition.FRONT_DOOR_RERUN:
+            last_rerun = i
+    return list(audit_log or [])[last_rerun + 1:]
+
+
+def decided_at_gate(triage_records: list[dict[str, Any]]) -> bool:
+    """Whether a charge nurse settled the acuity at the gate in this triage."""
+    return any(record.get("transition") in GATE_DECISIONS for record in triage_records)
+
+
+def facts_from(state: Any) -> dict[str, Any]:
+    """The facts the engine reasons over, read off the graph state.
+
+    A plain mapping, not the state object: the engine receives facts, and keeping
     that boundary here means the node stays free of engine detail.
     """
     audit_log = getattr(state, "audit_log", None) or []
-    triage = datalog.current_triage(audit_log)
+    source = getattr(state, "acuity_source", None)
     return {
         "case_id": getattr(state, "case_id", None),
         "acuity": getattr(state, "acuity", None),
-        "acuity_source": getattr(state, "acuity_source", None),
+        # The state holds an `AcuitySource`; the rules and the reasons want its value.
+        "acuity_source": getattr(source, "value", source),
         "gap": getattr(state, "acuity_gap", None),
         "nurse_proposal": getattr(state, "nurse_proposed_acuity", None),
         "system_proposal": getattr(state, "system_proposed_acuity", None),
         "classifier_down": "acuity_classifier" in (getattr(state, "degraded", None) or []),
-        "payload": getattr(state, "redacted_payload", None) or {},
-        "triage_records": triage,
+        "triage_records": current_triage(audit_log),
     }
 
 
 def validate(case: dict[str, Any]) -> SafetyVerdict:
     """Propose pass/fail on the settled acuity, with a reason per failed rule."""
-    provenance = datalog.acuity_provenance(
-        case.get("triage_records") or [],
-        case.get("payload") or {},
-        prolog.charge_roles(),
-    )
-    # Datalog answers "did an authorized human write this acuity in this triage",
-    # which rule 3 in safety.pl then reasons with.
+    # Rule 3 in safety.pl reasons with whether the gate settled this triage's
+    # acuity; the gate's own records answer that.
     codes, prolog_error = prolog.safety_violations(
-        {**case, "human_decided": bool(provenance["writers"])}
+        {**case, "human_decided": decided_at_gate(case.get("triage_records") or [])}
     )
-
-    reasons = [_EXPLAIN[code](case) for code in codes if code in _EXPLAIN]
-    reasons += [f"unknown violation code from safety.pl: {code}"
-                for code in codes if code not in _EXPLAIN]
-    reasons += [f"acuity was written by {role!r}, which holds no charge role (I3, I14)"
-                for role in provenance["unauthorized"]]
-    if provenance["missing_fields"]:
-        reasons.append("the case no longer holds the clinical data the acuity was judged on: "
-                       + ", ".join(provenance["missing_fields"]))
     # An engine that could not answer means no verdict at all, not a failing
     # one: raise, so the case takes the validator-down path to a charge nurse,
     # who asks for the check again once the engine is back. A "fail" here would
     # demand a correction to the case, when the case itself is fine.
-    errors = {engine: error for engine, error in
-              (("datalog", provenance.get("engine_error")), ("prolog", prolog_error)) if error}
-    if errors:
-        raise ValidatorUnavailable(sorted(errors), "; ".join(errors.values()))
+    if prolog_error:
+        raise ValidatorUnavailable(["prolog"], prolog_error)
 
+    reasons = [_EXPLAIN[code](case) for code in codes if code in _EXPLAIN]
+    reasons += [f"unknown violation code from safety.pl: {code}"
+                for code in codes if code not in _EXPLAIN]
     if reasons:
         return SafetyVerdict(verdict="fail", reasons=reasons)
     return SafetyVerdict(verdict="pass", reasons=["no contradiction in the case record"])

@@ -1,5 +1,5 @@
 """Audit rows name the symbolic engine that decided them — the safety verdict
-is Prolog + Datalog, the payload check is OPA — so the board panel can show
+is Prolog, the payload check is OPA — so the board panel can show
 which engine ran the safety test.
 """
 
@@ -14,11 +14,11 @@ from app.graph.state import TriageState
 from app.states import State
 
 
-def test_safety_verdict_row_names_prolog_and_datalog():
+def test_safety_verdict_row_names_prolog():
     state = TriageState(case_id="c1", acuity=3, acuity_source="auto_resolved",
                         acuity_gap=1, nurse_proposed_acuity=3, system_proposed_acuity=4)
     row = safety_validating(state)["audit_log"][0]
-    assert row["engines"] == ["Prolog", "Datalog"]
+    assert row["engines"] == ["Prolog"]
 
 
 def test_payload_clean_row_names_opa():
@@ -29,16 +29,16 @@ def test_payload_clean_row_names_opa():
 
 
 def test_a_safety_validator_crash_still_names_its_engines():
-    """A Prolog/Datalog fault fails the verdict closed (tested in
+    """A Prolog fault fails the verdict closed (tested in
     test_safety_validation.py) rather than raising, but any other crash in
-    `safety_validating` still reaches this row — and it's still the two
-    engines' stage, so it still gets their chip.
+    `safety_validating` still reaches this row — and it's still Prolog's
+    stage, so it still gets its chip.
     """
     state = TriageState(case_id="c1")
     error = NodeError("safety_validating", RuntimeError("boom"))
     row = _crash(state, State.SAFETY_VALIDATING, "safety_validation", error,
-                 engines=["Prolog", "Datalog"])["audit_log"][0]
-    assert row["engines"] == ["Prolog", "Datalog"]
+                 engines=["Prolog"])["audit_log"][0]
+    assert row["engines"] == ["Prolog"]
     assert "boom" in row["explanation"]
 
 

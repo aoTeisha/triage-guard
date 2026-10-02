@@ -3,7 +3,7 @@ where a check could not run, and never past a check that could not run.
 
 - OPA down: the payload cannot be proven clean, so the model is skipped and the
   case settles on the nurse's acuity, the same as a classifier outage.
-- Prolog or Datalog down: the safety check cannot answer, so a charge nurse gets
+- Prolog down: the safety check cannot answer, so a charge nurse gets
   the case and asks for the check again once the engine is back. No acuity change
   is required, because the input did not cause the failure.
 """
@@ -19,7 +19,7 @@ from app.labels import Transition
 from app.mock_cases import DEMO_CASES
 from app.runner import config_for, hydrate
 from app.states import State
-from app.symbolic import datalog, prolog
+from app.symbolic import prolog
 from app.verification import check_trace
 from tests.conftest import transitions
 
@@ -45,10 +45,10 @@ def _prolog_down(mp):
     mp.setattr(prolog, "_engine", no_engine)
 
 
-def _datalog_down(mp):
-    def no_engine(*_a, **_k):
-        raise RuntimeError("pyDatalog not reachable")
-    mp.setattr(datalog.pyDatalog, "load", no_engine)
+def _safety_rules_down(mp):
+    """Only Prolog's safety query fails; `may_resolve_gate` still answers, so a
+    charge nurse can still answer the gate."""
+    mp.setattr(prolog, "safety_violations", lambda case: ([], "prolog: safety rules not reachable"))
 
 
 def _resume(graph, thread, response):
@@ -97,11 +97,11 @@ def test_opa_down_still_halts_on_an_identifier_the_regex_finds(run, monkeypatch)
     assert Transition.V_HALT_PII in transitions(state)
 
 
-# ---- Prolog / Datalog ----------------------------------------------------------
+# ---- Prolog --------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("engine, take_down", [("prolog", _prolog_down), ("datalog", _datalog_down)])
-def test_a_safety_engine_down_sends_the_case_to_the_validator_down_gate(run, monkeypatch, engine, take_down):
+@pytest.mark.parametrize("take_down", [_prolog_down, _safety_rules_down])
+def test_a_safety_engine_down_sends_the_case_to_the_validator_down_gate(run, monkeypatch, take_down):
     take_down(monkeypatch)
 
     state, pending, _ = run(CASE)
@@ -109,13 +109,13 @@ def test_a_safety_engine_down_sends_the_case_to_the_validator_down_gate(run, mon
     assert pending is not None
     assert pending["gate"] == "validator_down"
     assert pending["options"] == ["revalidate", "escalate_further", "clear_by_shift_lead"]
-    assert engine in state["degraded"]
+    assert "prolog" in state["degraded"]
     assert "safety_validation" not in state["degraded"]   # the engine is named instead
     assert Transition.V_EXHAUSTED_SAFETY in transitions(state)
     assert state["safety_passed"] is False
 
 
-@pytest.mark.parametrize("take_down", [_prolog_down, _datalog_down])
+@pytest.mark.parametrize("take_down", [_prolog_down, _safety_rules_down])
 def test_revalidate_once_the_engine_is_back_queues_the_case(graph, run, monkeypatch, take_down):
     with monkeypatch.context() as down:
         take_down(down)

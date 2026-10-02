@@ -69,7 +69,7 @@ def resolve_acuity(
 ) -> tuple[int | None, AcuitySource | None, Transition]:
     """Return (final_acuity, acuity_source, transition) per the gap bands (I4).
 
-        gap 0   -> agree, keep it              (ACUITY_AGREE, human_confirmed)
+        gap 0   -> agree, keep it              (ACUITY_AGREE, agreed)
         gap 1   -> take the NURSE's value      (ACUITY_GAP_MINOR, auto_resolved)
         gap >=2 -> charge nurse decides        (ACUITY_GAP_MAJOR, unresolved)
 
@@ -81,7 +81,9 @@ def resolve_acuity(
     """
     gap = compute_acuity_gap(nurse, system)
     if gap == AGREE_GAP:
-        return nurse, AcuitySource.HUMAN_CONFIRMED, Transition.ACUITY_AGREE
+        # Not `human_confirmed`: no charge nurse was consulted, and safety rule 3
+        # holds that label to a decision at the gate.
+        return nurse, AcuitySource.AGREED, Transition.ACUITY_AGREE
     if gap == MINOR_GAP:
         # The nurse holds a gap of 1. Was `min(nurse, system)` until 2026-09-13;
         # changed because the classifier over-triages systematically and would

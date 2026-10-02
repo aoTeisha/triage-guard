@@ -1,4 +1,4 @@
-"""Safety validation's six rules, over the real Prolog and Datalog engines.
+"""Safety validation's five rules, over the real Prolog engine.
 
 Each rule gets a case that breaks it and a reason that names the contradiction,
 because a verdict a charge nurse cannot act on is no better than no verdict.
@@ -13,9 +13,13 @@ from __future__ import annotations
 import pytest
 
 from app.actors import safety
-from app.symbolic import datalog, prolog
+from app.graph.state import TriageState
+from app.labels import Transition
+from app.states import AcuitySource
+from app.symbolic import prolog
 
-DECIDED = [{"action": "apply_human_acuity", "resolver_role": "charge_nurse"}]
+DECIDED = [{"action": "apply_human_acuity", "resolver_role": "charge_nurse",
+            "transition": Transition.GATE_ACUITY_RESOLVED.value}]
 
 
 def case(**overrides):
@@ -28,7 +32,6 @@ def case(**overrides):
         "nurse_proposal": 3,
         "system_proposal": 4,
         "classifier_down": False,
-        "payload": {"chief_complaint": "chest_pain", "vitals": {"hr": 96}},
         "triage_records": [],
     }
     return base | overrides
@@ -84,26 +87,59 @@ def test_human_confirmed_with_a_decision_passes():
     assert verdict.verdict == "pass"
 
 
+def test_a_correction_at_the_gate_is_a_decision_too():
+    corrected = [{"action": "apply_correction", "resolver_role": "charge_nurse",
+                  "transition": Transition.GATE_SAFETY_CORRECTED.value}]
+    verdict = safety.validate(case(acuity=1, acuity_source="human_confirmed",
+                                   triage_records=corrected))
+    assert verdict.verdict == "pass"
+
+
+def test_a_gate_answer_that_settles_no_acuity_is_not_a_decision():
+    """Asking for the check again settles nothing, so it vouches for nothing."""
+    revalidated = [{"action": "request_revalidation", "resolver_role": "charge_nurse",
+                    "transition": Transition.GATE_REVALIDATE.value}]
+    verdict = safety.validate(case(acuity_source="human_confirmed", triage_records=revalidated))
+    assert "holds no charge-nurse decision" in only_reason(verdict)
+
+
 def test_a_decision_from_an_earlier_triage_does_not_count():
     """A re-file starts a new triage (I3). `current_triage` cuts the log at the
     `front_door_rerun` record, so last triage's decision vouches for nothing.
     """
-    from app.labels import Transition
-    from app.symbolic import datalog
-
     log = DECIDED + [{"action": "emit_event_log", "transition": Transition.FRONT_DOOR_RERUN}]
-    assert datalog.current_triage(log) == []      # the re-file record closes the old triage
+    assert safety.current_triage(log) == []      # the re-file record closes the old triage
     verdict = safety.validate(case(acuity_source="human_confirmed",
-                                  triage_records=datalog.current_triage(log)))
+                                  triage_records=safety.current_triage(log)))
     assert "holds no charge-nurse decision" in only_reason(verdict)
 
 
-def test_an_acuity_written_by_an_unauthorized_role_fails():
-    written_by_a_porter = [{"action": "apply_human_acuity", "resolver_role": "porter"}]
-    verdict = safety.validate(case(acuity_source="human_confirmed",
-                                  triage_records=written_by_a_porter))
-    assert verdict.verdict == "fail"
-    assert any("porter" in reason and "no charge role" in reason for reason in verdict.reasons)
+@pytest.mark.parametrize("source, gap, system", [("agreed", 0, 3), ("nurse_fallback", None, None)])
+def test_the_settles_no_charge_nurse_made_need_no_decision(source, gap, system):
+    """Agreement and the classifier-down settle carry their own labels, so rule 3
+    never asks them for a gate decision that never happened."""
+    verdict = safety.validate(case(acuity_source=source, gap=gap, system_proposal=system))
+    assert verdict.verdict == "pass"
+
+
+# ---- the state's enum reaches the rules as its value -------------------------
+
+
+@pytest.mark.parametrize("source, gap, system, code", [
+    (AcuitySource.HUMAN_CONFIRMED, 0, 3, "human_confirmed_without_a_decision"),
+    (AcuitySource.AUTO_RESOLVED, 2, 5, "auto_resolved_on_major_gap"),
+])
+def test_an_enum_source_fires_its_rule(source, gap, system, code):
+    """The running graph holds `AcuitySource`, not a string. `str()` of a member
+    is its name, which no rule matches, so rules 2 and 3 once never fired."""
+    codes, error = prolog.safety_violations(case(acuity_source=source, gap=gap,
+                                                 system_proposal=system))
+    assert (codes, error) == ([code], "")
+
+
+def test_facts_from_hands_over_the_source_value():
+    state = TriageState(case_id="c1", acuity=3, acuity_source=AcuitySource.HUMAN_CONFIRMED)
+    assert safety.facts_from(state)["acuity_source"] == "human_confirmed"
 
 
 # ---- rule 4: the level came from somewhere -----------------------------------
@@ -134,19 +170,8 @@ def test_a_downed_classifier_with_a_proposal_fails():
 def test_a_downed_classifier_with_no_proposal_passes():
     """The real fallback: the nurse's own level, no system proposal (AF·classifier)."""
     verdict = safety.validate(case(classifier_down=True, system_proposal=None,
-                                   gap=None, acuity_source="human_confirmed",
-                                   triage_records=DECIDED))
+                                   gap=None, acuity_source="nurse_fallback"))
     assert verdict.verdict == "pass"
-
-
-# ---- rule 6: the clinical data the acuity was judged on ---------------------
-
-
-@pytest.mark.parametrize("field", ["chief_complaint", "vitals"])
-def test_a_case_missing_its_clinical_data_fails(field):
-    payload = {k: v for k, v in case()["payload"].items() if k != field}
-    reason = only_reason(safety.validate(case(payload=payload)))
-    assert field in reason
 
 
 # ---- the engine itself ------------------------------------------------------
@@ -162,26 +187,3 @@ def test_an_engine_that_cannot_answer_fails_closed(monkeypatch):
     with pytest.raises(safety.ValidatorUnavailable) as caught:
         safety.validate(case())
     assert caught.value.engines == ["prolog"]
-
-
-def test_a_datalog_fault_fails_closed_too(monkeypatch):
-    """The same stance as `test_an_engine_that_cannot_answer_fails_closed`, but
-    for Datalog's half of the check: `acuity_provenance` catches its own
-    fault, and `validate` raises naming Datalog rather than letting a generic
-    crash through with no engine named.
-    """
-    monkeypatch.setattr(datalog, "acuity_provenance",
-                        lambda *a, **k: {"writers": [], "unauthorized": [],
-                                          "missing_fields": [], "engine_error": "datalog: no engine"})
-
-    with pytest.raises(safety.ValidatorUnavailable, match="datalog: no engine") as caught:
-        safety.validate(case())
-    assert caught.value.engines == ["datalog"]
-
-
-def test_the_role_set_comes_from_prolog_not_a_copy():
-    """`acuity_provenance` asks Prolog which roles may write an acuity, rather
-    than holding a fourth hand-written copy of the set (see the sync comments in
-    rules/monitor.pl and policy/monitor.rego).
-    """
-    assert prolog.charge_roles() == frozenset({"charge_nurse", "shift_lead"})

@@ -114,8 +114,8 @@ def awaiting_human_approval(state: TriageState) -> dict[str, Any]:
                                 "apply_human_acuity",
                                 f"charge nurse resolved acuity: {chosen}{signed}",
                                 Transition.GATE_ACUITY_RESOLVED,
-                                # Machine-readable provenance, not only prose: the
-                                # Datalog check reads who wrote an acuity (I3).
+                                # Machine-readable provenance, not only prose: who
+                                # settled the acuity at the gate (I3).
                                 resolver_role=resolver, engines=engines)],
         }
 

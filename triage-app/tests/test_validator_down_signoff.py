@@ -15,7 +15,7 @@ from app.states import State
 from app.symbolic import prolog
 from app.verification import check_trace
 from tests.conftest import transitions
-from tests.test_component_down import CASE, _datalog_down, _pending, _prolog_down
+from tests.test_component_down import CASE, _pending, _prolog_down, _safety_rules_down
 
 CLEAR = "clear_by_shift_lead"
 
@@ -24,7 +24,7 @@ def _resume(graph, thread, **payload):
     return hydrate(graph.invoke(Command(resume=payload), config_for(thread)))
 
 
-def _at_validator_down_gate(run, monkeypatch, take_down=_datalog_down):
+def _at_validator_down_gate(run, monkeypatch, take_down=_safety_rules_down):
     take_down(monkeypatch)
     _, pending, thread = run(CASE)
     assert pending["gate"] == "validator_down"

@@ -61,8 +61,10 @@ class AcuitySource(str, Enum):
     """How the final acuity was settled. Locked once set (§ acuity_source)."""
 
     SYSTEM = "system"
-    AUTO_RESOLVED = "auto_resolved"
-    HUMAN_CONFIRMED = "human_confirmed"
+    AGREED = "agreed"                    # nurse and model proposed the same level (gap 0)
+    AUTO_RESOLVED = "auto_resolved"      # gap of 1, settled to the nurse's level
+    NURSE_FALLBACK = "nurse_fallback"    # the model could not be used: the nurse's level
+    HUMAN_CONFIRMED = "human_confirmed"  # a charge nurse decided at the gate, and only that
 
 
 class AcuityBucket(str, Enum):
