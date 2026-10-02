@@ -28,9 +28,13 @@ from app.actors.safety import ValidatorUnavailable
 from app.budgets import RETRY_BUDGET
 from app.events import Event
 from app.graph import nodes, routers
+from app.graph._langgraph_fixes import keep_failed_exceptions_alive
 from app.graph.state import TriageState
 from app.labels import Transition, Route
 from app.states import State
+
+# Without it, a pause after a handled node crash can be lost (see the module).
+keep_failed_exceptions_alive()
 
 # States this version deliberately does not implement yet — listed here so
 # the gap is explicit rather than accidental. `treatment move` and `release`

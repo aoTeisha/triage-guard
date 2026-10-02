@@ -38,11 +38,23 @@ shows the deadline rule instead of the writer check.
 *Tests.* `tests/test_safety_end_to_end.py` runs real cases through the graph: rules 2
 and 3 each fire on a mislabelled settle, and an agreed level, a classifier-down
 fallback and a level decided at the gate each reach the queue. With the enum fix
-reverted, the rule 2 and rule 3 tests fail. Two tests that are flaky before and after
-this change: `test_component_down.py`'s `test_a_long_outage_hands_the_case_to_a_shift_lead`
-and `test_revalidate_while_still_down_comes_back_to_the_gate` fail on about one run in
-four to eight, and the board's `test_card_fields_are_exactly_the_allow_list` fails on
-an unlisted `gate_reason` field.
+reverted, the rule 2 and rule 3 tests fail. Still failing, and older than this change:
+the board's `test_card_fields_are_exactly_the_allow_list`, on an unlisted `gate_reason`
+field.
+
+*A pause could vanish after a handled crash (a LangGraph bug).* Two tests in
+`test_component_down.py` failed about one run in ten: after a "revalidate" with
+Prolog still down, the case sometimes ended paused nowhere. LangGraph's runner
+(1.2.11 and 1.2.12) records the errors it routed to an error handler by `id()`, and
+before raising a node's `GraphInterrupt` checks the interrupt's id is not in that
+set. When Python reused a freed exception's id for the interrupt, LangGraph swallowed
+the pause and wrote a final checkpoint with nothing left to run. Any handled crash
+(safety validator, classifier, CRM) followed by a pause in the same run could do
+this, in production as well as in tests. `app/graph/_langgraph_fixes.py` keeps every
+exception the runner commits alive for the runner's lifetime, so no id can be reused
+while it is looked up; `tests/test_langgraph_fixes.py` checks that guarantee. Over
+300 stressed runs the pause was lost 0 times with the fix, against about 8% without.
+Remove the module once LangGraph tracks handled exceptions by object.
 
 **2026-09-29.** No commits yet (working tree only).
 
