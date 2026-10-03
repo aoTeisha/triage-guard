@@ -8,14 +8,15 @@ const GATE_OPTIONS = {
   discrepancy: ["use_nurse_acuity", "use_system_acuity"],
   low_confidence: ["use_nurse_acuity", "use_system_acuity"],
   safety_fail: ["corrected", "escalate_further"],
-  validator_down: ["clear_by_shift_lead"],
+  validator_down: ["revalidate", "escalate_further", "clear_by_shift_lead"],
 };
 const GATE_HEADINGS = {
   discrepancy: "Acuity discrepancy",
   low_confidence: "Low-confidence acuity — needs confirmation",
   safety_fail: "Safety validation failed — correct and revalidate",
   // gatePanel names the engine that was down in front of this.
-  validator_down: "the safety check could not run. A shift lead clears the patient to the queue without it",
+  validator_down: "the safety check could not run. Run it again once the engine is back, "
+    + "escalate, or a shift lead clears the patient to the queue without it",
 };
 const COLUMN_LABELS = {
   waiting: "Waiting",

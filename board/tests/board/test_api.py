@@ -564,3 +564,18 @@ def test_a_reminder_does_not_survive_a_non_release_transition(seeded):
     card = next(c for c in cards if c["case_id"] == case_id)
     assert card["status"] == "treatment_started"
     assert card["reminders"] is None
+
+
+def test_gate_options_match_the_server():
+    """The board's GATE_OPTIONS copy is what decides which buttons a gate shows,
+    so a drifted copy hides options the server accepts (validator_down once
+    offered only the shift-lead clear)."""
+    import json
+    import re
+
+    from app.actors.human_bridge import _OPTIONS
+
+    js = client.get("/static/labels.js").text
+    block = re.search(r"const GATE_OPTIONS = \{(.*?)\};", js, re.S).group(1)
+    on_board = json.loads("{" + re.sub(r"(\w+):", r'"\1":', block).rstrip().rstrip(",") + "}")
+    assert on_board == _OPTIONS
