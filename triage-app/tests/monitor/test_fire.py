@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from langgraph.types import Command
 
+from app.budgets import TIMER_FAILURE_BUDGET
 from app.mock_cases import DEMO_CASES
 from app.monitor import fire, timers
 from app.runner import config_for, hydrate
@@ -357,3 +358,103 @@ def test_handle_treats_an_unreachable_graph_as_store_unreachable(conn):
     row = conn.execute("SELECT fire_state, reconcile_attempts, last_error FROM timers WHERE timer_id=%s",
                        (timer["timer_id"],)).fetchone()
     assert row == ("UNKNOWN", 1, "graph unreachable")
+
+
+# ---- a reminder that keeps failing reaches a person -------------------------------
+# G(retry_count >= 3 -> F escalate_to_human): `claim_retryable` retries a FAILED
+# reminder every tick, so repeated refusals must end up in front of a technician.
+
+def _prolog_down(monkeypatch):
+    monkeypatch.setattr(prolog, "timer_action", lambda ctx: ("engine_unavailable", "prolog: boom"))
+
+
+def _failing_state(conn, timer):
+    return conn.execute("SELECT fire_state, failed_attempts FROM timers WHERE timer_id=%s",
+                        (timer["timer_id"],)).fetchone()
+
+
+def _timer_failing_escalations(conn, case_id):
+    return conn.execute("SELECT recipient_class, reason FROM escalations WHERE case_id=%s AND reason='timer_failing'",
+                        (case_id,)).fetchall()
+
+
+def test_a_reminder_failing_three_times_is_escalated_once(conn, graph, run, monkeypatch):
+    timer = _gate_timer(conn, graph, run)
+    _prolog_down(monkeypatch)
+
+    for _ in range(TIMER_FAILURE_BUDGET + 2):  # past the budget: still one escalation
+        assert fire.handle(conn, timer, graph=graph) == "FAILED"
+
+    assert _timer_failing_escalations(conn, timer["case_id"]) == [("technician", "timer_failing")]
+    # Still FAILED, so `claim_retryable` keeps trying: the outage may clear.
+    assert _failing_state(conn, timer) == ("FAILED", TIMER_FAILURE_BUDGET + 2)
+
+
+def test_a_reminder_failing_fewer_than_three_times_is_not_escalated(conn, graph, run, monkeypatch):
+    timer = _gate_timer(conn, graph, run)
+    _prolog_down(monkeypatch)
+
+    for _ in range(TIMER_FAILURE_BUDGET - 1):
+        fire.handle(conn, timer, graph=graph)
+
+    assert _timer_failing_escalations(conn, timer["case_id"]) == []
+    assert _failing_state(conn, timer) == ("FAILED", TIMER_FAILURE_BUDGET - 1)
+
+
+def test_opa_refusing_a_reminder_counts_as_a_failure(conn, graph, run, monkeypatch):
+    timer = _gate_timer(conn, graph, run)
+    monkeypatch.delenv("OPA_URL", raising=False)
+    monkeypatch.setenv("OPA_BIN", "/nonexistent/opa")
+
+    for _ in range(TIMER_FAILURE_BUDGET):
+        assert fire.notify(conn, timer, graph=graph) == "FAILED"
+
+    assert _timer_failing_escalations(conn, timer["case_id"]) == [("technician", "timer_failing")]
+
+
+def test_a_delivered_reminder_resets_the_failure_count(conn, graph, run, monkeypatch):
+    timer = _gate_timer(conn, graph, run)
+    with monkeypatch.context() as m:
+        _prolog_down(m)
+        for _ in range(TIMER_FAILURE_BUDGET - 1):
+            fire.handle(conn, timer, graph=graph)
+
+    assert fire.handle(conn, {**timer, "fire_state": "FAILED"}, graph=graph) == "DELIVERED"
+    assert _failing_state(conn, timer) == ("DELIVERED", 0)
+
+    # The count starts over: two more failures are not three in a row.
+    timers.set_state(conn, timer["timer_id"], "FAILED")
+    _prolog_down(monkeypatch)
+    for _ in range(TIMER_FAILURE_BUDGET - 1):
+        fire.handle(conn, timer, graph=graph)
+    assert _timer_failing_escalations(conn, timer["case_id"]) == []
+
+
+def test_a_spent_notification_budget_is_not_counted_as_a_failure(conn, graph, run, monkeypatch):
+    """FAIL_BUDGET is the alarm-fatigue throttle working, and it clears by
+    itself as the window moves on; it is not an outage to page anyone about."""
+    monkeypatch.setattr(fire, "NOTIFICATION_BUDGET_PER_WINDOW", 1)
+    timer = _gate_timer(conn, graph, run)
+    timers.record_notification(conn, case_id=timer["case_id"], reason="x", channel="notification_strip",
+                                recipient_class="assigned_nurse")
+
+    for _ in range(TIMER_FAILURE_BUDGET + 1):
+        assert fire.handle(conn, timer, graph=graph) == "FAILED"
+
+    assert _failing_state(conn, timer) == ("FAILED", 0)
+    assert _timer_failing_escalations(conn, timer["case_id"]) == []
+
+
+def test_a_failing_reassessment_timer_is_not_counted(conn, graph, run, monkeypatch):
+    """Unchanged for reassessment: the Datalog pass already escalates a case
+    whose reassessment timer is wedged (`unwatched_case`)."""
+    timer = _reach_monitoring(conn, graph, run)
+    _prolog_down(monkeypatch)
+
+    for _ in range(TIMER_FAILURE_BUDGET + 1):
+        assert fire.handle(conn, timer, graph=graph) == "FAILED"
+
+    row = conn.execute("SELECT fire_state, last_error, failed_attempts FROM timers WHERE timer_id=%s",
+                       (timer["timer_id"],)).fetchone()
+    assert row == ("FAILED", "engine_unavailable:prolog (prolog: boom)", 0)
+    assert conn.execute("SELECT COUNT(*) FROM escalations").fetchone() == (0,)

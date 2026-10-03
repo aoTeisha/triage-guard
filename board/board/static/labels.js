@@ -187,6 +187,7 @@ const REMINDER_LABELS = {
 // What the monitor found on its own, looking across every case at once.
 const ESCALATION_LABELS = {
   unwatched_case: "no timer watching this case",
+  timer_failing: "reminder keeps failing",
   orphan_timer: "timer with no case",
   reassessment_overdue: "reassessment overdue",
   store_unreachable: "case store unreachable",

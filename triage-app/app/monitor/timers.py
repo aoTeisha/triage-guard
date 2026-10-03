@@ -62,6 +62,19 @@ def set_state(conn: psycopg.Connection, timer_id: str, fire_state: str, **fields
     )
 
 
+def set_failed_counted(conn: psycopg.Connection, timer_id: str, last_error: str) -> int:
+    """Set FAILED and add one to `failed_attempts`, in one write. Returns the
+    new count (0 if there is no such row). Counted in SQL rather than from the
+    claimed row, so the count is right however the caller got the timer.
+    """
+    row = conn.execute(
+        "UPDATE timers SET fire_state = 'FAILED', last_error = %s, failed_attempts = failed_attempts + 1, "
+        "updated_at = now() WHERE timer_id = %s RETURNING failed_attempts",
+        (last_error, timer_id),
+    ).fetchone()
+    return row[0] if row else 0
+
+
 def record_chosen_action(conn: psycopg.Connection, timer_id: str, chosen_action: str) -> None:
     """Record which action the symbolic layers picked for this claim, and what
     they overrode. Separate from `set_state`: the chosen action is written

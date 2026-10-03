@@ -192,3 +192,25 @@ def test_a_waiting_case_nobody_is_watching_is_escalated(conn, graph, run):
 
     rows = conn.execute("SELECT recipient_class, reason FROM escalations WHERE case_id=%s", (thread,)).fetchall()
     assert rows == [("technician", "unwatched_case")]
+
+
+def test_a_reminder_the_sweeper_keeps_retrying_reaches_a_technician(conn, graph, run, monkeypatch):
+    """The real loop: due once, then `claim_retryable` on each later tick.
+    Three refusals in a row and a technician hears about it, once."""
+    from app.budgets import TIMER_FAILURE_BUDGET
+    from app.symbolic import prolog
+    from tests.test_gates import GAP_CASE
+
+    state, pending, thread = run(GAP_CASE)
+    timer_id = timers.schedule(conn, case_id=thread, kind="gate_reminder", schedule_seq=0,
+                                due_at="2000-01-01T00:00:00Z")
+    monkeypatch.setattr(prolog, "timer_action", lambda ctx: ("engine_unavailable", "prolog: boom"))
+
+    for _ in range(TIMER_FAILURE_BUDGET + 1):
+        sweeper.run_once(conn, worker_id="w1", graph=graph)
+        timers.set_state(conn, timer_id, "FAILED", locked_until=None)  # the lock ran out
+
+    rows = conn.execute("SELECT recipient_class, reason FROM escalations WHERE case_id=%s", (thread,)).fetchall()
+    assert rows == [("technician", "timer_failing")]
+    assert conn.execute("SELECT failed_attempts FROM timers WHERE timer_id=%s",
+                        (timer_id,)).fetchone() == (TIMER_FAILURE_BUDGET + 1,)

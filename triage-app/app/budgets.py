@@ -105,6 +105,16 @@ def correction_rounds_left(rounds_used: int) -> bool:
 # enough that the sweeper isn't blocked waiting on it.
 RECONCILE_BUDGET: int = 3
 
+# How many times in a row a reminder timer (gate, reassessment or senior
+# reminder) may fail before a technician is told. `claim_retryable` picks a
+# FAILED timer up again on every tick, so without this an engine outage or a
+# layer disagreement would keep a reminder failing forever with nobody told.
+# Counted per timer row in `timers.failed_attempts`, reset by a delivered
+# reminder. Reaching it escalates once per case (`timer_failing`) and the
+# retries carry on, since the outage may clear. 3 is the course rule
+# `G(retry_count >= 3 -> F escalate_to_human)`, not a measured value.
+TIMER_FAILURE_BUDGET: int = 3
+
 # Needs sign-off from clinical staff (a Medical Director), not just an
 # engineering decision — these are patient-safety timings, not a technical
 # setting. The values below are working placeholders so the system runs

@@ -54,6 +54,13 @@ END $$;
 -- rename, and adding it first would leave a second, empty one.
 ALTER TABLE timers ADD COLUMN IF NOT EXISTS chosen_action TEXT;
 
+-- How many times in a row this reminder has come back FAILED (engine outage,
+-- layer disagreement, OPA refusal). Reaching TIMER_FAILURE_BUDGET escalates
+-- to a technician; a delivered reminder resets it. Separate from
+-- `reconcile_attempts`, which counts something else, and not touched by a
+-- spent notification budget, which is a throttle rather than a failure.
+ALTER TABLE timers ADD COLUMN IF NOT EXISTS failed_attempts INTEGER NOT NULL DEFAULT 0;
+
 CREATE TABLE IF NOT EXISTS sweeper_heartbeats (
   worker_id    TEXT PRIMARY KEY,
   beat_at      TIMESTAMPTZ NOT NULL

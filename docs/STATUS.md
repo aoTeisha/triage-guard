@@ -4,7 +4,8 @@
 and the classifier-down settle got their own `acuity_source`; Datalog left safety
 validation. Bad vitals go back to the nurse, and a CRM condition label the privacy
 policy would refuse is left out of the model's view, instead of either halting the case
-at the privacy check. Previous entry below.)
+at the privacy check. A reminder timer that keeps failing now reaches a technician.
+Previous entry below.)
 
 **2026-10-02.**
 
@@ -77,6 +78,25 @@ CRM condition label that is not a short label (`"type 2 diabetes, on metformin"`
 - The vital set, the bp pattern and the label pattern are restated in Python;
   `tests/symbolic/test_opa_privacy.py` now checks them against `privacy.rego`, as it
   does the complaint codes and age bands.
+
+*A reminder that keeps failing now reaches a technician.* `claim_retryable` picks a
+FAILED timer up again on every tick (about every 5 seconds), with no count. For a
+reassessment timer stuck on `engine_unavailable:` or `layer_disagreement` the Datalog
+pass already raises `unwatched_case`, but a gate, reassessment or senior reminder stuck
+the same way retried forever and nobody was told. Each reminder now counts its
+failures in a row (`timers.failed_attempts`, new column). At
+`TIMER_FAILURE_BUDGET` (3, `app/budgets.py`, the course rule
+`G(retry_count ≥ 3 → F escalate_to_human)`) the case gets one `timer_failing`
+escalation to a technician, deduplicated per case like the Datalog findings. Retries
+carry on, since the outage may clear, and a delivered reminder resets the count. What
+counts: a Prolog outage, a BPpy/Prolog disagreement, and OPA denying or failing to
+answer the notify gate (`fire._fail`). What does not: a spent notification budget
+(`FAIL_BUDGET`), which is the alarm-fatigue throttle working and clears as the hour's
+window moves on, and reassessment timers, which keep their `unwatched_case` path
+unchanged. The board shows the new reason as "reminder keeps failing". Tests in
+`tests/monitor/test_fire.py` and `test_sweeper.py`. Not covered: a `crm_writeback`
+timer with the CRM down also retries silently (I17); it is a different failure (the
+CRM, not the monitor's engines) and was left alone.
 
 **2026-09-29.** No commits yet (working tree only).
 

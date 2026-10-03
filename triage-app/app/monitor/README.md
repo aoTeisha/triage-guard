@@ -302,8 +302,9 @@ table forever.
 ### `escalations` — every time a human had to be paged
 
 One row per out-of-band alert raised either by a timer that ran out of
-reconciliation attempts (`ESCALATED_TO_HUMAN`) or by the Datalog
-consistency check (`unwatched_case`, `orphan_timer`).
+reconciliation attempts (`ESCALATED_TO_HUMAN`), by a reminder that kept
+failing (`timer_failing`), or by the Datalog consistency check
+(`unwatched_case`, `orphan_timer`).
 
 Columns:
 
@@ -315,7 +316,7 @@ Columns:
 | `raised_at` | When it happened. |
 | `channel` | Where the alert went — currently always `notification_strip`. |
 | `recipient_class` | Who it's addressed to: `technician` (infra problems, Datalog findings) or `charge_nurse` (a reassessment that's ambiguously overdue). |
-| `reason` | Why: `store_unreachable`, `reassessment_overdue`, `unwatched_case`, or `orphan_timer`. |
+| `reason` | Why: `store_unreachable`, `reassessment_overdue`, `unwatched_case`, `orphan_timer`, or `timer_failing` (a reminder refused `TIMER_FAILURE_BUDGET` times in a row). |
 
 **Who reads it.** The board, over the same 2-hour window and on the same
 refresh as `notifications` above. An escalation is shown in red rather than

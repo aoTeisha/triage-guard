@@ -24,6 +24,7 @@ from app.budgets import (
     NOTIFICATION_BUDGET_PER_WINDOW,
     NOTIFICATION_WINDOW_MINUTES,
     RECONCILE_BUDGET,
+    TIMER_FAILURE_BUDGET,
 )
 from app.monitor import bthreads, timers
 from app.observability import case_trace, record_outcome
@@ -106,12 +107,9 @@ def handle(conn, timer: dict[str, Any], *, graph) -> str:
     selected, proposed = bthreads.select_action(ctx)
     expected, why = prolog.timer_action(ctx)
     if expected == "engine_unavailable":
-        timers.set_state(conn, timer["timer_id"], "FAILED", last_error=f"engine_unavailable:prolog ({why})")
-        return "FAILED"
+        return _fail(conn, timer, f"engine_unavailable:prolog ({why})")
     if selected.lower() != expected:
-        timers.set_state(conn, timer["timer_id"], "FAILED",
-                         last_error=f"layer_disagreement: bppy={selected} prolog={expected}")
-        return "FAILED"
+        return _fail(conn, timer, f"layer_disagreement: bppy={selected} prolog={expected}")
     timers.record_chosen_action(conn, timer["timer_id"],
                                 selected if selected == proposed else f"{selected} (proposed {proposed}: {why})")
 
@@ -124,6 +122,8 @@ def handle(conn, timer: dict[str, Any], *, graph) -> str:
     if selected == "WRITEBACK":
         return writeback(conn, timer, graph=graph)
     if selected == "FAIL_BUDGET":
+        # A throttle doing its job, not a failure: not counted by `_fail`, and
+        # it clears on its own as old notifications leave the window.
         timers.set_state(conn, timer["timer_id"], "FAILED", last_error="notification budget exhausted")
         return "FAILED"
     timers.set_state(conn, timer["timer_id"], "CANCELLED")
@@ -223,14 +223,12 @@ def _send_reminder(conn, timer: dict[str, Any], ctx: dict[str, Any]) -> str:
     gate = opa.evaluate({"action": "notify", "pause_active": ctx["pause_active"],
                          "notify_count": ctx["notify_count"], "notify_budget": ctx["notify_budget"]})
     if not gate["allow"]:
-        timers.set_state(conn, timer["timer_id"], "FAILED",
-                         last_error="opa denied notify: " + "; ".join(gate["deny_reasons"]))
-        return "FAILED"
+        return _fail(conn, timer, "opa denied notify: " + "; ".join(gate["deny_reasons"]))
 
     reason = f"{timer['kind']}_{timer['schedule_seq']}"
     timers.record_notification(conn, case_id=timer["case_id"], reason=reason, channel="notification_strip",
                                 recipient_class=ctx["recipient_class"])
-    timers.set_state(conn, timer["timer_id"], "DELIVERED")
+    timers.set_state(conn, timer["timer_id"], "DELIVERED", failed_attempts=0)
     return "DELIVERED"
 
 
@@ -272,6 +270,27 @@ def notify(conn, timer: dict[str, Any], *, graph) -> str:
     it by name; choosing the action is `handle`'s job.
     """
     return handle(conn, timer, graph=graph)
+
+
+def _fail(conn, timer: dict[str, Any], last_error: str) -> str:
+    """Set FAILED for a refusal. `claim_retryable` retries it on every tick;
+    for a reminder, each refusal in a row is counted, and once the count
+    reaches `TIMER_FAILURE_BUDGET` a technician is told, once per case.
+    Retrying carries on afterwards, since the outage may clear. A
+    reassessment timer is not counted: the Datalog pass already escalates a
+    case whose reassessment timer is stuck this way (`unwatched_case`).
+    """
+    if timer["kind"] not in _REMINDER_PAUSES:
+        timers.set_state(conn, timer["timer_id"], "FAILED", last_error=last_error)
+        return "FAILED"
+    failures = timers.set_failed_counted(conn, timer["timer_id"], last_error)
+    if failures >= TIMER_FAILURE_BUDGET and not timers.escalation_exists(
+            conn, case_id=timer["case_id"], reason="timer_failing"):
+        fid = timer.get("fire_id") or fire_id(timer["case_id"], timer["kind"],
+                                              timer["schedule_seq"], timer["due_at"])
+        timers.record_escalation(conn, case_id=timer["case_id"], fire_id=fid, channel="notification_strip",
+                                  recipient_class="technician", reason="timer_failing")
+    return "FAILED"
 
 
 def _inconclusive(conn, timer: dict[str, Any], fid: str, attempts: int, *,
