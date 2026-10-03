@@ -1,8 +1,71 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-10-03 (an impossible vital, such as a phone number typed into
-heart rate, now goes back to the nurse at intake instead of reaching the model.
-Previous entry below.)
+**Last updated:** 2026-10-03 (a re-file now starts a clean triage: safety rule 5,
+the classifier's last output and the retry budgets no longer carry over from the
+triage before it; and a bad classifier answer is asked again before the fallback.
+Previous entries below.)
+
+**2026-10-03, later.**
+
+*A re-filed case failed safety for an outage that had ended.* `degraded` is
+append-only, and safety rule 5 (`classifier_down_yet_proposed`) read
+`classifier_down` from it. A case triaged while the classifier was down kept
+`acuity_classifier` in `degraded`. When the nurse re-filed and the classifier
+answered, the new proposal contradicted the stale flag: "the classifier is flagged
+unusable, yet system_proposed_acuity is 2". A charge nurse can correct only `acuity`,
+which cannot clear rule 5, so every correction failed and after three rounds the case
+went to a shift lead, for a record that was fine. `safety.facts_from` now sets
+`classifier_down` from this triage's own audit records (a `v_exhausted_classifier`
+record after the last `front_door_rerun`), the boundary rule 3 already uses.
+`degraded` keeps its meaning, history for the board's "Running degraded" box.
+The rule-5 row in `SPECIFICATION.md` § Safety validation rules now says the same.
+
+*Other per-triage state checked for the same staleness.* `gate_disabled`,
+`human_decision`, `validator_down` and `payload_unverified` were already reset on a
+re-file. `confidence` is read only with `gate_disabled`, which is reset. But the
+classifier fallback writes no gap, confidence or danger-zone annotation, so a re-file
+that fell back kept the last triage's `acuity_gap`, `confidence` and
+`danger_zone_vitals`, and the board showed the old gap and the old vitals' danger
+chips. The re-file now clears those and `system_proposed_acuity`. `flags` stays
+append-only, like `degraded`: nothing in the graph reads it, and
+`cross_check_off_review_later` is meant to outlive the triage.
+
+*Retry budgets now start over on a re-file.* `retry_count` merges by maximum, so a
+replayed node cannot lower a count, but that also meant a re-file could never reset
+one: a budget spent in one triage stayed spent in every later one. `merge_counts`
+(`app/graph/state.py`) now starts from empty when an update carries the
+`RESET_COUNTS` key, and the re-file writes only that key. Within a triage the
+maximum still holds. The crash budgets need nothing: `RetryPolicy` counts attempts
+per node run and keeps no state.
+
+*A bad classifier answer is now asked again, as the spec says.* `classifying`
+checked the reply against `type(proposal)`, which every object passes, so the
+`V_RETRY_CLASSIFIER` edge never ran. A level of 47 failed while the client built the
+proposal: one call, then the fallback. No reply at all crashed the node instead:
+three calls through the crash `RetryPolicy`. The node now checks against
+`AcuityProposal`, and treats a `ValidationError` (or LangChain's
+`OutputParserException`) raised while building the proposal as the same failed
+check. Either bad answer is discarded (`discard_output`, `V_RETRY_CLASSIFIER`), asked
+again on the `acuity_classifier` budget (2 answers), then falls back to the nurse's
+level, as slide 7 describes. A transport error such as `ConnectionError` still takes
+the crash path, 3 attempts. `verification.schema_failure` builds the shared failed
+result.
+
+*Tests.* `test_safety_end_to_end.py` runs the reported case (the classifier down for
+the first triage, back for the re-file), which now passes safety and queues, and a
+re-file that falls back, which shows no stale gap, confidence or danger zone. Both
+fail on the old code. `test_safety_validation.py` covers `facts_from` with a fallback
+before and after the last re-file, and a fallback plus a proposal in the same triage
+still failing rule 5. `test_reassessment.py` checks the count merge with and
+without a reset, and runs a case whose classifier spends its budget in triage 1 and
+gets it back after the re-file. `test_failures.py` counts the classifier's calls
+for each failure: a level of 47 and no reply are each asked twice, then fall back;
+a `ConnectionError` gets three attempts and no `V_RETRY_CLASSIFIER`. The new graph
+tests fail on the old code. Full suites, on `feat/remove-dead-safety-edges`:
+triage-app 672 passed, with the same 6
+failures as without the change (5 in `tests/monitor/test_writeback.py` and
+`test_completing_intake_cannot_overwrite_the_patient_id`, which fail in this
+environment either way); board 153 passed, 1 skipped.
 
 **2026-10-03.**
 
