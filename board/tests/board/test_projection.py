@@ -17,6 +17,8 @@ ALLOWED = {
     "acuity_source", "nurse_proposed_acuity", "system_proposed_acuity",
     "arrival_time", "waited_min", "order_key", "flags", "degraded",
     "gate_pending", "danger_zone_vitals", "senior_required",
+    # Why the gate is open: a reason code ("validator_down"), never patient data.
+    "gate_reason",
 }
 
 # Identifier-class or model-facing fields. None of these may ever appear on a card.
