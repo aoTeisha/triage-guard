@@ -294,9 +294,12 @@
     .gate-resolve h3::before { content: "⚠ "; }
     .gate-resolve.severe h3 { color: var(--emergent); }
     .gate-resolve .heading { font-size: 0.82rem; line-height: 1.4; margin-bottom: 0.7rem; }
-    .gate-resolve .ai-reasoning { font-size: 0.78rem; line-height: 1.4; color: var(--muted);
-                   border-left: 2px solid var(--line); padding-left: 0.5rem; margin: -0.3rem 0 0.7rem; }
-    .gate-resolve .ai-label { font-weight: 600; color: var(--text); }
+    .gate-resolve .ai-reasoning { font-size: 0.78rem; line-height: 1.4; margin: -0.3rem 0 0.7rem; }
+    .gate-resolve .ai-label { font-weight: 600; color: var(--text); cursor: pointer; }
+    .gate-resolve .ai-label:focus-visible { outline: 1px solid var(--warn); outline-offset: 2px; }
+    .gate-resolve .ai-text { color: var(--muted); border-left: 2px solid var(--line);
+                   padding: 0.1rem 0.5rem; margin-top: 0.3rem; max-height: calc(6 * 1.4em);
+                   overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
     .gate-resolve label { display: block; font-size: 0.75rem; color: var(--muted); margin: 0 0 0.2rem; }
     .gate-resolve select { width: 100%; background: var(--panel-2); color: var(--text);
                    border: 1px solid var(--line); border-radius: 6px;

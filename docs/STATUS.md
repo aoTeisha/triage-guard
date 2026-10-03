@@ -18,9 +18,11 @@ the state, and `_mask` covers the field like the rest of it. `case_view` adds
 `confidence` and `classifier_rationale`, so `/api/case/{id}` carries them. The
 queue card does not: `CaseCard`'s allow-list is unchanged, and both fields are
 now in the projection test's forbidden set. On the `discrepancy` and
-`low_confidence` gates the panel shows "AI's reasoning (81% confident): …"
-under the heading. With no model proposal it shows nothing, and the text is set
-through `textContent`, never as markup.
+`low_confidence` gates the panel shows a collapsed "AI's reasoning (81%
+confident)" dropdown under the heading (`<details>`); opened, the reason sits in
+a box capped at six lines that scrolls, wrapping long words. With no model
+proposal it shows nothing, and the text is set through `textContent`, never as
+markup.
 
 *Tests.* `test_classifier_rationale.py` checks that the rationale is stored
 after classifying, that a national ID and a phone number in it are redacted,
@@ -29,7 +31,9 @@ falls back leaves no old reason on the case view, and that the Langfuse mask
 covers it. The board checks that `/api/case/{id}` exposes it and the card does
 not. A Playwright run against the real board (scratch script, Chromium from
 `/opt/pw-browsers`; neither project depends on Playwright) showed the line on a
-discrepancy gate with no page errors. Full suites, without the CRM stub:
+discrepancy gate: it loads collapsed, opening it shows the reason, a short reason
+has no scrollbar, and a 20-line reason scrolls inside its box while the panel grows
+only by that box, with no page errors. Full suites, without the CRM stub:
 triage-app 679 passed, 6 failed (672 passed before; the 6 are the five
 `test_writeback.py` tests and `test_completing_intake_cannot_overwrite_the_patient_id`,
 which need the CRM stub); board 154 passed, 1 skipped (153 before).
