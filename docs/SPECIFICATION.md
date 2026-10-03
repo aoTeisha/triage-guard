@@ -759,7 +759,7 @@ Five rules, all Prolog's, each reasoning over one case's fields (`rules/safety.p
 | 2 | `acuity_source = auto_resolved` while the gap was ≥ 2 | the automatic settle exists only for gaps 0 and 1 (I4), so the case skipped a charge nurse it was owed | Prolog |
 | 3 | `acuity_source = human_confirmed` with no charge-nurse decision at the gate (`GATE_ACUITY_RESOLVED` or `GATE_SAFETY_CORRECTED`) in **this** triage's log | `human_confirmed` means a charge nurse settled the level at the gate and nothing else (agreement is `agreed`, the classifier-down settle is `nurse_fallback`), so the label with no such record claims a decision that never happened; a re-file starts a new triage, so last triage's decision vouches for nothing | Prolog |
 | 4 | `acuity` matches neither proposal and no human set it | the level came from nowhere | Prolog |
-| 5 | the classifier is flagged unusable, yet `system_proposed_acuity` is present | `fallback_manual` runs *because* the classifier is unusable; a proposal from it cannot also exist | Prolog |
+| 5 | **this** triage's log holds the classifier fallback (`fallback_manual`, `V_EXHAUSTED_CLASSIFIER`), yet `system_proposed_acuity` is present | `fallback_manual` runs *because* the classifier is unusable, so a proposal from it cannot also exist; a re-file starts a new triage, so last triage's outage (still listed in `degraded`, which is history) says nothing about this one's proposal | Prolog |
 
 Two checks are deliberately not here, because nothing upstream lets them fail. Who
 wrote the acuity: only the gate writes one, and only after Prolog's

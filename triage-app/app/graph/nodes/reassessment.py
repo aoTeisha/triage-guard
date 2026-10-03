@@ -97,6 +97,13 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
         "approved": False,
         "correction_rounds": 0,
         "senior_required": False,
+        # Last triage's classifier output. The fallback path writes none of
+        # these but the proposal, so a re-file that falls back would otherwise
+        # show the old gap and the old vitals' danger zone on the board.
+        "system_proposed_acuity": None,
+        "confidence": None,
+        "acuity_gap": None,
+        "danger_zone_vitals": [],
         # The last triage's payload and outage marks: a payload left here would
         # route this triage past a failed privacy check.
         "redacted_payload": {},

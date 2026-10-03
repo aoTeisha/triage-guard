@@ -47,5 +47,8 @@ violation(acuity_matches_no_proposal) :-
 
 %% 5. The degrade path and the data disagree. `fallback_manual` runs because the
 %%    classifier is unusable, so a proposal from it cannot also exist.
+%%    `classifier_down` is asserted when *this triage's* audit log holds the
+%%    fallback (app/actors/safety.py, `classifier_fell_back`), the same boundary
+%%    rule 3 uses: an outage in a triage before a re-file does not count.
 violation(classifier_down_yet_proposed) :-
     classifier_down, system_proposal(S), S \== none.

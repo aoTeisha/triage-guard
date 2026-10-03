@@ -174,6 +174,47 @@ def test_a_downed_classifier_with_no_proposal_passes():
     assert verdict.verdict == "pass"
 
 
+FELL_BACK = {"action": "fallback_manual", "transition": Transition.V_EXHAUSTED_CLASSIFIER.value}
+REFILED = {"action": "emit_event_log", "transition": Transition.FRONT_DOOR_RERUN.value}
+
+
+def test_facts_from_reads_the_fallback_off_this_triages_records():
+    state = TriageState(case_id="c1", audit_log=[FELL_BACK])
+    assert safety.facts_from(state)["classifier_down"] is True
+
+
+def test_facts_from_ignores_a_fallback_before_the_last_refile():
+    """`degraded` is append-only history, so it still names the classifier after
+    a re-file. Rule 5 judges this triage only, like rule 3."""
+    state = TriageState(case_id="c1", degraded=["acuity_classifier"],
+                        audit_log=[FELL_BACK, REFILED], system_proposed_acuity=2)
+    facts = safety.facts_from(state)
+    assert facts["classifier_down"] is False
+    assert facts["triage_records"] == []
+
+
+def test_facts_from_sees_a_fallback_after_the_last_refile():
+    state = TriageState(case_id="c1", audit_log=[REFILED, FELL_BACK])
+    assert safety.facts_from(state)["classifier_down"] is True
+
+
+def test_a_working_classifier_after_a_refile_passes_rule_5():
+    state = TriageState(case_id="c1", acuity=2, acuity_source=AcuitySource.AGREED,
+                        acuity_gap=0, nurse_proposed_acuity=2, system_proposed_acuity=2,
+                        degraded=["acuity_classifier"], audit_log=[FELL_BACK, REFILED])
+    assert safety.validate(safety.facts_from(state)).verdict == "pass"
+
+
+def test_a_fallback_and_a_proposal_in_the_same_triage_still_fail_rule_5():
+    """The contradiction rule 5 exists for, read through `facts_from`: this
+    triage fell back, yet holds a proposal."""
+    state = TriageState(case_id="c1", acuity=2, acuity_source=AcuitySource.AGREED,
+                        acuity_gap=0, nurse_proposed_acuity=2, system_proposed_acuity=2,
+                        audit_log=[FELL_BACK, REFILED, FELL_BACK])
+    assert "classifier is flagged unusable" in only_reason(
+        safety.validate(safety.facts_from(state)))
+
+
 # ---- the engine itself ------------------------------------------------------
 
 
