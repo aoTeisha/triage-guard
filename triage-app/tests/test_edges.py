@@ -87,11 +87,7 @@ def test_classifier_exhaustion_degrades_instead_of_halting():
 
 
 def test_safety_exhaustion_routes_to_a_human_not_a_halt():
-    """AF_SAFETY: every case goes to a charge nurse so no-approval-bypass holds.
-
-    The validator-down edge is the error handler's `goto`. It is drawn through
-    `destinations=`, not the router, so it has to be checked here or the
-    picture could lose it while the code still takes it."""
+    """AF_SAFETY: every case goes to a charge nurse so no-approval-bypass holds."""
     assert (State.SAFETY_VALIDATING.value, "safety_fallback") in edges()
     assert ("safety_fallback", State.AWAITING_HUMAN_APPROVAL.value) in edges()
 

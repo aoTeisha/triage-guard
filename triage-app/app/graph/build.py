@@ -95,7 +95,6 @@ def _retry_policy(state: State) -> RetryPolicy | None:
 # to its degrade node, one degrade implementation per agent.
 
 
-# Drawn-only edges for crash `goto`s the edge map does not already carry.
 # Label: what the case is waiting on once it gets there.
 _CRASH_DESTINATIONS: dict[State, dict[str, str]] = {
     State.SAFETY_VALIDATING: {"safety_fallback": "validator_down"},
@@ -283,9 +282,7 @@ def build_graph(checkpointer=None):
         },
     )
 
-    # ---- safety validation: cleared or failed ---------------------------------
-    # The third way out, validator down, is the error handler's `goto`, drawn
-    # through `destinations=` on the node above.
+    # ---- safety validation: cleared or failed (validator down: _CRASH_DESTINATIONS)
     b.add_conditional_edges(
         State.SAFETY_VALIDATING,
         routers.route_after_safety,

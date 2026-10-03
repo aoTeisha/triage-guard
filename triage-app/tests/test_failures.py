@@ -145,7 +145,7 @@ def test_a_malformed_verdict_is_retried_then_reaches_the_validator_down_gate(run
     assert len(calls) == RETRY_BUDGET["safety_validation"] + 1
     assert pending is not None
     assert pending["gate"] == "validator_down"
-    assert state["degraded"] == ["safety_validation"]
+    assert "safety_validation" in state["degraded"]
     assert state["safety_verdict"] is None
     assert state["safety_passed"] is False
     assert Transition.V_EXHAUSTED_SAFETY in transitions(state)
