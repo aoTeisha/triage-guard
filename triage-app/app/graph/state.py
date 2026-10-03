@@ -90,6 +90,10 @@ class TriageState(BaseModel):
     nurse_proposed_acuity: Optional[int] = None
     system_proposed_acuity: Optional[int] = None
     confidence: Optional[float] = None
+    # The classifier's own reason for its proposal, identifiers already redacted.
+    # Shown to staff on the gate beside the two levels; None when the model's
+    # proposal was dropped (classifier fallback) or a re-file started a new triage.
+    classifier_rationale: Optional[str] = None
     # ESI decision point D, computed exactly against the age-banded table. An
     # annotation for the card and the audit log; it never changes a level.
     danger_zone_vitals: list[str] = Field(default_factory=list)

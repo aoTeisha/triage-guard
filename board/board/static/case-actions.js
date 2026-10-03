@@ -171,6 +171,18 @@ function gatePanel(caseId, view, card) {
       ? GATE_HEADINGS[reason]
       : `Awaiting a charge nurse's decision (${rawReason || "reason unknown"}).`;
   box.append(el("div", "heading", heading));
+  // Why the model chose its level, and how sure it was — what a charge nurse
+  // weighs when picking between the two. Only on the acuity gates, and only
+  // while there is a model proposal: a classifier fallback has no reason to show.
+  const aiReason = (reason === "discrepancy" || reason === "low_confidence")
+    && card && card.system_proposed_acuity != null && view.classifier_rationale;
+  if (aiReason) {
+    const sure = typeof view.confidence === "number"
+      ? ` (${Math.round(view.confidence * 100)}% confident)` : "";
+    const why = el("div", "ai-reasoning");
+    why.append(el("span", "ai-label", `AI's reasoning${sure}:`), " ", view.classifier_rationale);
+    box.append(why);
+  }
 
   const role = el("select");
   [["charge_nurse", "charge_nurse"], ["shift_lead", "shift_lead"],

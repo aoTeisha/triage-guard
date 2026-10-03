@@ -1,9 +1,38 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-10-03 (a re-file now starts a clean triage: safety rule 5,
-the classifier's last output and the retry budgets no longer carry over from the
-triage before it; and a bad classifier answer is asked again before the fallback.
-Previous entries below.)
+**Last updated:** 2026-10-03 (the gate now shows the classifier's reason and
+confidence beside the two levels. Previous entries below.)
+
+**2026-10-03, latest.**
+
+*The gate showed two levels but not why the model chose its own.* The classifier
+must return a `rationale` (`app/schemas/acuity_proposal.py`), but `classifying`
+kept only the level, confidence and source, so the reason was dropped. A charge
+nurse choosing between the nurse's level and the model's could not see why the
+model chose its level or how unsure it was. Now `classifying` stores it on the
+case as `classifier_rationale`, passed through `redact_identifiers` first like
+any other text that leaves the model. A classifier fallback sets it to None, and
+so does a re-file, next to the other per-triage resets in `reassessment.py`, so
+a new triage never shows the last triage's reason. Langfuse node spans record
+the state, and `_mask` covers the field like the rest of it. `case_view` adds
+`confidence` and `classifier_rationale`, so `/api/case/{id}` carries them. The
+queue card does not: `CaseCard`'s allow-list is unchanged, and both fields are
+now in the projection test's forbidden set. On the `discrepancy` and
+`low_confidence` gates the panel shows "AI's reasoning (81% confident): …"
+under the heading. With no model proposal it shows nothing, and the text is set
+through `textContent`, never as markup.
+
+*Tests.* `test_classifier_rationale.py` checks that the rationale is stored
+after classifying, that a national ID and a phone number in it are redacted,
+that a fallback stores none, that a re-file replaces it, that a re-file which
+falls back leaves no old reason on the case view, and that the Langfuse mask
+covers it. The board checks that `/api/case/{id}` exposes it and the card does
+not. A Playwright run against the real board (scratch script, Chromium from
+`/opt/pw-browsers`; neither project depends on Playwright) showed the line on a
+discrepancy gate with no page errors. Full suites, without the CRM stub:
+triage-app 679 passed, 6 failed (672 passed before; the 6 are the five
+`test_writeback.py` tests and `test_completing_intake_cannot_overwrite_the_patient_id`,
+which need the CRM stub); board 154 passed, 1 skipped (153 before).
 
 **2026-10-03, later.**
 

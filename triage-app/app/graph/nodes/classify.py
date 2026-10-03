@@ -15,6 +15,7 @@ from app.deterministic import assign_order_key, audit, bucket_for, compute_acuit
 from app.esi import danger_zone
 from app.graph.nodes._shared import _bump
 from app.graph.state import TriageState
+from app.guards.identifiers import redact_identifiers
 from app.labels import Transition
 from app.schemas import AcuityProposal
 from app.states import AcuitySource, State
@@ -64,6 +65,9 @@ def classifying(state: TriageState) -> dict[str, Any]:
         "control_state": State.CLASSIFYING.value,
         "system_proposed_acuity": checked.system_proposed_acuity,
         "confidence": checked.confidence,
+        # Model-written text bound for the board: redacted like anything else
+        # that leaves the model, before it is stored on the case.
+        "classifier_rationale": redact_identifiers(checked.rationale),
         "acuity_source": checked.acuity_source,
         "danger_zone_vitals": breaches,
         "audit_log": [invoked,
@@ -90,6 +94,7 @@ def classifier_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
     update: dict[str, Any] = {
         "control_state": State.CLASSIFYING.value,
         "system_proposed_acuity": None,
+        "classifier_rationale": None,
         "gate_disabled": True,
         "degraded": [] if state.payload_unverified else ["acuity_classifier"],
         "flags": ["cross_check_off_review_later"],

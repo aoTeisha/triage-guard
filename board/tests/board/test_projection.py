@@ -25,6 +25,8 @@ ALLOWED = {
 FORBIDDEN = {
     "name", "date_of_birth", "dob", "phone", "patient_history",
     "raw_payload", "redacted_payload", "parsed_fields", "safety_verdict",
+    # Model-written: shown on the gate in the detail panel, never on the queue.
+    "classifier_rationale", "confidence",
 }
 
 
@@ -37,6 +39,8 @@ def test_no_identifier_or_payload_field_reaches_the_card():
     state["patient_history"] = {"name": "Ada L.", "date_of_birth": "1950-01-01"}
     state["raw_payload"] = {"free_text": "chest pain", "name": "Ada L."}
     state["redacted_payload"] = {"chief_complaint": "chest_pain"}
+    state["classifier_rationale"] = "Ada L. sounds unwell"
+    state["confidence"] = 0.73
 
     dumped = card_from_state(state).model_dump()
     assert FORBIDDEN.isdisjoint(dumped)

@@ -105,6 +105,7 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
         # show the old gap and the old vitals' danger zone on the board.
         "system_proposed_acuity": None,
         "confidence": None,
+        "classifier_rationale": None,
         "acuity_gap": None,
         "danger_zone_vitals": [],
         # The last triage's payload and outage marks: a payload left here would
