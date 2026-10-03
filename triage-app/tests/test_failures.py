@@ -124,6 +124,34 @@ def test_a_failing_verdict_never_reaches_monitoring_unattended(run, monkeypatch)
     assert state["approved"] is False
 
 
+# ---- V_EXHAUSTED_SAFETY: a malformed verdict is a crash, not a dead end -----
+
+
+def test_a_malformed_verdict_is_retried_then_reaches_the_validator_down_gate(run, monkeypatch):
+    """`validate` always builds a `SafetyVerdict`, so this cannot happen today.
+    If it ever did, the node raises: the retry policy runs it again, and once the
+    budget is spent the error handler sends the case to `safety_fallback` and a
+    charge nurse. The malformed answer is never written to state."""
+    calls = []
+
+    def malformed(case):
+        calls.append(case)
+        return {"verdict": "maybe"}
+
+    monkeypatch.setattr(safety, "validate", malformed)
+
+    state, pending, _ = run(GAP_FREE_CASE)
+
+    assert len(calls) == RETRY_BUDGET["safety_validation"] + 1
+    assert pending is not None
+    assert pending["gate"] == "validator_down"
+    assert state["degraded"] == ["safety_validation"]
+    assert state["safety_verdict"] is None
+    assert state["safety_passed"] is False
+    assert Transition.V_EXHAUSTED_SAFETY in transitions(state)
+    assert state["control_state"] != State.MONITORING.value
+
+
 # ---- AF_DB: CRM outage degrades, it does not stop the line ----------------
 
 

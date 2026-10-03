@@ -109,7 +109,6 @@ class Transition(str, Enum):
     V_HALT_PII = "v_halt_pii"
     V_RETRY_CLASSIFIER = "v_retry_classifier"
     V_EXHAUSTED_CLASSIFIER = "v_exhausted_classifier"
-    V_RETRY_SAFETY = "v_retry_safety"
     V_EXHAUSTED_SAFETY = "v_exhausted_safety"
 
     # ---- governance ----------------------------------------------------------

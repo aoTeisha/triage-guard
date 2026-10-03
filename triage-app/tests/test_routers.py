@@ -134,7 +134,7 @@ def test_a_proposed_acuity_proceeds():
     assert routers.route_after_classify(s(system_proposed_acuity=3)) is Route.PROCEED
 
 
-# ---- safety (SAFETY_PASSED / SAFETY_FAILED / AF_SAFETY) ---------------------
+# ---- safety (SAFETY_PASSED / SAFETY_FAILED) ---------------------------------
 
 
 def test_a_passing_verdict_clears():
@@ -151,11 +151,11 @@ def test_a_failing_verdict_escalates():
     assert routers.route_after_safety(state) is Route.ESCALATE
 
 
-def test_a_missing_verdict_exhausts_into_the_human_route():
-    assert (
-        routers.route_after_safety(s(retry_count={"safety_validation": 99}))
-        is Route.EXHAUSTED
-    )
+def test_a_missing_verdict_raises_rather_than_picking_a_route():
+    """The node never returns without a verdict, so the router has no route for
+    it. Raising sends the case down the crash path to `safety_fallback`."""
+    with pytest.raises(RuntimeError, match="without a verdict"):
+        routers.route_after_safety(s())
 
 
 # ---- the gate (GATE_* / BLK / loop guard) ------------------------------------

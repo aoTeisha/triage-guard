@@ -86,12 +86,15 @@ def route_acuity_gap(state: TriageState) -> Route:
 
 
 def route_after_safety(state: TriageState) -> Route:
-    """SAFETY_PASSED / SAFETY_FAILED / V_RETRY_SAFETY / AF_SAFETY."""
+    """SAFETY_PASSED / SAFETY_FAILED.
+
+    The node only returns with a verdict: a validator that cannot answer, or
+    answers with something malformed, raises, and the error handler takes the
+    case to `safety_fallback` (AF_SAFETY / V_EXHAUSTED_SAFETY). No verdict here
+    is a bug, so it raises into that same path rather than picking a route.
+    """
     if state.safety_verdict is None:
-        return (
-            Route.RETRY if retry_budget_left(state.retry_count, "safety_validation")
-            else Route.EXHAUSTED
-        )
+        raise RuntimeError("safety_validating returned without a verdict")
     return Route.CLEARED if state.safety_passed else Route.ESCALATE
 
 

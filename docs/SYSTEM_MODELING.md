@@ -110,7 +110,10 @@ guards safety (not compromisable - it needs a human substitute).
   one; routing _all_ cases, not just suspicious ones, is the safe choice, because without
   the validator the system cannot tell safe from unsafe. Cost: the human approval queue
   spikes - quantified in the capacity model. The validator's rules run on Prolog; if it
-  cannot answer, the check has no verdict at all, not a failing one. The charge nurse therefore has nothing to correct:
+  cannot answer, the check has no verdict at all, not a failing one. A malformed verdict
+  is treated the same way: the check is retried once, as for a crash, and then the case
+  goes to the charge nurse by this same route. There is one route to the human, not two.
+  The charge nurse therefore has nothing to correct:
   the gate offers "revalidate", which runs the check again once the engine is back, or
   "escalate further". Each revalidation uses a correction round, so a long outage hands
   the case to a shift lead instead of looping. An outage must never keep a patient from
