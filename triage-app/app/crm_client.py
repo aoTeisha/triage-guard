@@ -74,15 +74,22 @@ def _lookup(url: str, timeout: float) -> PatientLookupResult:
 
 def visit_record(values: dict[str, Any]) -> dict[str, Any]:
     """What one visit leaves in the CRM (I17): when, how acute, and the
-    complaint code as words. No identifiers — they never left the CRM — and no
-    prose. Shared by the release step (the first attempt) and the sweeper's
-    retry, so the two can never write different stories.
+    complaint code and vitals under the names the model payload uses, so a
+    later case can send them on as history. Both are taken from the payload the
+    privacy check passed; None when there is none. `notes` is the complaint as
+    words, for the nurses reading the record: the model never sees it. No
+    identifiers — they never left the CRM — and no prose. Shared by the release
+    step (the first attempt) and the sweeper's retry, so the two can never
+    write different stories.
     """
     released = values.get("released_at") or values.get("arrival_time") or ""
-    complaint = (values.get("redacted_payload") or {}).get("chief_complaint") or ""
+    payload = values.get("redacted_payload") or {}
+    complaint = payload.get("chief_complaint")
     return {"date": str(released)[:10],
             "acuity": values.get("acuity"),
-            "notes": str(complaint).replace("_", " ")}
+            "chief_complaint": complaint,
+            "vitals": payload.get("vitals"),
+            "notes": str(complaint or "").replace("_", " ")}
 
 
 def patch_patient(

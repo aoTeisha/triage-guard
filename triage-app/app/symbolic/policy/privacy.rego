@@ -26,7 +26,11 @@ allow if {
 approved_fields := {"case_id", "chief_complaint", "vitals", "age_band", "history"}
 vital_fields := {"hr", "rr", "bp", "spo2", "temp_c"}
 history_fields := {"known_conditions", "prior_visits"}
-visit_fields := {"date", "acuity"}
+# Kept in sync by hand with `VISIT_FIELDS` in app/actors/normalizer.py;
+# tests/symbolic/test_opa_privacy.py catches drift. A visit's complaint and
+# vitals are held to the same rules as this visit's (`complaint_reasons`,
+# `vitals_reasons`). `notes` is prose and stays out.
+visit_fields := {"date", "acuity", "chief_complaint", "vitals"}
 
 # Kept in sync by hand with `CHIEF_COMPLAINTS` in app/guards/fields.py and
 # `AGE_BANDS` in app/esi.py; tests/symbolic/test_opa_privacy.py catches drift.
@@ -63,8 +67,31 @@ deny_reasons contains sprintf("identifier key %q at %s", [key, concat(".", [spri
 }
 
 # ---- closed values, field by field ------------------------------------------
-deny_reasons contains sprintf("chief_complaint %q is not a code from the fixed set", [input.payload.chief_complaint]) if {
-	not input.payload.chief_complaint in chief_complaints
+# One set of rules for a complaint and for vitals, wherever they appear: this
+# visit's at the top level, a prior visit's under history. `path` names where.
+complaint_reasons(path, complaint) := {sprintf("%s %q is not a code from the fixed set", [path, complaint]) |
+	not complaint in chief_complaints
+}
+
+vitals_reasons(path, vitals) := (({sprintf("%s.%s is not a vital sign the model may see", [path, k]) |
+	some k, _ in vitals
+	not k in vital_fields
+} | {sprintf("%s.%s must be a number", [path, k]) |
+	some k, v in vitals
+	k in {"hr", "rr", "spo2", "temp_c"}
+	v != null
+	not is_number(v)
+}) | {sprintf("%s.bp must read like 120/80", [path]) |
+	v := vitals.bp
+	v != null
+	not regex.match(bp_pattern, v)
+}) | {sprintf("%s must be named signs and their readings", [path]) |
+	vitals != null
+	not is_object(vitals)
+}
+
+deny_reasons contains reason if {
+	some reason in complaint_reasons("chief_complaint", input.payload.chief_complaint)
 }
 
 deny_reasons contains sprintf("age_band %q is not an ESI age band", [input.payload.age_band]) if {
@@ -72,22 +99,8 @@ deny_reasons contains sprintf("age_band %q is not an ESI age band", [input.paylo
 	not input.payload.age_band in age_bands
 }
 
-deny_reasons contains sprintf("vitals.%s is not a vital sign the model may see", [k]) if {
-	some k, _ in input.payload.vitals
-	not k in vital_fields
-}
-
-deny_reasons contains sprintf("vitals.%s must be a number", [k]) if {
-	some k, v in input.payload.vitals
-	k in {"hr", "rr", "spo2", "temp_c"}
-	v != null
-	not is_number(v)
-}
-
-deny_reasons contains "vitals.bp must read like 120/80" if {
-	v := input.payload.vitals.bp
-	v != null
-	not regex.match(bp_pattern, v)
+deny_reasons contains reason if {
+	some reason in vitals_reasons("vitals", input.payload.vitals)
 }
 
 deny_reasons contains sprintf("history.%s is not part of the history the model may see", [k]) if {
@@ -114,6 +127,16 @@ deny_reasons contains sprintf("history.prior_visits[%d].date is not an ISO date"
 deny_reasons contains sprintf("history.prior_visits[%d].acuity is not an ESI level", [i]) if {
 	some i, visit in input.payload.history.prior_visits
 	not visit.acuity in {1, 2, 3, 4, 5}
+}
+
+deny_reasons contains reason if {
+	some i, visit in input.payload.history.prior_visits
+	some reason in complaint_reasons(sprintf("history.prior_visits[%d].chief_complaint", [i]), visit.chief_complaint)
+}
+
+deny_reasons contains reason if {
+	some i, visit in input.payload.history.prior_visits
+	some reason in vitals_reasons(sprintf("history.prior_visits[%d].vitals", [i]), visit.vitals)
 }
 
 decision := {"allow": allow, "deny_reasons": deny_reasons}

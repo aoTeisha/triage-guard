@@ -16,11 +16,18 @@ from typing import Optional
 
 @dataclass
 class PriorVisit:
-    """One past visit, as stored in the patient's history."""
+    """One past visit, as stored in the patient's history.
+
+    `chief_complaint` and `vitals` carry the names and shapes of Triage Guard's
+    model payload, so a later case can send them on as history. Visits written
+    before they existed have neither, and read back as None.
+    """
 
     date: str          # ISO date, e.g. "2025-11-02"
     acuity: int        # ESI-style 1..5 recorded at that visit
-    notes: str = ""
+    notes: str = ""    # words for the humans reading the record; never sent to the model
+    chief_complaint: Optional[str] = None   # a complaint code, e.g. "chest_pain"
+    vitals: Optional[dict] = None           # e.g. {"hr": 104, "bp": "148/92", "spo2": 95}
 
 
 @dataclass

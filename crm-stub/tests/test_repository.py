@@ -73,6 +73,21 @@ def test_patch_appends_visit(repo):
     assert after.record.last_updated is not None
 
 
+def test_patch_stores_the_complaint_and_vitals(repo):
+    visit = {"date": "2026-09-26", "acuity": 2, "notes": "chest pain",
+             "chief_complaint": "chest_pain", "vitals": {"hr": 112, "bp": "150/95", "spo2": 94}}
+    assert repo.patch_patient_data("P-1001", {"new_visit": visit}).status is PatchStatus.OK
+    last = repo.fetch_patient_data("P-1001").record.prior_visits[-1]
+    assert (last.chief_complaint, last.vitals, last.notes) == (
+        "chest_pain", {"hr": 112, "bp": "150/95", "spo2": 94}, "chest pain")
+
+
+def test_a_visit_written_before_complaint_and_vitals_still_reads(repo):
+    """The seeded visit has only date, acuity and notes: it reads back with both new fields None."""
+    first = repo.fetch_patient_data("P-1001").record.prior_visits[0]
+    assert (first.notes, first.chief_complaint, first.vitals) == ("chest tightness", None, None)
+
+
 def test_patch_upserts_new_patient(repo):
     res = repo.patch_patient_data(
         "P-2002",

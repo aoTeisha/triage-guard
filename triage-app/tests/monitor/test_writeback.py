@@ -85,10 +85,29 @@ def test_a_patient_with_no_crm_record_is_skipped_not_retried(graph, run, monkeyp
 
 
 def test_the_visit_carries_no_identifier_and_no_prose():
+    vitals = {"hr": 104, "bp": "148/92", "spo2": 95, "temp_c": 37.1}
     record = crm_client.visit_record({"released_at": "2026-09-26T10:00:00+00:00", "acuity": 3,
-                                      "redacted_payload": {"chief_complaint": "chest_pain"},
+                                      "redacted_payload": {"chief_complaint": "chest_pain", "vitals": vitals},
                                       "stable_patient_id": "P-1001", "national_id": "300000001"})
-    assert record == {"date": "2026-09-26", "acuity": 3, "notes": "chest pain"}
+    assert record == {"date": "2026-09-26", "acuity": 3, "chief_complaint": "chest_pain",
+                      "vitals": vitals, "notes": "chest pain"}
+
+
+def test_a_visit_with_no_checked_payload_records_no_complaint_or_vitals():
+    """Only what passed the privacy check is written; nothing is guessed."""
+    record = crm_client.visit_record({"released_at": "2026-09-26T10:00:00+00:00", "acuity": 3,
+                                      "redacted_payload": {}})
+    assert record == {"date": "2026-09-26", "acuity": 3, "chief_complaint": None,
+                      "vitals": None, "notes": ""}
+
+
+def test_a_release_writes_the_complaint_code_and_vitals(graph, run, monkeypatch):
+    """Under the current payload's names and shapes, so a later case can send
+    them on as history (I12)."""
+    _, state, written = _released(graph, run, monkeypatch, "ok")
+    visit = written[0][1]["new_visit"]
+    assert visit["chief_complaint"] == DEMO_CASES["clean"]["chief_complaint"] == "chest_pain"
+    assert visit["vitals"] == DEMO_CASES["clean"]["vitals"] == state["redacted_payload"]["vitals"]
 
 
 # ---- the retry, through the monitor's layers --------------------------------------
@@ -112,6 +131,22 @@ def test_the_retry_delivers_once_the_crm_is_back(graph, run, monkeypatch, conn):
 
     monkeypatch.setattr(crm_client, "patch_patient", lambda *a, **k: "ok")
     assert fire.handle(conn, timer, graph=graph) == "DELIVERED"
+
+
+def test_the_retry_writes_the_same_visit_the_release_tried(graph, run, monkeypatch, conn):
+    """The two writers can never tell different stories: the sweeper's retry
+    sends exactly the record the release step failed to deliver."""
+    thread, _, attempted = _released(graph, run, monkeypatch, "db_error")
+    timer = next(t for t in timers.all_rows(conn) if t["case_id"] == thread and t["kind"] == "crm_writeback")
+
+    retried: list[tuple[str, dict]] = []
+    monkeypatch.setattr(crm_client, "patch_patient",
+                        lambda pid, visit, **k: retried.append((pid, visit)) or "ok")
+    assert fire.handle(conn, timer, graph=graph) == "DELIVERED"
+
+    assert retried == attempted
+    assert retried[0][1]["new_visit"]["chief_complaint"] == "chest_pain"
+    assert retried[0][1]["new_visit"]["vitals"] == DEMO_CASES["clean"]["vitals"]
 
 
 def test_the_retry_stays_failed_while_the_crm_is_down(graph, run, monkeypatch, conn):

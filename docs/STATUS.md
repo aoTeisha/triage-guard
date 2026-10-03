@@ -1,7 +1,38 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-10-03 (the gate now shows the classifier's reason and
+**Last updated:** 2026-10-03 (a past visit now keeps its chief complaint and vitals,
+and the model sees them as history; the gate shows the classifier's reason and
 confidence beside the two levels. Previous entries below.)
+
+**2026-10-03, prior visits carry their complaint and vitals.**
+
+*What a visit leaves in the CRM.* A release wrote `{date, acuity, notes}`, with
+`notes` the complaint code as words, so the model's history of a patient was dates
+and levels only. `crm_client.visit_record` now also writes `chief_complaint` (the
+code) and `vitals`, both taken from the payload the privacy check passed and under
+the same names and in the same form as the current payload; `None` when there was
+no such payload. `notes` stays, because the board's patient lookup shows it to
+nurses, and stays out of the model's view: the seed's notes are prose. The release
+step and the sweeper's retry still share the one function, and a test now pins that
+the retry sends exactly the record the release could not deliver.
+
+*The CRM stub* stores and returns the two fields (`PriorVisit`, and a typed
+`new_visit` on `PATCH` that refuses, with 422, a visit it could not read back).
+Visits written before them read back with both `null`. Four seeded visits (P-1001,
+P-1009, P-1013, P-1014) now carry a code and vitals; every seeded `notes` is kept.
+
+*What the model sees.* `VISIT_FIELDS` and `visit_fields` in `privacy.rego` add
+`chief_complaint` and `vitals`. `model_history` sends a visit's complaint only if it
+is in `CHIEF_COMPLAINTS`, and its vitals only if `vitals_usable` accepts them (the
+shape and believability checks this visit's own get at intake); otherwise the
+visit goes without that field, as a malformed visit is already dropped, so a bad
+old record never halts a new case at the privacy check. In `privacy.rego` the
+top-level complaint and vitals rules became two functions, `complaint_reasons` and
+`vitals_reasons`, applied both to this visit and to each prior visit at its own
+path. One gap closed on the way: vitals that are not an object at all (a string)
+broke no rule before and are now refused, at either level. A drift test pins
+`visit_fields` to `VISIT_FIELDS`. The classifier persona says what a prior visit
+holds.
 
 **2026-10-03, latest.**
 

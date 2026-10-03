@@ -13,7 +13,7 @@ import subprocess
 import pytest
 
 from app import esi
-from app.actors.normalizer import LABEL_PATTERN
+from app.actors.normalizer import LABEL_PATTERN, VISIT_FIELDS
 from app.deterministic import verify_no_identifiers
 from app.guards import CHIEF_COMPLAINTS, VITAL_FIELDS
 from app.guards.fields import BP_PATTERN
@@ -25,7 +25,9 @@ CLEAN = {
     "vitals": {"hr": 104, "bp": "148/92", "spo2": 95, "temp_c": 37.1},
     "age_band": "over_18_years",
     "history": {"known_conditions": ["hypertension", "type 2 diabetes"],
-                "prior_visits": [{"date": "2025-11-02", "acuity": 3}]},
+                "prior_visits": [{"date": "2025-11-02", "acuity": 3},
+                                 {"date": "2026-01-15", "acuity": 2, "chief_complaint": "shortness_of_breath",
+                                  "vitals": {"hr": 112, "rr": 26, "bp": "152/94", "spo2": 91}}]},
 }
 
 
@@ -123,6 +125,34 @@ def test_history_is_dates_levels_and_labels_only(history, reason):
     assert refused({**CLEAN, "history": history}) == [reason]
 
 
+@pytest.mark.parametrize("extra,reason", [
+    ({"chief_complaint": "chest tightness for 2 hours"},
+     'history.prior_visits[0].chief_complaint "chest tightness for 2 hours" is not a code from the fixed set'),
+    ({"chief_complaint": None},
+     'history.prior_visits[0].chief_complaint "null" is not a code from the fixed set'),
+    ({"vitals": {"hr": "104"}}, "history.prior_visits[0].vitals.hr must be a number"),
+    ({"vitals": {"bp": "high"}}, "history.prior_visits[0].vitals.bp must read like 120/80"),
+    ({"vitals": {"weight_kg": 80}},
+     "history.prior_visits[0].vitals.weight_kg is not a vital sign the model may see"),
+    ({"vitals": "hr 104"}, "history.prior_visits[0].vitals must be named signs and their readings"),
+])
+def test_a_prior_visits_complaint_and_vitals_are_held_to_this_visits_rules(extra, reason):
+    """The same rules as the top-level complaint and vitals, reported at the visit's path."""
+    visit = {"date": "2025-11-02", "acuity": 3} | extra
+    assert refused({**CLEAN, "history": {"prior_visits": [visit]}}) == [reason]
+
+
+@pytest.mark.parametrize("code", CHIEF_COMPLAINTS)
+def test_every_complaint_code_is_allowed_in_a_prior_visit(code):
+    visit = {"date": "2025-11-02", "acuity": 3, "chief_complaint": code, "vitals": {"hr": None}}
+    assert decide({**CLEAN, "history": {"prior_visits": [visit]}})["allow"]
+
+
+def test_vitals_that_are_not_named_signs_are_refused_at_the_top_level_too():
+    """The shared rule closes a gap: a string where the signs belong had no rule to break."""
+    assert refused({**CLEAN, "vitals": "hr 104"}) == ["vitals must be named signs and their readings"]
+
+
 def test_no_case_id_means_no_allow():
     decision = decide({k: v for k, v in CLEAN.items() if k != "case_id"})
     assert decision["allow"] is False
@@ -192,3 +222,9 @@ def test_the_vital_signs_match_python():
 def test_the_condition_label_pattern_matches_python():
     """`model_history` drops the labels this pattern refuses, before the policy sees them."""
     assert _rego_value("label_pattern") == LABEL_PATTERN
+
+
+def test_the_visit_fields_match_python():
+    """`model_history` builds a visit from `VISIT_FIELDS`; a field the policy did
+    not also name would halt every case with history at the privacy check."""
+    assert _rego_set("visit_fields") == set(VISIT_FIELDS)
