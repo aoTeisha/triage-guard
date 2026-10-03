@@ -305,7 +305,10 @@ function clinicalInputs() {
     complaint.append(opt);
   });
 
+  // min/max mirror VITAL_BOUNDS in triage-app/app/guards/fields.py as a typing
+  // aid only; the server's unusable_fields check is the one that counts.
   const hr = el("input"); hr.type = "number"; hr.placeholder = "e.g. 88";
+  hr.min = "20"; hr.max = "300";
   const bp = el("input"); bp.type = "text"; bp.inputMode = "numeric";
   bp.placeholder = "e.g. 120/80"; bp.maxLength = 7;
   // Digits only; the slash is inserted automatically once the systolic
@@ -315,7 +318,9 @@ function clinicalInputs() {
     bp.value = digits.length > 3 ? `${digits.slice(0, 3)}/${digits.slice(3)}` : digits;
   });
   const spo2 = el("input"); spo2.type = "number"; spo2.placeholder = "e.g. 98";
+  spo2.min = "30"; spo2.max = "100";
   const temp = el("input"); temp.type = "number"; temp.step = "0.1"; temp.placeholder = "e.g. 37.0";
+  temp.min = "20"; temp.max = "46";
 
   // A persistent caption above each vital, so the field's meaning survives
   // once the placeholder is gone (the moment the nurse starts typing).

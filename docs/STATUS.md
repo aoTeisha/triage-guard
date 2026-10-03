@@ -1,11 +1,40 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-10-02 (safety rules 2 and 3 now fire in a running case; agreement
-and the classifier-down settle got their own `acuity_source`; Datalog left safety
-validation. Bad vitals go back to the nurse, and a CRM condition label the privacy
-policy would refuse is left out of the model's view, instead of either halting the case
-at the privacy check. A reminder timer that keeps failing now reaches a technician.
+**Last updated:** 2026-10-03 (an impossible vital, such as a phone number typed into
+heart rate, now goes back to the nurse at intake instead of reaching the model.
 Previous entry below.)
+
+**2026-10-03.**
+
+*A number that cannot be a reading reached the model.* `vitals_usable` checked only a
+vital's type: a number, or `bp` as `120/80`. A phone number entered into heart rate
+(`{"hr": 501234567}`) passed intake and the privacy policy, and `redact_identifiers`
+walks only strings, so the model received it as a heart rate. Now each sign has
+believability bounds, inclusive, in `VITAL_BOUNDS` next to `VITAL_FIELDS`
+(`app/guards/fields.py`): `hr` 20–300, `rr` 2–120, `spo2` 30–100, `temp_c` 20–46, `bp`
+systolic 40–300 and diastolic 10–200 with systolic above diastolic. A value outside
+them makes `vitals` unusable, so the case waits at the same intake fix pause as a
+mistyped vital, and `/submit`, `/fields` and `/reassess` refuse it with a 422.
+
+These limits ask whether a reading could be real at all. They are not normal ranges.
+A refused vital waits for the nurse to correct it, and a true reading cannot be
+corrected, so the limits leave room for the sickest real patient: `rr` goes to 120
+for a newborn in distress, `temp_c` down to 20 for accidental hypothermia and up to
+46 for heatstroke, the diastolic down to 10 for shock. Every danger-zone limit in
+`app/esi.py`, and every vital in the ESI handbook's worked examples, is well inside.
+Fahrenheit typed as Celsius (98.6) is caught. The values are working values pending
+clinical sign-off, the same status as `app/budgets.py`. `privacy.rego` does not
+mirror them: its job is the payload's privacy shape, not clinical range. The board's
+number inputs carry matching `min`/`max` as a typing aid only.
+
+*Tests.* `test_guards.py` checks each bound at and just past its edges, blood pressure
+at its bounds and swapped, critically ill patients' real vitals passing, every
+danger-zone limit plus one passing, and the phone number failing. `test_graph.py`
+runs the phone number through the graph: the case pauses for the nurse, nothing is
+sent to the model, and the corrected reading is what the model sees. The board
+refuses the phone number at `/reassess` with a 422. Full suites, with the CRM stub
+running: triage-app 662 passed (639 before); board 151 passed, 1 skipped, and the
+older `test_card_fields_are_exactly_the_allow_list` failure unchanged.
 
 **2026-10-02.**
 

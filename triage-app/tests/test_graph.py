@@ -200,3 +200,31 @@ def test_a_mistyped_vital_is_fixable_in_place(graph, run):
     assert result["redacted_payload"]["vitals"] == fixed
     assert result["arrival_time"] == first["arrival_time"]
     assert result["control_state"] == State.MONITORING.value
+
+
+def test_an_impossible_vital_pauses_for_the_nurse_and_never_reaches_the_model(graph, run):
+    """A phone number typed into heart rate is a number, so it passes the shape
+    check and the privacy policy alike. The believability bound stops it at
+    intake: the case waits at the fix pause, nothing is sent to the model, and
+    the nurse's corrected reading is what the model finally sees.
+    """
+    from langgraph.types import Command
+
+    from app.runner import config_for, hydrate
+
+    phone_as_hr = {**DEMO_CASES["clean"]["vitals"], "hr": 501234567}
+    first, pending, thread = run({**DEMO_CASES["clean"], "vitals": phone_as_hr})
+
+    assert pending["intake_fix_pending"] is True
+    assert first["missing_fields"] == ["vitals"]
+    assert first["control_state"] != State.AGENT_FAILED.value
+    assert first["system_proposed_acuity"] is None
+    assert not first.get("redacted_payload")
+    assert "501234567" not in repr(first.get("redacted_payload"))
+
+    fixed = {**phone_as_hr, "hr": 104}
+    result = hydrate(graph.invoke(Command(resume={"vitals": fixed}), config_for(thread)))
+
+    assert result["redacted_payload"]["vitals"] == fixed
+    assert result["arrival_time"] == first["arrival_time"]
+    assert result["control_state"] == State.MONITORING.value

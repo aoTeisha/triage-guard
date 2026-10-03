@@ -7,8 +7,9 @@ presence checks only. No LLM, no network, no clock — these protect invariants,
 and an invariant cannot depend on a probabilistic model.
 """
 
-from .fields import (ACUITY_LEVELS, CHIEF_COMPLAINTS, NURSE_SUPPLIED_FIELDS, REQUIRED_FIELDS, VITAL_FIELDS,
-                     is_esi_level, missing_fields, nothing_usable, not_required_fields_complete, unusable_fields)
+from .fields import (ACUITY_LEVELS, CHIEF_COMPLAINTS, NURSE_SUPPLIED_FIELDS, REQUIRED_FIELDS, VITAL_BOUNDS,
+                     VITAL_FIELDS, is_esi_level, missing_fields, nothing_usable, not_required_fields_complete,
+                     unusable_fields)
 from .validity import not_input_is_valid, required_fields_complete_and_valid
 
 
@@ -31,6 +32,7 @@ __all__ = [
     "CHIEF_COMPLAINTS",
     "NURSE_SUPPLIED_FIELDS",
     "REQUIRED_FIELDS",
+    "VITAL_BOUNDS",
     "VITAL_FIELDS",
     "is_esi_level",
     "missing_fields",

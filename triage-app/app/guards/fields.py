@@ -85,17 +85,42 @@ CHIEF_COMPLAINTS = (
 VITAL_FIELDS = ("hr", "rr", "bp", "spo2", "temp_c")
 BP_PATTERN = r"^[0-9]{2,3}/[0-9]{2,3}$"
 
+# Could this be a real reading at all? Inclusive (low, high) per sign. These are
+# believability limits, not normal ranges: they catch a phone number typed into
+# heart rate or 98.6 typed into Celsius, and must never refuse a critically ill
+# patient's real value, because a refused vital waits for the nurse to fix it and
+# a true reading has no fix. Every ESI v5 danger-zone limit (app/esi.py) and every
+# vital in the handbook's examples sits well inside them; rr reaches 120 for
+# newborns in distress, temp_c 20 for accidental hypothermia, the diastolic 10 for
+# shock. Working values pending clinical sign-off, the same status as the
+# thresholds in app/budgets.py. Not mirrored in privacy.rego: the policy checks
+# the payload's privacy shape, not its clinical range.
+VITAL_BOUNDS: dict[str, tuple[float, float]] = {
+    "hr": (20, 300),
+    "rr": (2, 120),
+    "spo2": (30, 100),
+    "temp_c": (20, 46),
+    "bp_systolic": (40, 300),
+    "bp_diastolic": (10, 200),
+}
+
 
 def _is_number(value: Any) -> bool:
     # bool is not a reading, though Python counts it an int.
     return type(value) in (int, float) and math.isfinite(value)
 
 
+def _within(value: float, sign: str) -> bool:
+    low, high = VITAL_BOUNDS[sign]
+    return low <= value <= high
+
+
 def vitals_usable(vitals: Any) -> bool:
-    """The vitals have the shape the privacy policy allows: only the named signs,
-    each a number or blood pressure as "120/80". `None` is an absent reading, as
-    it is to the policy. `fullmatch`, not `match`: Python's `$` also matches before
-    a trailing newline, and RE2's does not.
+    """The vitals have the shape the privacy policy allows — only the named signs,
+    each a number or blood pressure as "120/80" — and each is a believable reading
+    (`VITAL_BOUNDS`, systolic above diastolic). `None` is an absent reading, as it
+    is to the policy. `fullmatch`, not `match`: Python's `$` also matches before a
+    trailing newline, and RE2's does not.
     """
     if not isinstance(vitals, dict):
         return False
@@ -107,7 +132,11 @@ def vitals_usable(vitals: Any) -> bool:
         if key == "bp":
             if not (isinstance(value, str) and re.fullmatch(BP_PATTERN, value)):
                 return False
-        elif not _is_number(value):
+            systolic, diastolic = (int(part) for part in value.split("/"))
+            if not (_within(systolic, "bp_systolic") and _within(diastolic, "bp_diastolic")
+                    and systolic > diastolic):
+                return False
+        elif not (_is_number(value) and _within(value, key)):
             return False
     return True
 

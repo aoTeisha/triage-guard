@@ -121,6 +121,77 @@ def test_vitals_of_the_allowed_shape_are_usable(vitals):
     assert guards.unusable_fields({**CLEAN, "vitals": vitals}) == []
 
 
+# ---- believable vitals --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("sign", "low", "high"), [
+    ("hr", 20, 300),
+    ("rr", 2, 120),
+    ("spo2", 30, 100),
+    ("temp_c", 20, 46),
+])
+def test_each_vital_is_bounded_inclusively(sign, low, high):
+    """The edge values are believable; one step past either edge is not."""
+    assert guards.VITAL_BOUNDS[sign] == (low, high)
+    for inside in (low, high, low + 0.5, high - 0.5):
+        assert guards.unusable_fields({**CLEAN, "vitals": {sign: inside}}) == [], inside
+    for outside in (low - 0.1, high + 0.1, 0, -1):
+        assert guards.unusable_fields({**CLEAN, "vitals": {sign: outside}}) == ["vitals"], outside
+
+
+@pytest.mark.parametrize("bp", ["40/39", "300/200", "300/10", "41/10", "120/80"])
+def test_blood_pressure_at_the_bounds_is_usable(bp):
+    assert guards.unusable_fields({**CLEAN, "vitals": {"bp": bp}}) == []
+
+
+@pytest.mark.parametrize("bp", [
+    "39/20",      # systolic below 40
+    "301/80",     # systolic above 300
+    "120/09",     # diastolic below 10
+    "250/201",    # diastolic above 200
+    "80/120",     # the two numbers swapped
+    "90/90",      # systolic must be above diastolic
+])
+def test_blood_pressure_outside_the_bounds_is_unusable(bp):
+    assert guards.unusable_fields({**CLEAN, "vitals": {"bp": bp}}) == ["vitals"]
+
+
+def test_a_phone_number_typed_as_heart_rate_is_unusable():
+    """A number of the right type, so the shape check and the privacy policy both
+    let it through, and `redact_identifiers` walks only strings. The bound is the
+    one check that stops it reaching the model as a heart rate."""
+    assert guards.unusable_fields({**CLEAN, "vitals": {"hr": 501234567}}) == ["vitals"]
+
+
+@pytest.mark.parametrize("vitals", [
+    # Septic shock: tachycardic, tachypnoeic, hypotensive, hypoxic, febrile.
+    {"hr": 160, "rr": 40, "bp": "70/30", "spo2": 82, "temp_c": 40.5},
+    # Complete heart block and hypothermia.
+    {"hr": 30, "rr": 8, "bp": "60/20", "spo2": 88, "temp_c": 28},
+    # Neonate in respiratory distress, well past every danger-zone limit for the band.
+    {"hr": 220, "rr": 90, "spo2": 60, "temp_c": 35},
+    # Heatstroke and hypertensive emergency.
+    {"hr": 180, "rr": 36, "bp": "260/150", "spo2": 94, "temp_c": 41},
+])
+def test_a_critically_ill_patients_real_vitals_are_usable(vitals):
+    """Bounds of believability, not of normality: the sickest real patient passes."""
+    assert guards.unusable_fields({**CLEAN, "vitals": vitals}) == []
+
+
+def test_every_danger_zone_limit_is_believable():
+    """A reading just past a danger-zone limit is the one D exists to flag, so it
+    must reach the classifier rather than be refused at intake."""
+    from app import esi
+
+    for _band, hr_limit, rr_limit in esi.DANGER_ZONE_LIMITS:
+        vitals = {"hr": hr_limit + 1, "rr": rr_limit + 1, "spo2": esi.SPO2_FLOOR - 1}
+        assert guards.unusable_fields({**CLEAN, "vitals": vitals}) == []
+
+
+def test_fahrenheit_typed_as_celsius_is_unusable():
+    assert guards.unusable_fields({**CLEAN, "vitals": {"temp_c": 98.6}}) == ["vitals"]
+
+
 def test_an_unusable_acuity_goes_back_to_the_nurse_not_to_rejection():
     """A typo is not an attack. It routes like a missing field, so the case keeps
     its arrival time and the patient keeps their place (I10).

@@ -255,6 +255,18 @@ def test_reassess_validates_the_payload_before_it_touches_the_case():
     assert "chief_complaint" in response.json()["detail"]
 
 
+def test_reassess_refuses_an_impossible_vital():
+    """A phone number typed into heart rate has the right type, so only the
+    believability bound in `unusable_fields` refuses it."""
+    response = client.post(
+        "/api/case/does-not-exist/reassess",
+        json={"nurse_proposed_acuity": 3, "chief_complaint": "chest_pain", "vitals": {"hr": 501234567}},
+    )
+
+    assert response.status_code == 422
+    assert "vitals" in response.json()["detail"]
+
+
 def test_reassess_404s_for_an_unknown_case_when_the_payload_is_valid():
     response = client.post(
         "/api/case/does-not-exist/reassess",
