@@ -176,15 +176,16 @@ function gatePanel(caseId, view, card) {
   // while there is a model proposal: a classifier fallback has no reason to show.
   const aiReason = (reason === "discrepancy" || reason === "low_confidence")
     && card && card.system_proposed_acuity != null && view.classifier_rationale;
+  let why = null;
   if (aiReason) {
     const sure = typeof view.confidence === "number"
       ? ` (${Math.round(view.confidence * 100)}% confident)` : "";
     // Collapsed until opened: the levels are the decision, the reason is
-    // support for it. A long reason scrolls inside its box, not the panel.
-    const why = el("details", "ai-reasoning");
+    // support for it, so it sits below the options. A long reason scrolls
+    // inside its box, not the panel.
+    why = el("details", "ai-reasoning");
     why.append(el("summary", "ai-label", `AI's reasoning${sure}`),
                el("div", "ai-text", view.classifier_rationale));
-    box.append(why);
   }
 
   const role = el("select");
@@ -291,6 +292,7 @@ function gatePanel(caseId, view, card) {
   }
   if (correction) box.append(el("label", null, "Corrected acuity"), correction);
   box.append(options, msg);
+  if (why) box.append(why);
   return box;
 }
 

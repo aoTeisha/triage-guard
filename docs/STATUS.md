@@ -19,7 +19,7 @@ the state, and `_mask` covers the field like the rest of it. `case_view` adds
 queue card does not: `CaseCard`'s allow-list is unchanged, and both fields are
 now in the projection test's forbidden set. On the `discrepancy` and
 `low_confidence` gates the panel shows a collapsed "AI's reasoning (81%
-confident)" dropdown under the heading (`<details>`); opened, the reason sits in
+confident)" dropdown below the decision buttons (`<details>`); opened, the reason sits in
 a box capped at six lines that scrolls, wrapping long words. With no model
 proposal it shows nothing, and the text is set through `textContent`, never as
 markup.
