@@ -82,12 +82,23 @@ def _retry_policy(state: State) -> RetryPolicy | None:
 # a missing-argument TypeError.
 
 
-# `goto` may only name a destination already declared as reachable from the
-# failing node. The degrade nodes below are those declared destinations, so
-# each handler logs why its agent crashed and then hands off to the same
-# fallback node that the normal validation-failure path also uses — one
-# degrade implementation per agent, reached whether it crashed or just
-# returned something unusable.
+# LangGraph does not check a handler's `goto` against the edges declared for
+# the failing node: `Command.goto` may name any node in the graph, and it is
+# delivered by writing that node's trigger channel (`_control_branch` in
+# langgraph/graph/state.py). The rule here is the project's own: every `goto`
+# target must also be drawn as an edge out of the failing node, so the
+# rendered graph shows the crash path. Where the conditional-edge map already
+# has that edge (classifier -> classifier_fallback, identity ->
+# redacting_routing), nothing more is needed. Where it does not, the node
+# names it in `destinations=` (`_CRASH_DESTINATIONS`), which LangGraph draws
+# and otherwise ignores. Each handler logs why its agent crashed and hands off
+# to its degrade node, one degrade implementation per agent.
+
+
+# Label: what the case is waiting on once it gets there.
+_CRASH_DESTINATIONS: dict[State, dict[str, str]] = {
+    State.SAFETY_VALIDATING: {"safety_fallback": "validator_down"},
+}
 
 
 def _crash(state: TriageState, node: State, agent: str, error: NodeError,
@@ -172,7 +183,8 @@ def build_graph(checkpointer=None):
     b.add_node(State.ACUITY_PROPOSED, nodes.acuity_proposed)
     b.add_node(State.SAFETY_VALIDATING, nodes.safety_validating,
                retry_policy=_retry_policy(State.SAFETY_VALIDATING),
-               error_handler=_ERROR_HANDLERS[State.SAFETY_VALIDATING])
+               error_handler=_ERROR_HANDLERS[State.SAFETY_VALIDATING],
+               destinations=_CRASH_DESTINATIONS[State.SAFETY_VALIDATING])
     b.add_node(State.VERDICT_PROPOSED, nodes.verdict_proposed)
     b.add_node(State.AWAITING_HUMAN_APPROVAL, nodes.awaiting_human_approval)
     b.add_node(State.MONITORING, nodes.monitoring)
@@ -270,15 +282,13 @@ def build_graph(checkpointer=None):
         },
     )
 
-    # ---- safety validation: cleared, failed, retry, or exhausted ---------------
+    # ---- safety validation: cleared or failed (validator down: _CRASH_DESTINATIONS)
     b.add_conditional_edges(
         State.SAFETY_VALIDATING,
         routers.route_after_safety,
         {
             Route.CLEARED:   State.VERDICT_PROPOSED,
             Route.ESCALATE:  State.AWAITING_HUMAN_APPROVAL,
-            Route.RETRY:     State.SAFETY_VALIDATING,
-            Route.EXHAUSTED: "safety_fallback",
         },
     )
     b.add_edge("safety_fallback", State.AWAITING_HUMAN_APPROVAL)

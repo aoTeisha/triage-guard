@@ -200,3 +200,65 @@ def test_a_second_gate_visit_gets_its_own_reminders(conn, graph, run):
         (GAP_CASE["case_id"],),
     ).fetchone()[0]
     assert count == 4   # two rungs per visit, two visits
+
+
+# ---- retry budgets are per triage --------------------------------------------
+
+
+def test_the_count_merge_still_keeps_the_higher_count_within_a_triage():
+    from app.graph.state import merge_counts
+    assert merge_counts({"acuity_classifier": 2}, {"acuity_classifier": 1}) == {"acuity_classifier": 2}
+
+
+def test_a_reset_update_drops_every_count():
+    from app.graph.state import RESET_COUNTS, merge_counts
+    spent = {"acuity_classifier": 3, "crm": 1}
+    assert merge_counts(spent, {RESET_COUNTS: 1}) == {}
+    assert merge_counts(spent, {RESET_COUNTS: 1, "crm": 1}) == {"crm": 1}
+
+
+def test_a_refile_gets_the_classifier_retries_its_first_triage_used_up(
+    graph, run, monkeypatch
+):
+    """Triage 1 spends the classifier's whole retry budget on malformed answers
+    and falls back. After the re-file it answers badly once more, then well:
+    with a fresh budget that last answer is reached and used. With the old
+    budget, the first bad answer exhausted it and the case fell back again.
+    """
+    from app.actors import acuity_classifier
+    from app.budgets import RETRY_BUDGET
+    from app.schemas import AcuityProposal
+
+    malformed = {"system_proposed_acuity": 47, "confidence": 0.9,
+                 "acuity_source": "system", "rationale": "stub"}
+    good = AcuityProposal(system_proposed_acuity=1, confidence=0.95,
+                          acuity_source="system", rationale="stub")
+    # Every malformed answer counts against the budget, so a budget of N
+    # allows N answers (RetryPolicy's crash budget allows N + 1).
+    attempts = RETRY_BUDGET["acuity_classifier"]
+    calls = []
+
+    def always_malformed(payload):
+        calls.append(payload)
+        return malformed
+
+    monkeypatch.setattr(acuity_classifier, "classify", always_malformed)
+    state, _, thread = run(DEMO_CASES["clean"])
+    assert len(calls) == attempts
+    assert state["retry_count"]["acuity_classifier"] == attempts
+    assert state["acuity_source"] == "nurse_fallback"
+
+    calls.clear()
+
+    def malformed_then_good(payload):
+        calls.append(payload)
+        return good if len(calls) == attempts else malformed
+
+    monkeypatch.setattr(acuity_classifier, "classify", malformed_then_good)
+    _fire_the_timer(graph, thread)
+    result = hydrate(graph.invoke(Command(resume=REFILE), config_for(thread)))
+
+    assert len(calls) == attempts
+    assert result["system_proposed_acuity"] == 1
+    assert result["acuity_source"] != "nurse_fallback"
+    assert result["retry_count"]["acuity_classifier"] == attempts - 1

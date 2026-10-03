@@ -73,6 +73,10 @@ def case_view(state: dict[str, Any], pending: dict[str, Any] | None) -> dict[str
         "acuity": state.get("acuity"),
         "acuity_source": state.get("acuity_source"),
         "acuity_gap": state.get("acuity_gap"),
+        # The classifier's confidence and reason, for the gate a charge nurse
+        # answers. Detail-panel only: never on the queue card.
+        "confidence": state.get("confidence"),
+        "classifier_rationale": state.get("classifier_rationale"),
         "safety_passed": state.get("safety_passed"),
         # The validator's reasons, verbatim: a charge nurse answering a safety
         # failure has to know what to correct before the case can pass safety

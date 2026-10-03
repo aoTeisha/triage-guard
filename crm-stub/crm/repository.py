@@ -176,7 +176,8 @@ class CRMRepository:
         """Write this visit back into the patient's history.
 
         `visit_data` may carry:
-          - "new_visit": {date, acuity, notes}  -> appended to prior_visits
+          - "new_visit": {date, acuity, notes,
+                          chief_complaint, vitals} -> appended to prior_visits
           - "known_conditions": [...]           -> replaces the conditions list
         Upserts the row; sets last_updated. Returns OK / DB_ERROR.
         """

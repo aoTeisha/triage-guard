@@ -54,7 +54,6 @@ stateDiagram-v2
 
     safety_validating --> verdict_proposed : safety_passed
     safety_validating --> awaiting_human_approval : safety_failed
-    safety_validating --> safety_validating : v_retry_safety
     safety_validating --> awaiting_human_approval : v_exhausted_safety (validator down)
 
     verdict_proposed --> monitoring : cleared_to_queue

@@ -86,12 +86,9 @@ def route_acuity_gap(state: TriageState) -> Route:
 
 
 def route_after_safety(state: TriageState) -> Route:
-    """SAFETY_PASSED / SAFETY_FAILED / V_RETRY_SAFETY / AF_SAFETY."""
+    """SAFETY_PASSED / SAFETY_FAILED. No verdict is a bug: raise into the crash path."""
     if state.safety_verdict is None:
-        return (
-            Route.RETRY if retry_budget_left(state.retry_count, "safety_validation")
-            else Route.EXHAUSTED
-        )
+        raise RuntimeError("safety_validating returned without a verdict")
     return Route.CLEARED if state.safety_passed else Route.ESCALATE
 
 

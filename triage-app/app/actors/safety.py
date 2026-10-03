@@ -93,6 +93,17 @@ def decided_at_gate(triage_records: list[dict[str, Any]]) -> bool:
     return any(record.get("transition") in GATE_DECISIONS for record in triage_records)
 
 
+def classifier_fell_back(triage_records: list[dict[str, Any]]) -> bool:
+    """Whether this triage took the classifier fallback (`fallback_manual`).
+
+    Read from this triage's records, not from `degraded`: that list is
+    append-only history for the board, so a classifier outage in an earlier
+    triage would stay in it and make a re-file's working classifier look down.
+    """
+    return any(record.get("transition") == Transition.V_EXHAUSTED_CLASSIFIER
+               for record in triage_records)
+
+
 def facts_from(state: Any) -> dict[str, Any]:
     """The facts the engine reasons over, read off the graph state.
 
@@ -101,6 +112,7 @@ def facts_from(state: Any) -> dict[str, Any]:
     """
     audit_log = getattr(state, "audit_log", None) or []
     source = getattr(state, "acuity_source", None)
+    triage_records = current_triage(audit_log)
     return {
         "case_id": getattr(state, "case_id", None),
         "acuity": getattr(state, "acuity", None),
@@ -109,8 +121,10 @@ def facts_from(state: Any) -> dict[str, Any]:
         "gap": getattr(state, "acuity_gap", None),
         "nurse_proposal": getattr(state, "nurse_proposed_acuity", None),
         "system_proposal": getattr(state, "system_proposed_acuity", None),
-        "classifier_down": "acuity_classifier" in (getattr(state, "degraded", None) or []),
-        "triage_records": current_triage(audit_log),
+        # This triage only, the boundary rule 3 uses too: last triage's outage
+        # says nothing about the proposal this one holds.
+        "classifier_down": classifier_fell_back(triage_records),
+        "triage_records": triage_records,
     }
 
 

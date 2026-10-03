@@ -16,6 +16,7 @@ from langgraph.types import Command
 from app.actors import acuity_classifier
 from app.graph.nodes import classify
 from app.labels import Transition
+from app.mock_cases import DEMO_CASES
 from app.runner import config_for, hydrate
 from app.schemas import AcuityProposal
 from app.states import AcuitySource, State
@@ -121,3 +122,60 @@ def test_a_level_decided_at_the_gate_reaches_the_queue(graph, run, monkeypatch):
     assert state["control_state"] == State.MONITORING.value
     assert state["safety_passed"] is True
     assert check_trace(state["audit_log"]).passed
+
+
+# ---- a re-file is a new triage for rule 5 too ----------------------------------
+
+REFILE = {
+    "nurse_proposed_acuity": 2,
+    "chief_complaint": "chest_pain",
+    "vitals": {"hr": 110, "bp": "120/80", "spo2": 96, "temp_c": 37.0},
+}
+
+
+def _refile(graph, thread: str, refile: dict = REFILE):
+    graph.invoke(Command(resume={"event": "REASSESSMENT_TIMEOUT", "fire_id": "f1"}),
+                 config_for(thread))
+    result = graph.invoke(Command(resume=refile), config_for(thread))
+    return hydrate(result), (dict(result["__interrupt__"][0].value)
+                             if result.get("__interrupt__") else None)
+
+
+def test_a_classifier_outage_in_an_earlier_triage_does_not_fail_the_refile(
+    graph, run, monkeypatch
+):
+    """The classifier was down for the first triage and is back for the re-file.
+    `degraded` still names it (it is history), but this triage has a real
+    proposal and no fallback, so rule 5 has nothing to object to."""
+    with monkeypatch.context() as down:
+        down.setattr(acuity_classifier, "classify", lambda payload: None)
+        state, pending, thread = run(DEMO_CASES["clean"])
+    assert state["acuity_source"] == AcuitySource.NURSE_FALLBACK
+    assert pending == {"case_id": state["case_id"], "waiting_room": True}
+
+    state, pending = _refile(graph, thread)
+
+    assert state["system_proposed_acuity"] is not None
+    assert "acuity_classifier" in state["degraded"]       # history, kept
+    assert state["safety_verdict"]["verdict"] == "pass", state["safety_verdict"]
+    _queued(state, pending)
+
+
+def test_a_refile_that_falls_back_drops_the_last_triages_classifier_output(
+    graph, run, monkeypatch
+):
+    """The fallback writes no gap, confidence or danger-zone annotation, so the
+    re-file has to clear them or the board shows the last triage's."""
+    _model_proposes(monkeypatch, 2)
+    state, _, thread = run(DEMO_CASES["clean"])
+    assert state["acuity_gap"] is not None and state["confidence"] is not None
+
+    monkeypatch.setattr(acuity_classifier, "classify", lambda payload: None)
+    state, pending = _refile(graph, thread)
+
+    _queued(state, pending)
+    assert state["acuity_source"] == AcuitySource.NURSE_FALLBACK
+    assert state["system_proposed_acuity"] is None
+    assert state["acuity_gap"] is None
+    assert state["confidence"] is None
+    assert state["danger_zone_vitals"] == []

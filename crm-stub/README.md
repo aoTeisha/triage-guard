@@ -72,9 +72,27 @@ healthcheck.
 ## Endpoints
 
 - `GET  /patients/{id}` — `200` found, `404` not_found, `503` db_error
-- `PATCH /patients/{id}` — write-back; `200` ok, `503` db_error
+- `PATCH /patients/{id}` — write-back; `200` ok, `503` db_error, `422` for a
+  `new_visit` that could not be read back (no `date` or `acuity`)
 - `GET  /health` — `{ "available": true|false }`
 - `POST /admin/simulate-down?enabled=true|false` — toggle the outage at runtime
+
+## A visit in `prior_visits`
+
+```json
+{"date": "2026-01-15", "acuity": 2, "notes": "shortness of breath",
+ "chief_complaint": "shortness_of_breath",
+ "vitals": {"hr": 112, "rr": 26, "bp": "152/94", "spo2": 91, "temp_c": 37.4}}
+```
+
+Triage Guard writes one per released case (`PATCH` with `{"new_visit": ...}`).
+`chief_complaint` and `vitals` use the names and shapes of its model payload: a
+complaint code from its fixed list, and the signs `hr`, `rr`, `bp` ("120/80"),
+`spo2`, `temp_c`. A later case for the patient sends them to the model as
+history. `notes` is words for the staff reading the record and never reaches the
+model. Visits written before the two fields existed, like most of the seed, have
+only `date`, `acuity` and `notes`, and read back with `chief_complaint` and
+`vitals` as `null`. The seed gives a few later visits both, so the demo shows them.
 
 ## Simulating a DB outage
 
@@ -100,6 +118,7 @@ curl -X POST "localhost:8000/admin/simulate-down?enabled=true"
 uv run tests            # extra args pass through, e.g. uv run tests -k api
 ```
 
-Covers the three fetch outcomes, write-back (append and upsert), the db-error
+Covers the three fetch outcomes, write-back (append and upsert, with and without
+a visit's complaint and vitals), the db-error
 simulation via both the constructor flag and the env flag, and the HTTP
 status-code mapping.

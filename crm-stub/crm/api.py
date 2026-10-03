@@ -31,11 +31,22 @@ repo = CRMRepository(db_path=DB_PATH)
 
 # -- request/response schemas --------------------------------------------
 
+class NewVisit(BaseModel):
+    """One visit as Triage Guard writes it back. The fields of `PriorVisit`, so
+    whatever is stored can be read back into one."""
+
+    date: str
+    acuity: int
+    notes: str = ""
+    chief_complaint: Optional[str] = None
+    vitals: Optional[dict] = None
+
+
 class VisitData(BaseModel):
     name: Optional[str] = None
     date_of_birth: Optional[str] = None
     known_conditions: Optional[list[str]] = None
-    new_visit: Optional[dict] = None  # {date, acuity, notes}
+    new_visit: Optional[NewVisit] = None
 
 
 # -- endpoints ------------------------------------------------------------

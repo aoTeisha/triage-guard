@@ -57,6 +57,20 @@ def test_patch_writeback(client):
     assert got["record"]["prior_visits"][-1]["notes"] == "sprain"
 
 
+def test_patch_writeback_with_complaint_and_vitals(client):
+    visit = {"date": "2026-09-26", "acuity": 3, "notes": "abdominal pain",
+             "chief_complaint": "abdominal_pain", "vitals": {"hr": 96, "temp_c": 38.1}}
+    assert client.patch("/patients/P-1002", json={"new_visit": visit}).status_code == 200
+    last = client.get("/patients/P-1002").json()["record"]["prior_visits"][-1]
+    assert last == visit
+
+
+def test_patch_refuses_a_visit_it_could_not_read_back(client):
+    """A visit with no level would be stored and then fail to load as a `PriorVisit`."""
+    r = client.patch("/patients/P-1002", json={"new_visit": {"date": "2026-09-26"}})
+    assert r.status_code == 422
+
+
 def test_list_patients_gives_the_picker_id_and_name_only(client):
     r = client.get("/patients")
     assert r.status_code == 200

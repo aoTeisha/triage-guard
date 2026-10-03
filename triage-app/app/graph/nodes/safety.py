@@ -10,12 +10,23 @@ from typing import Any
 from app.actors import human_bridge, safety
 from app.budgets import CONFIDENCE_THRESHOLD, confidence_ok
 from app.deterministic import audit
-from app.graph.nodes._shared import _bump
 from app.graph.state import TriageState
 from app.labels import Transition
 from app.schemas import SafetyVerdict
 from app.states import State
 from app.verification import verify_schema
+
+
+class MalformedVerdict(Exception):
+    """The validator returned something that is not a `SafetyVerdict`.
+
+    `safety.validate` builds its verdict itself, so this should never happen.
+    If it does, the node raises instead of returning without a verdict: the
+    crash path then re-runs it under its `RetryPolicy` and, once that budget is
+    spent, `_on_safety_error` sends the case to `safety_fallback` and a charge
+    nurse (V_EXHAUSTED_SAFETY). A plain `Exception`, not a `RuntimeError`, so
+    LangGraph's default `retry_on` does retry it.
+    """
 
 
 def safety_validating(state: TriageState) -> dict[str, Any]:
@@ -24,13 +35,7 @@ def safety_validating(state: TriageState) -> dict[str, Any]:
     check = verify_schema("safety_validation", verdict, SafetyVerdict)
 
     if not check.passed:
-        return {
-            "control_state": State.SAFETY_VALIDATING.value,
-            "retry_count": _bump(state, "safety_validation"),
-            "audit_log": [audit(state.case_id, State.SAFETY_VALIDATING,
-                                "discard_output", "; ".join(check.violations),
-                                Transition.V_RETRY_SAFETY)],
-        }
+        raise MalformedVerdict("; ".join(check.violations))
 
     checked: SafetyVerdict = check.checked
     passed = checked.verdict == "pass"

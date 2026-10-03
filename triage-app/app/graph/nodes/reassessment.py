@@ -20,7 +20,7 @@ from langgraph.types import interrupt
 from app.budgets import REASSESSMENT_REMINDER_DELAY_MINUTES
 from app.deterministic import assign_order_key, audit
 from app.graph.nodes._shared import is_release, release_case
-from app.graph.state import TriageState
+from app.graph.state import RESET_COUNTS, TriageState
 from app.labels import Transition
 from app.monitor import timers
 from app.states import ClinicalStatus, State
@@ -97,6 +97,17 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
         "approved": False,
         "correction_rounds": 0,
         "senior_required": False,
+        # Retry budgets are per triage too. The counts merge by max, so a plain
+        # {} would change nothing; the reducer drops them all on this key.
+        "retry_count": {RESET_COUNTS: 1},
+        # Last triage's classifier output. The fallback path writes none of
+        # these but the proposal, so a re-file that falls back would otherwise
+        # show the old gap and the old vitals' danger zone on the board.
+        "system_proposed_acuity": None,
+        "confidence": None,
+        "classifier_rationale": None,
+        "acuity_gap": None,
+        "danger_zone_vitals": [],
         # The last triage's payload and outage marks: a payload left here would
         # route this triage past a failed privacy check.
         "redacted_payload": {},

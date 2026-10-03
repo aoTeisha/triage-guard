@@ -21,11 +21,15 @@ from .repository import SCHEMA, _now_iso
 # (id, national_id, name, dob, conditions, prior_visits[])
 # The national id is the number the patient carries; 3000000NN pairs with P-10NN
 # so the demo submissions in triage-app/app/mock_cases.py resolve to a real record.
+# A few later visits also carry the complaint code and vitals a release now writes
+# back; the rest are as an older write-back left them, with notes only.
 PATIENTS = [
     ("P-1001", "300000001", "Alon Mizrahi", "1958-03-12",
      ["hypertension", "type 2 diabetes"],
      [{"date": "2025-11-02", "acuity": 3, "notes": "chest tightness, discharged stable"},
-      {"date": "2026-01-15", "acuity": 2, "notes": "shortness of breath"}]),
+      {"date": "2026-01-15", "acuity": 2, "notes": "shortness of breath",
+       "chief_complaint": "shortness_of_breath",
+       "vitals": {"hr": 112, "rr": 26, "bp": "152/94", "spo2": 91, "temp_c": 37.4}}]),
     ("P-1002", "300000002", "Noa Cohen", "1991-07-22", [], []),  # first-time, healthy
     ("P-1003", "300000003", "Yusuf Haddad", "1972-11-30",
      ["asthma"],
@@ -46,7 +50,9 @@ PATIENTS = [
     ("P-1009", "300000009", "Ibrahim Nasser", "1954-04-08",
      ["COPD", "type 2 diabetes"],
      [{"date": "2025-11-22", "acuity": 2, "notes": "COPD exacerbation"},
-      {"date": "2026-02-10", "acuity": 2, "notes": "productive cough, low O2 sat"}]),
+      {"date": "2026-02-10", "acuity": 2, "notes": "productive cough, low O2 sat",
+       "chief_complaint": "shortness_of_breath",
+       "vitals": {"hr": 104, "rr": 24, "bp": "138/82", "spo2": 88, "temp_c": 38.2}}]),
     ("P-1010", "300000010", "Ella Katz", "1997-10-16", ["epilepsy"],
      [{"date": "2025-12-30", "acuity": 2, "notes": "breakthrough seizure"}]),
     ("P-1011", "300000011", "Omar Suleiman", "1980-01-27", ["lower back pain (chronic)"],
@@ -55,9 +61,13 @@ PATIENTS = [
     ("P-1013", "300000013", "Moshe Klein", "1943-03-03",
      ["coronary artery disease", "hypertension", "type 2 diabetes"],
      [{"date": "2025-07-14", "acuity": 1, "notes": "STEMI, cath lab"},
-      {"date": "2025-12-02", "acuity": 2, "notes": "angina, observed"}]),
+      {"date": "2025-12-02", "acuity": 2, "notes": "angina, observed",
+       "chief_complaint": "chest_pain",
+       "vitals": {"hr": 88, "bp": "164/96", "spo2": 96}}]),
     ("P-1014", "300000014", "Layla Mansour", "1993-05-29", ["pregnancy (2nd trimester)"],
-     [{"date": "2026-02-05", "acuity": 3, "notes": "abdominal pain, monitored"}]),
+     [{"date": "2026-02-05", "acuity": 3, "notes": "abdominal pain, monitored",
+       "chief_complaint": "abdominal_pain",
+       "vitals": {"hr": 98, "bp": "118/74", "spo2": 99, "temp_c": 37.2}}]),
     ("P-1015", "300000015", "Daniel Peretz", "1976-09-09", ["anxiety disorder"],
      [{"date": "2025-10-30", "acuity": 4, "notes": "panic episode"}]),
     ("P-1016", "300000016", "Amira Odeh", "1961-12-19",

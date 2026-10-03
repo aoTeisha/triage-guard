@@ -1,8 +1,135 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-10-03 (an impossible vital, such as a phone number typed into
-heart rate, now goes back to the nurse at intake instead of reaching the model.
-Previous entry below.)
+**Last updated:** 2026-10-03 (a past visit now keeps its chief complaint and vitals,
+and the model sees them as history; the gate shows the classifier's reason and
+confidence beside the two levels. Previous entries below.)
+
+**2026-10-03, prior visits carry their complaint and vitals.**
+
+*What a visit leaves in the CRM.* A release wrote `{date, acuity, notes}`, with
+`notes` the complaint code as words, so the model's history of a patient was dates
+and levels only. `crm_client.visit_record` now also writes `chief_complaint` (the
+code) and `vitals`, both taken from the payload the privacy check passed and under
+the same names and in the same form as the current payload; `None` when there was
+no such payload. `notes` stays, because the board's patient lookup shows it to
+nurses, and stays out of the model's view: the seed's notes are prose. The release
+step and the sweeper's retry still share the one function, and a test now pins that
+the retry sends exactly the record the release could not deliver.
+
+*The CRM stub* stores and returns the two fields (`PriorVisit`, and a typed
+`new_visit` on `PATCH` that refuses, with 422, a visit it could not read back).
+Visits written before them read back with both `null`. Four seeded visits (P-1001,
+P-1009, P-1013, P-1014) now carry a code and vitals; every seeded `notes` is kept.
+
+*What the model sees.* `VISIT_FIELDS` and `visit_fields` in `privacy.rego` add
+`chief_complaint` and `vitals`. `model_history` sends a visit's complaint only if it
+is in `CHIEF_COMPLAINTS`, and its vitals only if `vitals_usable` accepts them (the
+shape and believability checks this visit's own get at intake); otherwise the
+visit goes without that field, as a malformed visit is already dropped, so a bad
+old record never halts a new case at the privacy check. In `privacy.rego` the
+top-level complaint and vitals rules became two functions, `complaint_reasons` and
+`vitals_reasons`, applied both to this visit and to each prior visit at its own
+path. One gap closed on the way: vitals that are not an object at all (a string)
+broke no rule before and are now refused, at either level. A drift test pins
+`visit_fields` to `VISIT_FIELDS`. The classifier persona says what a prior visit
+holds.
+
+**2026-10-03, latest.**
+
+*The gate showed two levels but not why the model chose its own.* The classifier
+must return a `rationale` (`app/schemas/acuity_proposal.py`), but `classifying`
+kept only the level, confidence and source, so the reason was dropped. A charge
+nurse choosing between the nurse's level and the model's could not see why the
+model chose its level or how unsure it was. Now `classifying` stores it on the
+case as `classifier_rationale`, passed through `redact_identifiers` first like
+any other text that leaves the model. A classifier fallback sets it to None, and
+so does a re-file, next to the other per-triage resets in `reassessment.py`, so
+a new triage never shows the last triage's reason. Langfuse node spans record
+the state, and `_mask` covers the field like the rest of it. `case_view` adds
+`confidence` and `classifier_rationale`, so `/api/case/{id}` carries them. The
+queue card does not: `CaseCard`'s allow-list is unchanged, and both fields are
+now in the projection test's forbidden set. On the `discrepancy` and
+`low_confidence` gates the panel shows a collapsed "AI's reasoning (81%
+confident)" dropdown below the decision buttons (`<details>`); opened, the reason sits in
+a box capped at six lines that scrolls, wrapping long words. With no model
+proposal it shows nothing, and the text is set through `textContent`, never as
+markup.
+
+*Tests.* `test_classifier_rationale.py` checks that the rationale is stored
+after classifying, that a national ID and a phone number in it are redacted,
+that a fallback stores none, that a re-file replaces it, that a re-file which
+falls back leaves no old reason on the case view, and that the Langfuse mask
+covers it. The board checks that `/api/case/{id}` exposes it and the card does
+not. A Playwright run against the real board (scratch script, Chromium from
+`/opt/pw-browsers`; neither project depends on Playwright) showed the line on a
+discrepancy gate: it loads collapsed, opening it shows the reason, a short reason
+has no scrollbar, and a 20-line reason scrolls inside its box while the panel grows
+only by that box, with no page errors. Full suites, without the CRM stub:
+triage-app 679 passed, 6 failed (672 passed before; the 6 are the five
+`test_writeback.py` tests and `test_completing_intake_cannot_overwrite_the_patient_id`,
+which need the CRM stub); board 154 passed, 1 skipped (153 before).
+
+**2026-10-03, later.**
+
+*A re-filed case failed safety for an outage that had ended.* `degraded` is
+append-only, and safety rule 5 (`classifier_down_yet_proposed`) read
+`classifier_down` from it. A case triaged while the classifier was down kept
+`acuity_classifier` in `degraded`. When the nurse re-filed and the classifier
+answered, the new proposal contradicted the stale flag: "the classifier is flagged
+unusable, yet system_proposed_acuity is 2". A charge nurse can correct only `acuity`,
+which cannot clear rule 5, so every correction failed and after three rounds the case
+went to a shift lead, for a record that was fine. `safety.facts_from` now sets
+`classifier_down` from this triage's own audit records (a `v_exhausted_classifier`
+record after the last `front_door_rerun`), the boundary rule 3 already uses.
+`degraded` keeps its meaning, history for the board's "Running degraded" box.
+The rule-5 row in `SPECIFICATION.md` § Safety validation rules now says the same.
+
+*Other per-triage state checked for the same staleness.* `gate_disabled`,
+`human_decision`, `validator_down` and `payload_unverified` were already reset on a
+re-file. `confidence` is read only with `gate_disabled`, which is reset. But the
+classifier fallback writes no gap, confidence or danger-zone annotation, so a re-file
+that fell back kept the last triage's `acuity_gap`, `confidence` and
+`danger_zone_vitals`, and the board showed the old gap and the old vitals' danger
+chips. The re-file now clears those and `system_proposed_acuity`. `flags` stays
+append-only, like `degraded`: nothing in the graph reads it, and
+`cross_check_off_review_later` is meant to outlive the triage.
+
+*Retry budgets now start over on a re-file.* `retry_count` merges by maximum, so a
+replayed node cannot lower a count, but that also meant a re-file could never reset
+one: a budget spent in one triage stayed spent in every later one. `merge_counts`
+(`app/graph/state.py`) now starts from empty when an update carries the
+`RESET_COUNTS` key, and the re-file writes only that key. Within a triage the
+maximum still holds. The crash budgets need nothing: `RetryPolicy` counts attempts
+per node run and keeps no state.
+
+*A bad classifier answer is now asked again, as the spec says.* `classifying`
+checked the reply against `type(proposal)`, which every object passes, so the
+`V_RETRY_CLASSIFIER` edge never ran. A level of 47 failed while the client built the
+proposal: one call, then the fallback. No reply at all crashed the node instead:
+three calls through the crash `RetryPolicy`. The node now checks against
+`AcuityProposal`, and treats a `ValidationError` (or LangChain's
+`OutputParserException`) raised while building the proposal as the same failed
+check. Either bad answer is discarded (`discard_output`, `V_RETRY_CLASSIFIER`), asked
+again on the `acuity_classifier` budget (2 answers), then falls back to the nurse's
+level, as slide 7 describes. A transport error such as `ConnectionError` still takes
+the crash path, 3 attempts. `verification.schema_failure` builds the shared failed
+result.
+
+*Tests.* `test_safety_end_to_end.py` runs the reported case (the classifier down for
+the first triage, back for the re-file), which now passes safety and queues, and a
+re-file that falls back, which shows no stale gap, confidence or danger zone. Both
+fail on the old code. `test_safety_validation.py` covers `facts_from` with a fallback
+before and after the last re-file, and a fallback plus a proposal in the same triage
+still failing rule 5. `test_reassessment.py` checks the count merge with and
+without a reset, and runs a case whose classifier spends its budget in triage 1 and
+gets it back after the re-file. `test_failures.py` counts the classifier's calls
+for each failure: a level of 47 and no reply are each asked twice, then fall back;
+a `ConnectionError` gets three attempts and no `V_RETRY_CLASSIFIER`. The new graph
+tests fail on the old code. Full suites, on `feat/remove-dead-safety-edges`:
+triage-app 672 passed, with the same 6
+failures as without the change (5 in `tests/monitor/test_writeback.py` and
+`test_completing_intake_cannot_overwrite_the_patient_id`, which fail in this
+environment either way); board 153 passed, 1 skipped.
 
 **2026-10-03.**
 

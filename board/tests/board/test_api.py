@@ -107,6 +107,31 @@ def test_a_case_suspended_at_the_gate_is_on_the_board(checkpoint_db):
     assert detail["view"]["trace_safety"] is True
 
 
+def test_the_classifiers_reason_is_on_the_case_view_but_not_the_card(checkpoint_db):
+    """The gate shows why the model chose its level and how sure it was. That
+    is model-written text: it belongs in the detail panel, never on the queue
+    card every screen in the department renders.
+    """
+    from app.runner import start_case
+
+    case = dict(DEMO_CASES["clean"])
+    case["case_id"] = f"gated-{uuid4().hex[:6]}"
+    case["nurse_proposed_acuity"] = 5  # gap >= 2 against the mock: goes to the gate
+    _, pending = start_case(case, thread_id=case["case_id"])
+    assert pending
+
+    detail = client.get(f"/api/case/{case['case_id']}").json()
+    assert detail["view"]["classifier_rationale"]
+    assert 0.0 <= detail["view"]["confidence"] <= 1.0
+    assert "classifier_rationale" not in detail["card"]
+    assert "confidence" not in detail["card"]
+
+    card = next(c for c in client.get("/api/board").json()["cards"]
+                if c["case_id"] == case["case_id"])
+    assert "classifier_rationale" not in card
+    assert detail["view"]["classifier_rationale"] not in str(card)
+
+
 def test_unknown_case_is_404(checkpoint_db):
     assert client.get("/api/case/nope").status_code == 404
 
@@ -564,3 +589,18 @@ def test_a_reminder_does_not_survive_a_non_release_transition(seeded):
     card = next(c for c in cards if c["case_id"] == case_id)
     assert card["status"] == "treatment_started"
     assert card["reminders"] is None
+
+
+def test_gate_options_match_the_server():
+    """The board's GATE_OPTIONS copy is what decides which buttons a gate shows,
+    so a drifted copy hides options the server accepts (validator_down once
+    offered only the shift-lead clear)."""
+    import json
+    import re
+
+    from app.actors.human_bridge import _OPTIONS
+
+    js = client.get("/static/labels.js").text
+    block = re.search(r"const GATE_OPTIONS = \{(.*?)\};", js, re.S).group(1)
+    on_board = json.loads("{" + re.sub(r"(\w+):", r'"\1":', block).rstrip().rstrip(",") + "}")
+    assert on_board == _OPTIONS

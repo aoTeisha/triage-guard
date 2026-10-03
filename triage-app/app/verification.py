@@ -76,13 +76,20 @@ def verify_schema(agent: str, output: Any, model: type[BaseModel]) -> Verificati
     try:
         return _passed(model.model_validate(output))
     except ValidationError as exc:
-        violations = tuple(
-            f"{agent}: {'.'.join(str(p) for p in err['loc'])} — {err['msg']}"
-            for err in exc.errors()
-        )
-        return VerificationResult(
-            passed=False, violations=violations, category=Violation.RECOVERABLE
-        )
+        return schema_failure(agent, exc)
+
+
+def schema_failure(agent: str, exc: ValidationError) -> VerificationResult:
+    """The failed `verify_schema` result for an answer that broke the schema
+    while it was being built, before any check could see it (an `AcuityProposal`
+    the client could not construct from the model's reply)."""
+    violations = tuple(
+        f"{agent}: {'.'.join(str(p) for p in err['loc'])} — {err['msg']}"
+        for err in exc.errors()
+    )
+    return VerificationResult(
+        passed=False, violations=violations, category=Violation.RECOVERABLE
+    )
 
 
 def verify_redacted_payload(payload: dict[str, Any]) -> VerificationResult:

@@ -92,6 +92,31 @@ def test_safety_exhaustion_routes_to_a_human_not_a_halt():
     assert ("safety_fallback", State.AWAITING_HUMAN_APPROVAL.value) in edges()
 
 
+def test_safety_validation_has_exactly_three_ways_out():
+    """Passed, failed, or validator down. There is no retry self-loop: a re-run
+    after a crash is the node's retry policy, not a transition."""
+    targets = {t for s, t in edges() if s == State.SAFETY_VALIDATING.value}
+    assert targets == {
+        State.VERDICT_PROPOSED.value,
+        State.AWAITING_HUMAN_APPROVAL.value,
+        "safety_fallback",
+    }
+
+
+def test_every_crash_goto_is_a_drawn_edge():
+    """A handler's `goto` is not checked by LangGraph against declared edges, so
+    check it here: each handler's target must be drawn out of its node."""
+    from langgraph.errors import NodeError
+
+    from app.graph import build
+    from app.graph.state import TriageState
+
+    for node, handler in build._ERROR_HANDLERS.items():
+        state = TriageState(case_id="c", control_state=node.value)
+        target = handler(state, NodeError(node=node.value, error=RuntimeError("x"))).goto
+        assert (node.value, target) in edges(), (node.value, target)
+
+
 def test_acuity_gap_has_exactly_two_destinations():
     """ACUITY_AGREE / ACUITY_GAP_MINOR settle and continue; ACUITY_GAP_MAJOR escalates.
     The bands are total and exclusive."""

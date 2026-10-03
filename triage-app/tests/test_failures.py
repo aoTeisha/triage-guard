@@ -124,6 +124,34 @@ def test_a_failing_verdict_never_reaches_monitoring_unattended(run, monkeypatch)
     assert state["approved"] is False
 
 
+# ---- V_EXHAUSTED_SAFETY: a malformed verdict is a crash, not a dead end -----
+
+
+def test_a_malformed_verdict_is_retried_then_reaches_the_validator_down_gate(run, monkeypatch):
+    """`validate` always builds a `SafetyVerdict`, so this cannot happen today.
+    If it ever did, the node raises: the retry policy runs it again, and once the
+    budget is spent the error handler sends the case to `safety_fallback` and a
+    charge nurse. The malformed answer is never written to state."""
+    calls = []
+
+    def malformed(case):
+        calls.append(case)
+        return {"verdict": "maybe"}
+
+    monkeypatch.setattr(safety, "validate", malformed)
+
+    state, pending, _ = run(GAP_FREE_CASE)
+
+    assert len(calls) == RETRY_BUDGET["safety_validation"] + 1
+    assert pending is not None
+    assert pending["gate"] == "validator_down"
+    assert "safety_validation" in state["degraded"]
+    assert state["safety_verdict"] is None
+    assert state["safety_passed"] is False
+    assert Transition.V_EXHAUSTED_SAFETY in transitions(state)
+    assert state["control_state"] != State.MONITORING.value
+
+
 # ---- AF_DB: CRM outage degrades, it does not stop the line ----------------
 
 
@@ -176,3 +204,63 @@ def test_a_halted_case_waits_for_recovery_then_resumes_at_redaction(graph, run, 
     assert Transition.AF_RECOVER in transitions(result)
     assert result["redacted_payload"]
     assert graph.get_state(config_for(thread)).next == ("awaiting_reassessment",)
+
+
+# ---- the classifier: a bad answer is asked again, a crash is retried ------------
+
+
+def _count_classifier_calls(monkeypatch, answer):
+    from app.actors import acuity_classifier
+    calls = []
+
+    def classify(payload):
+        calls.append(payload)
+        return answer()
+
+    monkeypatch.setattr(acuity_classifier, "classify", classify)
+    return calls
+
+
+def _out_of_range():
+    from app.schemas import AcuityProposal
+    return AcuityProposal.model_validate({"system_proposed_acuity": 47, "confidence": 0.9,
+                                          "acuity_source": "system", "rationale": "stub"})
+
+
+def _transport_down():
+    raise ConnectionError("classifier unreachable")
+
+
+def _fell_back(state):
+    seen = transitions(state)
+    assert Transition.V_EXHAUSTED_CLASSIFIER in seen
+    assert state["acuity_source"] == "nurse_fallback"
+    assert state["system_proposed_acuity"] is None
+
+
+def test_an_out_of_range_level_is_asked_again_then_falls_back(run, monkeypatch):
+    """Level 47 fails while the proposal is built. That is a bad answer, not a
+    crash: discarded and asked again on the classifier's budget, then the nurse's."""
+    calls = _count_classifier_calls(monkeypatch, _out_of_range)
+    state, _, _ = run(DEMO_CASES["clean"])
+    assert len(calls) == RETRY_BUDGET["acuity_classifier"]
+    assert transitions(state).count(Transition.V_RETRY_CLASSIFIER) == len(calls)
+    _fell_back(state)
+
+
+def test_no_answer_at_all_is_asked_again_then_falls_back(run, monkeypatch):
+    calls = _count_classifier_calls(monkeypatch, lambda: None)
+    state, _, _ = run(DEMO_CASES["clean"])
+    assert len(calls) == RETRY_BUDGET["acuity_classifier"]
+    assert transitions(state).count(Transition.V_RETRY_CLASSIFIER) == len(calls)
+    _fell_back(state)
+
+
+def test_a_transport_error_takes_the_crash_retries_then_falls_back(run, monkeypatch):
+    """A dropped connection is not an answer: the node's RetryPolicy re-runs it
+    (budget + 1 attempts), and no V_RETRY_CLASSIFIER is written."""
+    calls = _count_classifier_calls(monkeypatch, _transport_down)
+    state, _, _ = run(DEMO_CASES["clean"])
+    assert len(calls) == RETRY_BUDGET["acuity_classifier"] + 1
+    assert Transition.V_RETRY_CLASSIFIER not in transitions(state)
+    _fell_back(state)

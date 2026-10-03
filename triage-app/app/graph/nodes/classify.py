@@ -7,14 +7,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from langchain_core.exceptions import OutputParserException
+from pydantic import ValidationError
+
 from app.actors import acuity_classifier, human_bridge
 from app.deterministic import assign_order_key, audit, bucket_for, compute_acuity_gap, resolve_acuity
 from app.esi import danger_zone
 from app.graph.nodes._shared import _bump
 from app.graph.state import TriageState
+from app.guards.identifiers import redact_identifiers
 from app.labels import Transition
+from app.schemas import AcuityProposal
 from app.states import AcuitySource, State
-from app.verification import verify_schema
+from app.verification import VerificationResult, Violation, schema_failure, verify_schema
 
 
 def classifying(state: TriageState) -> dict[str, Any]:
@@ -22,8 +27,21 @@ def classifying(state: TriageState) -> dict[str, Any]:
     invoked = audit(state.case_id, State.CLASSIFYING, "invoke_acuity_classifier",
                     "run classifier",
                     Transition.RUN_CLASSIFIER)
-    proposal = acuity_classifier.classify(state.redacted_payload)
-    check = verify_schema("acuity_classifier", proposal, type(proposal))
+    # A reply that came back but is not a valid proposal (malformed, a level
+    # outside 1-5, nothing at all) is a bad answer, not a crash: it is
+    # discarded and asked again on the `acuity_classifier` retry budget, then
+    # falls back (V_RETRY_CLASSIFIER, V_EXHAUSTED_CLASSIFIER). The client may
+    # reject it itself while building the proposal, so that error counts the
+    # same as a failed check here. A transport error still raises, and the
+    # node's crash RetryPolicy handles it.
+    try:
+        proposal = acuity_classifier.classify(state.redacted_payload)
+        check = verify_schema("acuity_classifier", proposal, AcuityProposal)
+    except ValidationError as exc:
+        check = schema_failure("acuity_classifier", exc)
+    except OutputParserException as exc:
+        check = VerificationResult(passed=False, category=Violation.RECOVERABLE,
+                                   violations=(f"acuity_classifier: {exc}",))
 
     if not check.passed:
         return {
@@ -47,6 +65,9 @@ def classifying(state: TriageState) -> dict[str, Any]:
         "control_state": State.CLASSIFYING.value,
         "system_proposed_acuity": checked.system_proposed_acuity,
         "confidence": checked.confidence,
+        # Model-written text bound for the board: redacted like anything else
+        # that leaves the model, before it is stored on the case.
+        "classifier_rationale": redact_identifiers(checked.rationale),
         "acuity_source": checked.acuity_source,
         "danger_zone_vitals": breaches,
         "audit_log": [invoked,
@@ -73,6 +94,7 @@ def classifier_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
     update: dict[str, Any] = {
         "control_state": State.CLASSIFYING.value,
         "system_proposed_acuity": None,
+        "classifier_rationale": None,
         "gate_disabled": True,
         "degraded": [] if state.payload_unverified else ["acuity_classifier"],
         "flags": ["cross_check_off_review_later"],
