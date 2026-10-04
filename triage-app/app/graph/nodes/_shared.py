@@ -6,7 +6,14 @@ from typing import Any
 
 from app import crm_client
 from app.budgets import CRM_WRITEBACK_RETRY_MINUTES
-from app.deterministic import SHIFT_LEAD_STANDS_IN, audit, audit_denial, now_iso, release_authorized
+from app.deterministic import (
+    SHIFT_LEAD_STANDS_IN,
+    audit,
+    audit_denial,
+    move_authorized,
+    now_iso,
+    release_authorized,
+)
 from app.events import Event
 from app.graph.state import TriageState
 from app.guards import is_esi_level
@@ -73,4 +80,55 @@ def release_case(state: TriageState, answer: dict[str, Any], at: State) -> dict[
                       audit(state.case_id, State.CASE_CLOSED, "sign_release",
                             f"release signed: {reason}" + (f" ({why})" if stood_in else ""),
                             Transition.RELEASE, engines=[] if stood_in else ["OPA"])],
+    }
+
+
+def _positions(raw: Any) -> list[int]:
+    """The queue positions in a move request, as a sorted list of ints. Anything
+    else is dropped: a position is a number, and nothing else may reach the log."""
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return sorted({p for p in raw if isinstance(p, int) and not isinstance(p, bool)})
+
+
+def move_case(state: TriageState, answer: dict[str, Any], at: State) -> dict[str, Any]:
+    """Move into treatment (I5, MOVE_CONFIRMED), from the waiting-room pause or
+    the re-filing pause: OPA's `move` rule or, with OPA down, a shift lead.
+
+    The queue facts come from the board's server, which computes them over the
+    global queue (`board.ordering.ahead_of`): `skipped_positions` are those still
+    in line ahead of this patient, and an out-of-order move needs a `skip_reason`
+    from the fixed set. Both are recorded on the move. A caller with no queue
+    (a single-case CLI run) sends none, and nothing is skipped.
+
+    The caller sets anything the source pause needs on top (`control_state`).
+    """
+    actor_role = answer.get("actor_role", state.actor_role)
+    skipped = _positions(answer.get("skipped_positions"))
+    skip_reason = answer.get("skip_reason") or None
+    authorized, why = move_authorized(state.safety_passed, state.approved, actor_role,
+                                      state.safety_waived, skipped=skipped, skip_reason=skip_reason)
+    if not authorized:
+        return {"actor_role": actor_role,
+                "audit_log": [audit_denial(state.case_id, at, why, layer="OPA (authorization)")]}
+    stood_in = why.startswith(SHIFT_LEAD_STANDS_IN)   # OPA down, a shift lead signed
+    explanation = "move to treatment confirmed"
+    queue: dict[str, Any] = {}
+    if isinstance(answer.get("queue_position"), int):
+        queue["queue_position"] = answer["queue_position"]
+    if skipped:
+        # Authorized, so the reason is one of the fixed set: safe to log.
+        explanation += (f", ahead of {', '.join(f'#{p}' for p in skipped)}"
+                        f" ({skip_reason})")
+        queue |= {"skipped_positions": skipped, "skip_reason": skip_reason}
+    if stood_in:
+        explanation += f" ({why})"
+    return {
+        "actor_role": actor_role,
+        "clinical_status": ClinicalStatus.TREATMENT_STARTED.value,
+        "treatment_started_at": now_iso(),
+        "degraded": ["opa_signoff"] if stood_in else [],
+        "audit_log": [audit(state.case_id, at, "emit_event_log", explanation,
+                            Transition.MOVE_CONFIRMED, engines=[] if stood_in else ["OPA"],
+                            **queue)],
     }

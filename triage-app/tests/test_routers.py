@@ -113,6 +113,23 @@ def test_a_case_with_no_system_acuity_escalates_rather_than_guessing():
     assert routers.route_acuity_gap(s(nurse_proposed_acuity=3)) is Route.ESCALATE
 
 
+# ---- redaction (PAYLOAD_CLEAN / PRIVACY_REFUSED / PRIVACY_GATE_DOWN) ----------
+
+
+@pytest.mark.parametrize(
+    "fields, route",
+    [
+        ({"redacted_payload": {"case_id": "t"}}, Route.PROCEED),
+        ({"payload_refused": True}, Route.BLOCKED),
+        ({"redacted_payload": {"case_id": "t"}, "payload_unverified": True}, Route.DEGRADED),
+        # No payload is never an approved one.
+        ({}, Route.BLOCKED),
+    ],
+)
+def test_redaction_reaches_the_model_only_with_an_approved_payload(fields, route):
+    assert routers.route_after_redaction(s(**fields)) is route
+
+
 # ---- classifier degrade (V_RETRY / V_EXHAUSTED) -----------------------------
 
 

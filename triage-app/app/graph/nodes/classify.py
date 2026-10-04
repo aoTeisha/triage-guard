@@ -80,23 +80,27 @@ def classifying(state: TriageState) -> dict[str, Any]:
 
 
 def classifier_fallback(state: TriageState, reason: str = "") -> dict[str, Any]:
-    """AF_CLASSIFIER / V_EXHAUSTED_CLASSIFIER.
+    """AF_CLASSIFIER / V_EXHAUSTED_CLASSIFIER, and the detour around the model
+    after PRIVACY_REFUSED or PRIVACY_GATE_DOWN.
 
     Drop the system acuity, fall back to the nurse's, disable the discrepancy gate
     for the outage, and flag the case for later review.
     """
     nurse = state.nurse_proposed_acuity
     arrival = state.arrival_time
-    # Also reached when OPA could not prove the payload clean: the classifier
-    # is fine but was skipped, so it is not the one marked degraded.
-    why = ("model skipped, payload not proven clean" if state.payload_unverified
+    # Also reached when the privacy check refused the payload or OPA could not
+    # prove it clean: the classifier is fine but was skipped, so it is not the
+    # one marked degraded.
+    skipped = state.payload_refused or state.payload_unverified
+    why = ("model skipped, payload refused by the privacy check" if state.payload_refused
+           else "model skipped, payload not proven clean" if state.payload_unverified
            else "classifier unusable")
     update: dict[str, Any] = {
         "control_state": State.CLASSIFYING.value,
         "system_proposed_acuity": None,
         "classifier_rationale": None,
         "gate_disabled": True,
-        "degraded": [] if state.payload_unverified else ["acuity_classifier"],
+        "degraded": [] if skipped else ["acuity_classifier"],
         "flags": ["cross_check_off_review_later"],
         "audit_log": [audit(state.case_id, State.CLASSIFYING, "fallback_manual",
                             f"{why}, using nurse acuity; gate disabled"

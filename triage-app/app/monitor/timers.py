@@ -62,6 +62,20 @@ def set_state(conn: psycopg.Connection, timer_id: str, fire_state: str, **fields
     )
 
 
+def cancel_pending(conn: psycopg.Connection, *, case_id: str, kind: str) -> int:
+    """Cancel this case's timers of `kind` that have not fired yet (SCHEDULED, or
+    FAILED and waiting for a retry). Returns how many. A timer a sweeper holds
+    right now is left alone: the sweeper finds the pause gone and cancels it
+    itself. Delivered and escalated timers are history and stay as they are.
+    """
+    return conn.execute(
+        "UPDATE timers SET fire_state = 'CANCELLED', updated_at = now() "
+        "WHERE case_id = %s AND kind = %s AND fire_state IN ('SCHEDULED', 'FAILED') "
+        "AND (locked_until IS NULL OR locked_until < now())",
+        (case_id, kind),
+    ).rowcount
+
+
 def set_failed_counted(conn: psycopg.Connection, timer_id: str, last_error: str) -> int:
     """Set FAILED and add one to `failed_attempts`, in one write. Returns the
     new count (0 if there is no such row). Counted in SQL rather than from the

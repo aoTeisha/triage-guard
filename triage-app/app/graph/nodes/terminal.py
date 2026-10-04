@@ -13,8 +13,8 @@ from typing import Any
 from langgraph.types import interrupt
 
 from app.budgets import REASSESSMENT_INTERVAL_MINUTES
-from app.deterministic import SHIFT_LEAD_STANDS_IN, audit, audit_denial, move_authorized, now_iso
-from app.graph.nodes._shared import is_release, release_case
+from app.deterministic import audit, audit_denial, now_iso
+from app.graph.nodes._shared import is_release, move_case, release_case
 from app.events import Event
 from app.graph.state import TriageState
 from app import outages
@@ -103,20 +103,7 @@ def awaiting_reassessment(state: TriageState) -> dict[str, Any]:
             # this it would silently re-confirm and append a second
             # MOVE_CONFIRMED row with no error.
             return denied("move refused: already in treatment", layer="monitor (idempotency)")
-        authorized, why = move_authorized(state.safety_passed, state.approved, actor_role,
-                                          state.safety_waived)
-        if not authorized:
-            return denied(why)
-        stood_in = why.startswith(SHIFT_LEAD_STANDS_IN)   # OPA down, a shift lead signed
-        return {
-            "actor_role": actor_role,
-            "clinical_status": ClinicalStatus.TREATMENT_STARTED.value,
-            "treatment_started_at": now_iso(),
-            "degraded": ["opa_signoff"] if stood_in else [],
-            "audit_log": [audit(state.case_id, State.MONITORING, "emit_event_log",
-                                 "move to treatment confirmed" + (f" ({why})" if stood_in else ""),
-                                 Transition.MOVE_CONFIRMED, engines=[] if stood_in else ["OPA"])],
-        }
+        return move_case(state, fired, State.MONITORING)
 
     if event == Event.TREATMENT_COMPLETE.value:
         # Spec arrow FV: treatment done, disposition pending. The status keeps

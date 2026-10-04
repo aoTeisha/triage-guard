@@ -6,6 +6,7 @@ queue board and the intake front door on one page.
     GET  /api/case/{case_id}          detail panel: the shared case view + its trail
     GET  /api/health
     GET  /api/heartbeat               is the background sweeper process still alive?
+    GET  /api/case/{case_id}/queue-place        who is still in line ahead of this patient
     POST /api/case/{case_id}/deteriorated       nurse-initiated DETERIORATION_DETECTED
     POST /api/case/{case_id}/move-to-treatment  nurse-initiated MOVE_REQUESTED
     POST /api/case/{case_id}/treatment-complete nurse-initiated TREATMENT_COMPLETE
@@ -24,9 +25,10 @@ answer or a re-file (`move_authorized`, `release_authorized`, the resolver-role
 check, and so on) runs inside the graph node that receives the resume, not
 here — a request this layer accepts can still come back refused.
 
-This is the minimal version of the treatment-move and release endpoints: they
-only work while a case is genuinely parked in the waiting-room pause
-(`control_state == monitoring`) or, for release, any open pause. See
+This is the minimal version of the treatment-move and release endpoints: a
+move works while a case is parked in the waiting-room pause (`control_state ==
+monitoring`) or the re-filing pause (`reassessment_required`), and a release
+from any open pause. See
 docs/superpowers/plans/2026-09-17-treatment-move-and-release/findings.md
 for why the gate and re-file pauses are out of scope for those two, and
 docs/STATUS.md item 4 for the full treatment-move execution machine (Tool
@@ -46,11 +48,12 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app import outages
 from app.guards import CHIEF_COMPLAINTS
 from app.budgets import HEARTBEAT_STALE_MULTIPLIER
+from app.deterministic import SKIP_REASONS
 from app.labels import Transition
 from app.monitor import timers
 from app.monitor.sweeper import SWEEP_INTERVAL_SECONDS
@@ -62,7 +65,7 @@ from app.views import BOARD_COLUMNS, CaseCard, card_from_state, case_view
 from . import commands
 from .intake import router as intake_router
 from .mock_cases import PLANTED
-from .ordering import positions, sort_cards
+from .ordering import ahead_of, positions, sort_cards
 from .repo import CheckpointRepo
 
 load_dotenv()
@@ -86,6 +89,8 @@ NOTIFY_TRANSITIONS = {
     Transition.REASSESSMENT_DUE.value,      # a reassessment timer fired
     Transition.MOVE_CONFIRMED.value,        # move to treatment confirmed
     Transition.BLK.value,                   # an attempted action was refused — worth seeing most
+    Transition.PRIVACY_REFUSED.value,       # the privacy check refused the payload: a technician looks
+    Transition.AF_PII.value,                # the payload builder crashed: the case is halted
 }
 
 app = FastAPI(title="Triage Guard — board", version="0.1.0")
@@ -375,6 +380,20 @@ class MoveToTreatmentReport(BaseModel):
     actor_role: str = "nurse"
 
 
+class MoveRequest(MoveToTreatmentReport):
+    # Only for a move that skips someone still in line. One of the fixed set or
+    # nothing: anything else is refused here, before it can reach a checkpoint
+    # or the audit log, since free text could carry patient details.
+    skip_reason: str | None = None
+
+    @field_validator("skip_reason")
+    @classmethod
+    def _known_reason(cls, value: str | None) -> str | None:
+        if value is not None and value not in SKIP_REASONS:
+            raise ValueError(f"skip_reason must be one of {sorted(SKIP_REASONS)}")
+        return value
+
+
 class ReleaseReport(BaseModel):
     reason: str
     actor_role: str = "nurse"
@@ -383,6 +402,10 @@ class ReleaseReport(BaseModel):
 # The waiting-room pause reports itself through `control_state`, the same fact
 # `app.monitor.fire.dispatch` checks before firing a reassessment timer.
 _WAITING = "case is not currently waiting in the queue"
+# A move is also answered from the re-filing pause: a patient whose reassessment
+# fell due can still be next in line.
+_MOVABLE = frozenset({State.MONITORING.value, State.REASSESSMENT_REQUIRED.value})
+_NOT_MOVABLE = "case is not waiting in the queue or due for reassessment"
 
 
 def _report(outcome: commands.Outcome) -> dict:
@@ -413,17 +436,41 @@ def deteriorated(case_id: str, report: DeteriorationReport):
     ))
 
 
-@app.post("/api/case/{case_id}/move-to-treatment")
-def move_to_treatment(case_id: str, report: MoveToTreatmentReport):
-    """Nurse-initiated move into treatment. Only wired from the waiting-room
-    pause in this version. The real authorization check (`move_authorized`) runs
-    inside the graph node that receives the resume, not here, so a request this
-    layer accepts can still come back refused.
+def _queue_place(case_id: str) -> tuple[int | None, list[int]]:
+    """This case's place in line and the positions ahead of it, over the same
+    global ordering `/api/board` shows. Read fresh on every call."""
+    cards = sort_cards([c for c in (card_from_state(s, None, g) for s, g in repo.scan()) if c])
+    return ahead_of(cards, case_id)
+
+
+@app.get("/api/case/{case_id}/queue-place")
+def queue_place(case_id: str):
+    """Who is still in line ahead of this patient, so the page can ask before an
+    out-of-order move. Advisory only: the move itself recomputes this and the
+    graph refuses an unexplained skip whatever the page did.
     """
+    position, ahead = _queue_place(case_id)
+    return {"position": position, "ahead": ahead, "skip_reasons": sorted(SKIP_REASONS)}
+
+
+@app.post("/api/case/{case_id}/move-to-treatment")
+def move_to_treatment(case_id: str, report: MoveRequest):
+    """Nurse-initiated move into treatment, from the waiting-room pause or from
+    the re-filing pause (reassessment due). The real authorization check
+    (`move_authorized`) runs inside the graph node that receives the resume, not
+    here, so a request this layer accepts can still come back refused.
+
+    Who is skipped is worked out here, from the queue, never from the request.
+    The graph refuses a move that skips anyone without a reason from the fixed
+    set, and records the skipped positions and the reason on the move.
+    """
+    position, ahead = _queue_place(case_id)
     return _report(commands.answer_pause(
         case_id,
-        {"event": "MOVE_REQUESTED", "actor_role": report.actor_role},
-        commands.in_control_state(State.MONITORING.value, _WAITING),
+        {"event": "MOVE_REQUESTED", "actor_role": report.actor_role,
+         "queue_position": position, "skipped_positions": ahead,
+         "skip_reason": report.skip_reason},
+        commands.in_control_states(_MOVABLE, _NOT_MOVABLE),
         require_applied=True,
     ))
 

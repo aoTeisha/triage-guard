@@ -37,9 +37,9 @@ def _at_intake_fix(graph, run, monkeypatch):
 
 
 def _at_recovery(graph, run, monkeypatch):
-    real = normalizer.build_model_payload      # let one identifier survive the build: V_HALT_PII
-    monkeypatch.setattr(normalizer, "build_model_payload",
-                        lambda *a, **k: {**real(*a, **k), "name": "Ada L."})
+    def broken(*a, **k):                       # the payload builder crashes: AF_PII
+        raise KeyError("vitals")
+    monkeypatch.setattr(normalizer, "build_model_payload", broken)
     _, _, thread = run(DEMO_CASES["clean"])
     return thread, "awaiting_recovery"
 

@@ -63,6 +63,9 @@ class Transition(str, Enum):
     BUILD_PAYLOAD = "build_payload"
     PAYLOAD_CLEAN = "payload_clean"
     PRIVACY_GATE_DOWN = "privacy_gate_down"   # OPA could not answer: the model is skipped
+    # The privacy check answered and refused the payload: a block, not a failure.
+    # The model is skipped and the case settles on the nurse's acuity.
+    PRIVACY_REFUSED = "privacy_refused"
     RUN_CLASSIFIER = "run_classifier"
     ACUITY_PROPOSED = "acuity_proposed"
 
@@ -106,7 +109,6 @@ class Transition(str, Enum):
     V_RETRY = "v_retry"
     V_EXHAUSTED = "v_exhausted"
     V_HALT = "v_halt"
-    V_HALT_PII = "v_halt_pii"
     V_RETRY_CLASSIFIER = "v_retry_classifier"
     V_EXHAUSTED_CLASSIFIER = "v_exhausted_classifier"
     V_EXHAUSTED_SAFETY = "v_exhausted_safety"
@@ -128,6 +130,7 @@ class Route(str, Enum):
     EXHAUSTED = "exhausted"
     HALT = "halt"
     DEGRADED = "degraded"
+    BLOCKED = "blocked"
     ESCALATE = "escalate"
     CLEARED = "cleared"
     MOVED = "moved"

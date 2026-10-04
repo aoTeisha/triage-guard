@@ -11,6 +11,7 @@ rule in this file is unit-testable without building a StateGraph.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -147,31 +148,68 @@ def audit_denial(case_id: str, control_state: State, why: str,
 # All four are answered by the real engines in `app.symbolic`.
 
 
-def verify_no_identifiers(payload: dict) -> tuple[bool | None, str]:
+# The two layers of the privacy check, as a refusal names them (`denying_layer`).
+PRIVACY_LAYER_OPA = "OPA (privacy)"
+PRIVACY_LAYER_REGEX = "regex scan"
+
+
+@dataclass(frozen=True)
+class PrivacyCheck:
+    """What the privacy check said about one payload.
+
+    `refused_by` maps each layer that refused to its reasons; empty means
+    nothing was found. `unavailable` holds OPA's reasons when it could not
+    answer; empty means it did.
+    """
+
+    refused_by: dict[str, list[str]]
+    unavailable: list[str]
+
+    @property
+    def explanation(self) -> str:
+        """One line naming each refusing layer and its reasons."""
+        return "payload refused for the model: " + "; ".join(
+            f"{layer}: {', '.join(reasons)}" for layer, reasons in self.refused_by.items()
+        )
+
+
+def check_privacy(payload: dict) -> PrivacyCheck:
     """What the model may see (I11, I12), decided by OPA over
     `app/symbolic/policy/privacy.rego`: only approved fields, each a closed value,
     no identifier key at any depth. Then the regex scan for an identifier typed
     *inside* an allowed value, which Rego's RE2 cannot express.
 
-    The payload builder already redacted values, so a hit here means redaction
-    missed something: a structural violation, not retryable, halts the case
-    (V_HALT_PII).
+    The payload builder already redacted values, so a refusal here means
+    redaction missed something. It is a block, not a failure: the model never
+    sees the payload, and the case goes on without it (PRIVACY_REFUSED).
+
+    OPA down is not a refusal: it is reported in `unavailable`, and only the
+    regex scan's hits refuse. A regex hit while OPA is down is still refused.
+    """
+    gate = opa.evaluate({"payload": payload}, policy=opa.PRIVACY_POLICY, query=opa.PRIVACY_QUERY)
+    down = _engine_down(gate)
+    opa_reasons = [] if down else list(gate["deny_reasons"])
+    if not down and not gate["allow"] and not opa_reasons:
+        opa_reasons.append("the privacy policy did not allow the payload (no case_id?)")
+    found = [f"{kind} in {path}" for path, kind in find_identifiers(payload)]
+    refused_by = {layer: reasons for layer, reasons in
+                  ((PRIVACY_LAYER_OPA, opa_reasons), (PRIVACY_LAYER_REGEX, found)) if reasons}
+    return PrivacyCheck(refused_by=refused_by,
+                        unavailable=list(gate["deny_reasons"]) if down else [])
+
+
+def verify_no_identifiers(payload: dict) -> tuple[bool | None, str]:
+    """`check_privacy` as a verdict: True approved, False refused.
 
     `None` means OPA could not answer and the regex scan found nothing: the
     payload is not proven clean, so it must not reach the model, but nothing was
-    found either. The caller skips the model instead of halting. A regex hit
-    while OPA is down is still a leak (`False`).
+    found either. The caller skips the model, as it does on a refusal.
     """
-    gate = opa.evaluate({"payload": payload}, policy=opa.PRIVACY_POLICY, query=opa.PRIVACY_QUERY)
-    leaked = list(gate["deny_reasons"])
-    found = [f"{kind} in {path}" for path, kind in find_identifiers(payload)]
-    if _engine_down(gate) and not found:
-        return None, f"privacy check unavailable, payload not proven clean: {'; '.join(leaked)}"
-    if not gate["allow"] and not leaked:
-        leaked.append("the privacy policy did not allow the payload (no case_id?)")
-    leaked += found
-    if leaked:
-        return False, f"payload refused for the model: {'; '.join(leaked)}"
+    check = check_privacy(payload)
+    if check.refused_by:
+        return False, check.explanation
+    if check.unavailable:
+        return None, f"privacy check unavailable, payload not proven clean: {'; '.join(check.unavailable)}"
     return True, "payload approved for the model"
 
 
@@ -183,6 +221,10 @@ SHIFT_LEAD_STANDS_IN = "authorized by shift lead"
 STAND_IN_ROLE = "shift_lead"
 # Same set as `release_reasons` in `app/symbolic/policy/monitor.rego`.
 RELEASE_REASONS = frozenset({"discharge", "ama", "transfer", "admit"})
+# Why a patient may be moved ahead of someone still in line. Same set as
+# `move_skip_reasons` in `app/symbolic/policy/monitor.rego`. A fixed list, never
+# free text: free text could carry patient details into the audit log.
+SKIP_REASONS = frozenset({"different_care_area", "patient_ahead_unavailable", "clinical_judgment"})
 
 
 def _engine_down(gate: dict) -> bool:
@@ -200,7 +242,8 @@ def _stand_in(actor_role: str, engine: str, facts_ok: bool, facts_why: str) -> t
 
 
 def move_authorized(
-    safety_passed: bool, approved: bool, actor_role: str, safety_waived: bool = False
+    safety_passed: bool, approved: bool, actor_role: str, safety_waived: bool = False,
+    *, skipped: list[int] | tuple[int, ...] = (), skip_reason: str | None = None,
 ) -> tuple[bool, str]:
     """OPA authorization for the treatment move (no bypass: a patient moves only
     after passing safety and being approved), evaluated by the real engine over
@@ -208,14 +251,23 @@ def move_authorized(
     dies, the case does not move. OPA unable to answer: a shift lead may move a
     patient who passed safety and was approved. A shift lead's clearance while the
     safety check could not run (`safety_waived`) stands in for the pass.
+
+    `skipped` is the queue positions still in line ahead of this patient. A move
+    that skips anyone needs a `skip_reason` from `SKIP_REASONS`; the stand-in
+    checks the same, so an OPA outage does not open a silent queue jump.
     """
     gate = opa.evaluate({"action": "move",
                          "case": {"safety_passed": bool(safety_passed), "approved": bool(approved),
                                   "safety_waived": bool(safety_waived)},
-                         "actor_role": actor_role})
+                         "actor_role": actor_role,
+                         "queue": {"skipped": list(skipped), "skip_reason": skip_reason}})
     if _engine_down(gate):
-        return _stand_in(actor_role, "OPA", bool((safety_passed or safety_waived) and approved),
-                         "the patient has not passed safety and been approved")
+        if not ((safety_passed or safety_waived) and approved):
+            return _stand_in(actor_role, "OPA", False,
+                             "the patient has not passed safety and been approved")
+        return _stand_in(actor_role, "OPA", not skipped or skip_reason in SKIP_REASONS,
+                         f"the move is out of order ({len(skipped)} still ahead in line) "
+                         "with no reason from the allowed set")
     return gate["allow"], ("move authorized" if gate["allow"] else "; ".join(gate["deny_reasons"]))
 
 

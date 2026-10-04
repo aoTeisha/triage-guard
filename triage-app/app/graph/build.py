@@ -57,6 +57,7 @@ UNIMPLEMENTED_STATES: frozenset[State] = frozenset({State.CASE_CLOSED, State.ACT
 # they're triggered by different things — a crash vs. a bad result.
 _CRASH_RETRY: dict[State, str] = {
     State.RESOLVING_IDENTITY: "crm",
+    State.REDACTING_ROUTING: "pii_schema_drop",   # budget 0: no retry, straight to the handler
     State.CLASSIFYING: "acuity_classifier",
     State.SAFETY_VALIDATING: "safety_validation",
 }
@@ -98,6 +99,7 @@ def _retry_policy(state: State) -> RetryPolicy | None:
 # Label: what the case is waiting on once it gets there.
 _CRASH_DESTINATIONS: dict[State, dict[str, str]] = {
     State.SAFETY_VALIDATING: {"safety_fallback": "validator_down"},
+    State.REDACTING_ROUTING: {State.AGENT_FAILED: "crashed"},
 }
 
 
@@ -148,10 +150,34 @@ def _on_crm_error(state: TriageState, error: NodeError) -> Command:
     )
 
 
+def _on_redaction_error(state: TriageState, error: NodeError) -> Command:
+    """The payload builder crashed (AF_PII). Critical — halt and alert the
+    technician; `awaiting_recovery` holds the case until AGENT_RECOVERED.
+
+    Not a refusal: a refusal is the privacy check answering, and the case goes
+    on without the model. Here the step that redacts did not finish, so nothing
+    it produced is kept, and the line stops until someone fixes it. No retry:
+    the drop is deterministic (`pii_schema_drop` budget 0).
+    """
+    return Command(
+        update={
+            "control_state": State.REDACTING_ROUTING.value,
+            "failed_stage": State.REDACTING_ROUTING.value,
+            "redacted_payload": {},
+            "payload_unverified": False,
+            "payload_refused": False,
+            "audit_log": [nodes.audit(state.case_id, State.REDACTING_ROUTING, "alert_technician",
+                                      f"payload builder crashed: {error.error}", Transition.AF_PII)],
+        },
+        goto=State.AGENT_FAILED,
+    )
+
+
 _ERROR_HANDLERS = {
     State.CLASSIFYING: _on_classifier_error,
     State.SAFETY_VALIDATING: _on_safety_error,
     State.RESOLVING_IDENTITY: _on_crm_error,
+    State.REDACTING_ROUTING: _on_redaction_error,
 }
 
 
@@ -176,7 +202,10 @@ def build_graph(checkpointer=None):
     b.add_node(State.RESOLVING_IDENTITY, nodes.resolving_identity,
                retry_policy=_retry_policy(State.RESOLVING_IDENTITY),
                error_handler=_ERROR_HANDLERS[State.RESOLVING_IDENTITY])
-    b.add_node(State.REDACTING_ROUTING, nodes.redacting_routing)
+    b.add_node(State.REDACTING_ROUTING, nodes.redacting_routing,
+               retry_policy=_retry_policy(State.REDACTING_ROUTING),
+               error_handler=_ERROR_HANDLERS[State.REDACTING_ROUTING],
+               destinations=_CRASH_DESTINATIONS[State.REDACTING_ROUTING])
     b.add_node(State.CLASSIFYING, nodes.classifying,
                retry_policy=_retry_policy(State.CLASSIFYING),
                error_handler=_ERROR_HANDLERS[State.CLASSIFYING])
@@ -248,11 +277,14 @@ def build_graph(checkpointer=None):
         routers.route_after_redaction,
         {
             Route.PROCEED:  State.CLASSIFYING,
-            Route.RETRY:    State.REDACTING_ROUTING,
-            Route.HALT:     State.AGENT_FAILED,
+            # The privacy check refused the payload: a block, not a failure.
+            # The model never sees it; the case settles on the nurse's acuity
+            # and goes on to safety and the queue, with the technician told.
+            Route.BLOCKED:  "classifier_fallback",
             # OPA could not prove the payload clean: never hand it to the
             # model; fall back to the nurse's acuity like a classifier outage.
             Route.DEGRADED: "classifier_fallback",
+            # A crash of this step halts it (_CRASH_DESTINATIONS).
         },
     )
 
@@ -346,9 +378,14 @@ def build_graph(checkpointer=None):
     b.add_edge(State.REASSESSMENT_REQUIRED, "awaiting_reassessment_submission")
     b.add_conditional_edges(
         "awaiting_reassessment_submission",
-        routers.route_pause_exit,
+        routers.route_refile_exit,
         {Route.PROCEED: State.PARSING, Route.RELEASED: END,
-         Route.DENIED: "awaiting_reassessment_submission"},
+         Route.DENIED: "awaiting_reassessment_submission",
+         # Moved into treatment before a re-file: on to the same treatment
+         # pause a waiting-room move parks at. Straight there, not through
+         # `monitoring`, which would start a reassessment timer for a patient
+         # who is no longer waiting.
+         Route.MOVED: "awaiting_reassessment"},
     )
 
     # ---- terminals --------------------------------------------------------------
@@ -357,7 +394,8 @@ def build_graph(checkpointer=None):
         "awaiting_recovery",
         routers.route_after_recovery,
         {
-            State.REDACTING_ROUTING: State.REDACTING_ROUTING,  # the only stage that halts today
+            # The only stage that halts today, and only when it crashes.
+            State.REDACTING_ROUTING: State.REDACTING_ROUTING,
             Route.RELEASED: END,
             Route.DENIED: "awaiting_recovery",
         },

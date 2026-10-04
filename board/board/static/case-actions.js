@@ -78,6 +78,91 @@ function actorPicker(caseId, defaultRole) {
   return role;
 }
 
+// Where "Start treatment" works: the waiting room, and a patient whose
+// reassessment fell due (they keep their place in line, and the treating
+// clinician assesses them anyway).
+const MOVABLE_STATUSES = ["waiting", "reassessment_required"];
+
+// Ask the server who is still in line ahead, and if anyone is, confirm and
+// collect a reason from the fixed list before moving. The server recomputes
+// the queue on the move itself and refuses an unexplained skip, so this dialog
+// is a courtesy, not the check: if the queue lookup fails the move is sent
+// without a reason and the server decides.
+async function startTreatment(caseId, actorRole, btn, msg) {
+  const id = encodeURIComponent(caseId);
+  let place = null;
+  try {
+    const res = await fetch(`/api/case/${id}/queue-place`);
+    if (res.ok) place = await res.json();
+  } catch {
+    place = null;
+  }
+  const body = { actor_role: actorRole };
+  if (place && place.ahead.length) {
+    const reason = await confirmSkip(place);
+    if (!reason) return;
+    body.skip_reason = reason;
+  }
+  // The panel's moves section is rebuilt on every poll, so the button and
+  // message the click came from may be gone once the dialog closes.
+  const live = document.querySelector("#panel-body .moves");
+  postCaseAction(
+    (live && live.querySelector(".start-treatment")) || btn,
+    (live && live.querySelector(".msg")) || msg,
+    `/api/case/${id}/move-to-treatment`, body, "moving…", "moved to treatment",
+    () => setTimeout(() => openPanel(caseId), 300),
+  );
+}
+
+// "Patient #1 is still waiting. Move this patient anyway?" Resolves to the
+// picked reason, or null if the nurse backs out. Reasons only from the list
+// the server sent: never free text, which could put patient details in the log.
+function confirmSkip(place) {
+  return new Promise((resolve) => {
+    const dlg = el("dialog", "skip-dialog");
+    const ahead = place.ahead.map((p) => `#${p}`);
+    const who = ahead.length === 1
+      ? `Patient ${ahead[0]} is still waiting.`
+      : `Patients ${ahead.join(", ")} are still waiting.`;
+    dlg.append(el("h3", null, `${who} Move this patient anyway?`));
+    dlg.append(el("p", "meta",
+      `This patient is #${place.position} in line. Pick why they go first; `
+      + "the reason is recorded with the move."));
+
+    const confirm = el("button", "move-btn", "Move anyway");
+    confirm.disabled = true;
+    const list = el("div", "skip-reasons");
+    place.skip_reasons.forEach((reason) => {
+      const label = el("label");
+      const input = el("input");
+      input.type = "radio";
+      input.name = "skip-reason";
+      input.value = reason;
+      input.onchange = () => { confirm.disabled = false; };
+      label.append(input, el("span", null, plain(SKIP_REASON_LABELS, reason)));
+      list.append(label);
+    });
+    const cancel = el("button", "cancel-btn", "Cancel");
+
+    const done = (value) => {
+      dlg.close();
+      dlg.remove();
+      resolve(value);
+    };
+    cancel.onclick = () => done(null);
+    confirm.onclick = () => done(list.querySelector("input:checked")?.value || null);
+    dlg.addEventListener("cancel", (e) => { e.preventDefault(); done(null); });
+    // Escape closes this dialog only, not the case panel behind it.
+    dlg.addEventListener("keydown", (e) => { if (e.key === "Escape") e.stopPropagation(); });
+
+    const buttons = el("div", "btn-row");
+    buttons.append(cancel, confirm);
+    dlg.append(list, buttons);
+    document.body.append(dlg);
+    dlg.showModal();
+  });
+}
+
 function movesSection(caseId, card) {
   const box = el("div", "section moves");
   box.append(el("h3", null, "Manual status change"));
@@ -91,16 +176,12 @@ function movesSection(caseId, card) {
       "OPA is down: moves and releases need a shift lead's sign-off."));
   }
 
-  const moveBtn = el("button", "move-btn", "Start treatment");
-  moveBtn.disabled = card ? card.status !== "waiting" : true;
+  const moveBtn = el("button", "move-btn start-treatment", "Start treatment");
+  moveBtn.disabled = card ? !MOVABLE_STATUSES.includes(card.status) : true;
   moveBtn.title = moveBtn.disabled
-    ? "only a patient currently waiting can be moved into treatment"
+    ? "only a patient waiting or due for reassessment can be moved into treatment"
     : "";
-  moveBtn.onclick = () => postCaseAction(
-    moveBtn, msg, `/api/case/${encodeURIComponent(caseId)}/move-to-treatment`,
-    { actor_role: role.value }, "moving…", "moved to treatment",
-    () => setTimeout(() => openPanel(caseId), 300),
-  );
+  moveBtn.onclick = () => startTreatment(caseId, role.value, moveBtn, msg);
 
   // Treatment done: the case moves to the sign-off column (spec arrow FV).
   const completeBtn = el("button", "move-btn", "Treatment complete");

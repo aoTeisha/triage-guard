@@ -10,7 +10,7 @@ function kv(pairs) {
 
 function readable(text) {
   // Explanations are written for a log, so a few spec tokens leak through.
-  return Object.entries({ ...SOURCE_LABELS, ...OUTCOME_LABELS }).reduce(
+  return Object.entries({ ...SOURCE_LABELS, ...OUTCOME_LABELS, ...SKIP_REASON_LABELS }).reduce(
     (s, [token, label]) => s.split(token).join(label), text || "");
 }
 

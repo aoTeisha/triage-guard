@@ -54,6 +54,7 @@ allow if {
 	safety_settled
 	input.case.approved == true
 	input.actor_role in move_roles
+	order_settled
 }
 
 deny_reasons contains "move refused: safety not passed" if {
@@ -69,6 +70,27 @@ deny_reasons contains "move refused: not approved" if {
 deny_reasons contains sprintf("move refused: role %q not authorized", [input.actor_role]) if {
 	input.action == "move"
 	not input.actor_role in move_roles
+}
+
+# Out of order: someone still in line is ahead of this patient. Allowed, but
+# only with a reason from this fixed set: never free text, which could carry
+# patient details into the audit log. Same set as `SKIP_REASONS` in
+# app/deterministic.py; `tests/test_out_of_order_move.py` fails if they drift.
+# `skipped` is the queue positions ahead, computed by the board's server from
+# the global queue, never taken from the browser.
+move_skip_reasons := {"different_care_area", "patient_ahead_unavailable", "clinical_judgment"}
+
+skipped := object.get(input, ["queue", "skipped"], [])
+
+order_settled if count(skipped) == 0
+
+order_settled if input.queue.skip_reason in move_skip_reasons
+
+# The reason itself is not echoed: a value outside the set is exactly the
+# free text that must not reach the log.
+deny_reasons contains sprintf("move refused: out of order, %d patient(s) still ahead in line and no reason from the allowed set", [count(skipped)]) if {
+	input.action == "move"
+	not order_settled
 }
 
 # --- release: sign the patient out, from any pause ---------------------------

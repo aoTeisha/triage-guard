@@ -21,6 +21,8 @@ def _record(t: T | None) -> dict:
               "action": "a", "explanation": "e", "transition": t.value if t else None}
     if t == T.BLK:
         record["denying_layer"] = "OPA (authorization)"
+    if t == T.PRIVACY_REFUSED:
+        record["denying_layer"] = "OPA (privacy)"
     return record
 
 
@@ -155,6 +157,34 @@ def test_a_refusal_without_its_layer_is_flagged():
     log = _log(*CLEAN, T.BLK)
     del log[-1]["denying_layer"]
     assert any("audit record" in v and "denying_layer" in v for v in check_trace(log).violations)
+
+
+# The fallback after a refusal: the nurse's acuity, then safety and the queue.
+REFUSED = (T.ENTRY, T.PRIVACY_REFUSED, T.V_EXHAUSTED_CLASSIFIER, T.SAFETY_PASSED,
+           T.CLEARED_TO_QUEUE, T.TIMER_RUNNING)
+
+
+def test_a_refused_payload_queued_on_the_nurses_acuity_passes():
+    assert check_trace(_log(*REFUSED)).passed
+
+
+def test_the_model_after_a_privacy_refusal_is_flagged():
+    result = check_trace(_log(T.ENTRY, T.PRIVACY_REFUSED, T.RUN_CLASSIFIER, T.ACUITY_PROPOSED))
+    assert not result.passed
+    assert len(result.violations) == 2
+    assert all("privacy refusal" in v for v in result.violations)
+
+
+def test_a_privacy_refusal_without_its_layer_is_flagged():
+    log = _log(*REFUSED)
+    del log[1]["denying_layer"]
+    result = check_trace(log)
+    assert not result.passed
+    assert "privacy refusal" in result.violations[0]
+
+
+def test_a_refile_after_a_refusal_may_use_the_model_again():
+    assert check_trace(_log(*REFUSED, T.FRONT_DOOR_RERUN, *CLEAN)).passed
 
 
 def test_a_record_from_another_case_is_flagged():
