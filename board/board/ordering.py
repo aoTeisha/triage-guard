@@ -50,3 +50,17 @@ def positions(cards: list[CaseCard]) -> dict[str, int]:
     """
     in_line = sort_cards([c for c in cards if c.status in QUEUEING_STATUSES])
     return {c.case_id: i for i, c in enumerate(in_line, start=1)}
+
+
+def ahead_of(cards: list[CaseCard], case_id: str) -> tuple[int | None, list[int]]:
+    """(this case's position, the positions still in line ahead of it).
+
+    What an out-of-order move skips, computed here on the server over the same
+    global ordering the board shows, and never taken from the browser. A case
+    not in line has no position and skips no one.
+    """
+    place = positions(cards)
+    mine = place.get(case_id)
+    if mine is None:
+        return None, []
+    return mine, list(range(1, mine))

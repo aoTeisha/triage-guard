@@ -378,9 +378,14 @@ def build_graph(checkpointer=None):
     b.add_edge(State.REASSESSMENT_REQUIRED, "awaiting_reassessment_submission")
     b.add_conditional_edges(
         "awaiting_reassessment_submission",
-        routers.route_pause_exit,
+        routers.route_refile_exit,
         {Route.PROCEED: State.PARSING, Route.RELEASED: END,
-         Route.DENIED: "awaiting_reassessment_submission"},
+         Route.DENIED: "awaiting_reassessment_submission",
+         # Moved into treatment before a re-file: on to the same treatment
+         # pause a waiting-room move parks at. Straight there, not through
+         # `monitoring`, which would start a reassessment timer for a patient
+         # who is no longer waiting.
+         Route.MOVED: "awaiting_reassessment"},
     )
 
     # ---- terminals --------------------------------------------------------------

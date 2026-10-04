@@ -19,7 +19,8 @@ from langgraph.types import interrupt
 
 from app.budgets import REASSESSMENT_REMINDER_DELAY_MINUTES
 from app.deterministic import assign_order_key, audit
-from app.graph.nodes._shared import is_release, release_case
+from app.events import Event
+from app.graph.nodes._shared import is_release, move_case, release_case
 from app.graph.state import RESET_COUNTS, TriageState
 from app.labels import Transition
 from app.monitor import timers
@@ -68,6 +69,8 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
     submitted = interrupt({"case_id": state.case_id, "reassessment_pending": True})
     if is_release(submitted):
         return release_case(state, submitted, State.REASSESSMENT_REQUIRED)
+    if submitted.get("event") == Event.MOVE_REQUESTED.value:
+        return move_from_reassessment(state, submitted)
 
     fresh_payload = {
         **state.raw_payload,
@@ -124,4 +127,34 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
             audit(state.case_id, State.REASSESSMENT_REQUIRED, "emit_event_log",
                   "nurse re-filed with fresh observations", Transition.FRONT_DOOR_RERUN),
         ],
+    }
+
+
+def move_from_reassessment(state: TriageState, submitted: dict[str, Any]) -> dict[str, Any]:
+    """The patient is next in line when their reassessment falls due, and the
+    treating clinician will assess them anyway: move them into treatment from
+    here instead of making a nurse re-file first.
+
+    Authorized by the same OPA move rule as the waiting-room move, over this
+    triage's own `safety_passed` and `approved`. They still hold: they are reset
+    only when a re-file starts a new triage (above), and a timer falling due
+    asks for a fresh look, it does not undo the last one. The values are passed
+    as they are, never assumed, so a case that somehow reached this pause
+    without a cleared triage is refused.
+
+    On success the re-file reminder is cancelled (nothing is left to remind
+    about) and the case continues to the treatment pause, `awaiting_reassessment`,
+    with `control_state` back to `monitoring`, the same place a waiting-room
+    move leaves it. A refusal leaves the case here, still waiting for a re-file.
+    """
+    moved = move_case(state, submitted, State.REASSESSMENT_REQUIRED)
+    if moved.get("clinical_status") != ClinicalStatus.TREATMENT_STARTED.value:
+        return moved
+    cancelled = timers.cancel_pending(timers.connection(), case_id=state.case_id,
+                                      kind="reassessment_reminder")
+    return moved | {
+        "control_state": State.MONITORING.value,
+        "audit_log": [audit(state.case_id, State.REASSESSMENT_REQUIRED, "cancel_reminder",
+                            f"moved before re-filing: {cancelled} re-file reminder(s) cancelled"),
+                      *moved["audit_log"]],
     }

@@ -151,7 +151,8 @@ guards safety (not compromisable - it needs a human substitute).
   moves to treatment and releases; Prolog decides who may answer a gate. No outage may
   block treatment or release, so when the engine cannot answer, a shift lead signs before
   the action, and the facts the engine would have checked are checked in plain code: a
-  move needs a passed safety check and approval, a release needs a valid reason. A real
+  move needs a passed safety check and approval (and a listed reason if it skips anyone
+  still in line), a release needs a valid reason. A real
   refusal from a working engine is never overridden. A CRM write-back whose authorization
   cannot be checked is retried, never dropped. While OPA or Prolog is down, reminders and
   reassessment timers also wait and are retried once it is back, so staff watch the clock
@@ -702,7 +703,13 @@ directions:
 Neither runs automatically, and each has its own guard. A move to treatment needs a
 passed safety check (or a shift lead's clearance while the check could not run) and an
 approval: the case either cleared without a gate or a charge nurse answered one. Any
-nurse may then start it. A release needs a charge nurse or shift lead and a valid reason
+nurse may then start it, from the waiting room or from the reassessment-required column:
+a reassessment falling due does not undo the triage that cleared the patient, and the
+treating clinician assesses them anyway. A move that skips someone still in line is
+allowed, since queue order is a recommendation and the reason may be clinical, but only
+with a reason from a fixed list (different care area, patient ahead unavailable,
+clinical judgment), and the skipped positions and the reason go into the audit log. The
+board's server computes who is skipped; the browser is never asked. A release needs a charge nurse or shift lead and a valid reason
 (discharge, against medical advice, transfer, admit). It skips safety validation
 because it starts no treatment. When treatment finishes, the case moves to a sign-off
 column and waits there for release.

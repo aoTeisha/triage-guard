@@ -104,6 +104,16 @@ def in_control_state(state: str, detail: str) -> Check:
     return check
 
 
+def in_control_states(states: frozenset[str], detail: str) -> Check:
+    """`in_control_state` for an answer more than one pause accepts."""
+
+    def check(snapshot: Any) -> None:
+        if snapshot.values.get("control_state") not in states:
+            raise HTTPException(status_code=409, detail=detail)
+
+    return check
+
+
 def open_pause() -> Check:
     """Any pause of a case that is not already closed. A release is valid from
     any such pause, not just one named pause.

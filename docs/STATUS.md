@@ -1,7 +1,75 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-10-03 (a privacy refusal is now a block, not a halt: the
-case goes on without the model. Previous entries below.)
+**Last updated:** 2026-10-03 (a patient due for reassessment can be moved into
+treatment, and a move that skips someone still in line needs a reason from a
+fixed list; a privacy refusal is now a block, not a halt: the case goes on
+without the model. Previous entries below.)
+
+**2026-10-03, moves from reassessment, and out-of-order moves.**
+
+*A patient due for reassessment could not be moved.* `move-to-treatment` only
+answered the waiting-room pause, so a patient whose timer had fired sat in
+`reassessment_required` until a nurse re-filed, even when they were next in line
+and the treating clinician was about to assess them anyway. The re-filing pause
+(`awaiting_reassessment_submission`) now also takes `MOVE_REQUESTED`. Same
+authorization as the waiting-room move: OPA's `move` rule, or a shift lead when
+OPA is down. It reads this triage's `safety_passed` and `approved` as they are.
+Those still hold: they are reset only when a re-file starts a new triage, and a
+timer falling due asks for a fresh look without undoing the last one. They are
+passed, never assumed, so a case that reached the pause without a cleared triage
+is refused. On success the pending `reassessment_reminder` is cancelled
+(`timers.cancel_pending`, which leaves a timer a sweeper holds right now to the
+sweeper's own "pause gone" cancel), a `cancel_reminder` row and the
+`move_confirmed` row are written with `control_state = reassessment_required`,
+and the case goes to the treatment pause (`awaiting_reassessment`, back to
+`monitoring`), the same place a waiting-room move parks it. It goes straight
+there, not through `monitoring`, which would start a reassessment timer for a
+patient who is no longer waiting. The edge is drawn
+(`awaiting_reassessment_submission --moved--> awaiting_reassessment`, router
+`route_refile_exit`), in `control-plane.mmd` and in the hand-drawn diagram.
+`check_trace` needed no change: a triage runs until the next `front_door_rerun`,
+so the move still follows this triage's `cleared_to_queue`, and the
+single-start rule still counts it. The shared move logic moved to
+`_shared.move_case`, beside `release_case`; both pauses call it.
+
+*Out-of-order moves were silent.* The board numbered every card but nothing
+checked the number on a move. Now `move_authorized` (OPA `move` rule) also needs,
+when anyone still in line is ahead, a `skip_reason` from
+`move_skip_reasons` = {`different_care_area`, `patient_ahead_unavailable`,
+`clinical_judgment`}. No free text: it could carry patient details into the log.
+The board's server works out who is skipped (`ordering.ahead_of`, over the same
+global queue and `QUEUEING_STATUSES` the board shows) and puts the positions in
+the resume payload; positions sent by the browser are ignored. The board API
+also refuses, with 422, a `skip_reason` outside the list, so free text never
+reaches a checkpoint; the graph would refuse it anyway as a `BLK`, and the
+refusal does not echo it. With OPA down, the shift lead's stand-in needs the
+reason too (`deterministic.SKIP_REASONS`, pinned to the policy by a drift test).
+The move's audit row carries `queue_position`, and on a skip `skipped_positions`
+and `skip_reason`. A reason sent with an in-order move is not logged. OPA rather
+than Python, because moves are already OPA's: one decision and one refusal path.
+On the board, "Start treatment" is enabled for `waiting` and
+`reassessment_required`. It asks `GET /api/case/{id}/queue-place` first, and if
+anyone is ahead opens a dialog ("Patient #1 is still waiting. Move this patient
+anyway?") with the three reasons as radio buttons and "Move anyway" disabled
+until one is picked. The check is advisory: the move recomputes the queue.
+
+*Not done.* The queue is read and the move applied under the moved case's lock
+only, so two moves at once can each see the other patient still waiting; each
+then needs a reason, which errs the safe way. A pending `reassessment` timer is
+still not cancelled on a move, as before: after a deterioration report it later
+fires into the treated case and is logged, without changing its status. Release
+from `reassessment_required` stays API-only; the board's release button is not
+enabled there.
+
+*Tests.* `test_move_from_reassessment.py` (allowed, wrong role, OPA down, reminder
+cancelled, flags read not assumed, treatment complete and release afterwards,
+trace check) and `test_out_of_order_move.py` (drift, OPA and the Python stand-in
+agree over 60 combinations, BLK without a reason, allowed and logged with one,
+in-order needs none, junk positions dropped) in triage-app; `test_move_order.py`
+in board (server-computed place, the browser cannot claim its own, 422 on free
+text, a treated patient no longer holds a place, reassessment-required still
+does, the move from that column through the API). The dialog was checked in
+Chromium with Playwright.
 
 **2026-10-03, a privacy refusal is a block, not a failure.**
 

@@ -137,6 +137,7 @@ const ACTION_LABELS = {
   alert_technician: "technician alerted",
   discard_output: "result rejected, retrying",
   start_reassessment_timer: "reassessment timer started",
+  cancel_reminder: "re-file reminder cancelled",
 };
 
 const STAGE_LABELS = {
@@ -168,6 +169,14 @@ const OUTCOME_LABELS = {
 };
 const RELEASE_REASON_LABELS = {
   discharge: "Discharge", ama: "AMA", transfer: "Transfer", admit: "Admit",
+};
+// Why a patient may be moved ahead of someone still in line. Keys mirror
+// SKIP_REASONS in app/deterministic.py; the dialog offers the list the server
+// sends, so a key missing here shows as itself rather than disappearing.
+const SKIP_REASON_LABELS = {
+  different_care_area: "Different care area (bed type or specialty)",
+  patient_ahead_unavailable: "Patient ahead is unavailable (e.g. in imaging)",
+  clinical_judgment: "Clinical judgment",
 };
 
 // What a notification is about, in words. The raw transition name stays in the tooltip.

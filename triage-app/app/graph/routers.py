@@ -185,6 +185,17 @@ def route_pause_exit(state: TriageState) -> Route:
     return release_route(state) or Route.PROCEED
 
 
+def route_refile_exit(state: TriageState) -> Route:
+    """Exit of the re-filing pause: released, refused, moved into treatment
+    before a re-file (on to the treatment pause), or on to parsing."""
+    released_or_refused = release_route(state)
+    if released_or_refused:
+        return released_or_refused
+    if state.clinical_status == ClinicalStatus.TREATMENT_STARTED.value:
+        return Route.MOVED
+    return Route.PROCEED
+
+
 def route_after_recovery(state: TriageState) -> Route | State:
     """AF_RECOVER: re-enter at the stage that halted, unless released. Only a
     crash of `redacting_routing` halts today (AF_PII)."""

@@ -46,6 +46,7 @@ graph TD;
 	awaiting_reassessment -. &nbsp;Route.RELEASED&nbsp; .-> __end__;
 	awaiting_reassessment -. &nbsp;Route.PROCEED&nbsp; .-> reassessment_required;
 	awaiting_reassessment_submission -. &nbsp;Route.RELEASED&nbsp; .-> __end__;
+	awaiting_reassessment_submission -. &nbsp;Route.MOVED&nbsp; .-> awaiting_reassessment;
 	awaiting_reassessment_submission -. &nbsp;Route.PROCEED&nbsp; .-> parsing;
 	awaiting_recovery -. &nbsp;Route.RELEASED&nbsp; .-> __end__;
 	awaiting_recovery -. &nbsp;State.REDACTING_ROUTING&nbsp; .-> redacting_routing;

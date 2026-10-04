@@ -221,6 +221,10 @@ SHIFT_LEAD_STANDS_IN = "authorized by shift lead"
 STAND_IN_ROLE = "shift_lead"
 # Same set as `release_reasons` in `app/symbolic/policy/monitor.rego`.
 RELEASE_REASONS = frozenset({"discharge", "ama", "transfer", "admit"})
+# Why a patient may be moved ahead of someone still in line. Same set as
+# `move_skip_reasons` in `app/symbolic/policy/monitor.rego`. A fixed list, never
+# free text: free text could carry patient details into the audit log.
+SKIP_REASONS = frozenset({"different_care_area", "patient_ahead_unavailable", "clinical_judgment"})
 
 
 def _engine_down(gate: dict) -> bool:
@@ -238,7 +242,8 @@ def _stand_in(actor_role: str, engine: str, facts_ok: bool, facts_why: str) -> t
 
 
 def move_authorized(
-    safety_passed: bool, approved: bool, actor_role: str, safety_waived: bool = False
+    safety_passed: bool, approved: bool, actor_role: str, safety_waived: bool = False,
+    *, skipped: list[int] | tuple[int, ...] = (), skip_reason: str | None = None,
 ) -> tuple[bool, str]:
     """OPA authorization for the treatment move (no bypass: a patient moves only
     after passing safety and being approved), evaluated by the real engine over
@@ -246,14 +251,23 @@ def move_authorized(
     dies, the case does not move. OPA unable to answer: a shift lead may move a
     patient who passed safety and was approved. A shift lead's clearance while the
     safety check could not run (`safety_waived`) stands in for the pass.
+
+    `skipped` is the queue positions still in line ahead of this patient. A move
+    that skips anyone needs a `skip_reason` from `SKIP_REASONS`; the stand-in
+    checks the same, so an OPA outage does not open a silent queue jump.
     """
     gate = opa.evaluate({"action": "move",
                          "case": {"safety_passed": bool(safety_passed), "approved": bool(approved),
                                   "safety_waived": bool(safety_waived)},
-                         "actor_role": actor_role})
+                         "actor_role": actor_role,
+                         "queue": {"skipped": list(skipped), "skip_reason": skip_reason}})
     if _engine_down(gate):
-        return _stand_in(actor_role, "OPA", bool((safety_passed or safety_waived) and approved),
-                         "the patient has not passed safety and been approved")
+        if not ((safety_passed or safety_waived) and approved):
+            return _stand_in(actor_role, "OPA", False,
+                             "the patient has not passed safety and been approved")
+        return _stand_in(actor_role, "OPA", not skipped or skip_reason in SKIP_REASONS,
+                         f"the move is out of order ({len(skipped)} still ahead in line) "
+                         "with no reason from the allowed set")
     return gate["allow"], ("move authorized" if gate["allow"] else "; ".join(gate["deny_reasons"]))
 
 

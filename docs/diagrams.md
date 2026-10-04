@@ -65,6 +65,7 @@ stateDiagram-v2
     monitoring --> monitoring : move_confirmed / formal_validation / blk
     monitoring --> reassessment_required : reassessment_due
     reassessment_required --> parsing : front_door_rerun
+    reassessment_required --> monitoring : move_confirmed (next in line, before re-filing)
 
     agent_failed --> redacting_routing : af_recover
 
