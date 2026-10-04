@@ -41,9 +41,8 @@ stateDiagram-v2
     resolving_identity --> input_rejected : duplicate_case
 
     redacting_routing --> classifying : payload_clean
-    redacting_routing --> redacting_routing : v_retry
-    redacting_routing --> safety_validating : privacy_gate_down (nurse acuity)
-    redacting_routing --> agent_failed : v_halt_pii
+    redacting_routing --> safety_validating : privacy_refused / privacy_gate_down (nurse acuity)
+    redacting_routing --> agent_failed : af_pii (payload builder crashed)
 
     classifying --> acuity_proposed : acuity_proposed
     classifying --> classifying : v_retry_classifier

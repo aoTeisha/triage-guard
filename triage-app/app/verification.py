@@ -12,7 +12,9 @@ modelled as a type rather than a bool:
                agent's retry budget (V_RETRY), then that agent's AF row
                (V_EXHAUSTED).
   STRUCTURAL   an identifier reached a redacted payload, or a safety invariant
-               broke. A retry cannot fix it. Discard and halt (V_HALT).
+               broke. A retry cannot fix it. Discard and halt (V_HALT). The
+               privacy check's refusal is the exception: it is a block, not a
+               halt, and the case goes on without the model (PRIVACY_REFUSED).
 
 One rule never bends: a malformed or unsafe output is never written to state.
 """
@@ -26,7 +28,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from app.budgets import MAX_CORRECTION_ROUNDS
-from app.deterministic import verify_no_identifiers
+from app.deterministic import check_privacy
 from app.labels import Transition
 
 
@@ -48,6 +50,8 @@ class VerificationResult:
     violations: tuple[str, ...] = ()
     category: Violation | None = None
     checked: Any = None
+    # Which checks refused, for a refusal that must name its layer.
+    layers: tuple[str, ...] = ()
 
     @property
     def structural(self) -> bool:
@@ -93,29 +97,34 @@ def schema_failure(agent: str, exc: ValidationError) -> VerificationResult:
 
 
 def verify_redacted_payload(payload: dict[str, Any]) -> VerificationResult:
-    """The `redacting_routing` check (V_HALT_PII).
+    """The `redacting_routing` check (PRIVACY_REFUSED, PRIVACY_GATE_DOWN).
 
     Structural by definition: an identifier in the model-facing payload is a
     privacy-invariant breach, and re-running the same drop on the same input would
-    leak it again. Never retried.
+    leak it again. Never retried. `layers` names the checks that refused.
 
     OPA down with nothing found is `UNAVAILABLE`, carrying the payload in
     `checked` so the case can keep it, but never hand it to the model.
     """
-    ok, why = verify_no_identifiers(payload)
-    if ok is False:
+    privacy = check_privacy(payload)
+    if privacy.refused_by:
         return VerificationResult(
-            passed=False, violations=(why,), category=Violation.STRUCTURAL
+            passed=False, violations=(privacy.explanation,), category=Violation.STRUCTURAL,
+            layers=tuple(privacy.refused_by),
         )
     if not payload.get("case_id"):
-        # The payload must be keyed by case_id — without it the proposal cannot be
-        # attributed to a case, which breaks the audit chain. Recoverable: rebuild.
+        # Only reachable while OPA is down: OPA itself refuses a payload with no
+        # case_id. Without it the proposal cannot be attributed to a case, which
+        # breaks the audit chain, and rebuilding from the same input gives the
+        # same payload. Refused like an identifier, so both cases read alike.
         return VerificationResult(
             passed=False,
             violations=("redacted payload is not keyed by case_id",),
-            category=Violation.RECOVERABLE,
+            category=Violation.STRUCTURAL,
+            layers=("output verification",),
         )
-    if ok is None:
+    if privacy.unavailable:
+        why = f"privacy check unavailable, payload not proven clean: {'; '.join(privacy.unavailable)}"
         return VerificationResult(
             passed=False, violations=(why,), category=Violation.UNAVAILABLE, checked=payload
         )
@@ -172,7 +181,10 @@ _FRESH_TRIAGE = {
     "revalidated": 0,       # corrections sent back to safety before a senior took over
     "senior": False,        # a shift lead holds the case; rounds stop counting
     "waived": False,        # a shift lead cleared the case while the check could not run
+    "refused": False,       # the privacy check refused the payload: the model may not run
 }
+# The model being asked, or answering.
+_MODEL_CALLED = frozenset({Transition.RUN_CLASSIFIER, Transition.ACUITY_PROPOSED})
 
 
 def check_trace(audit_log: list[dict[str, Any]]) -> VerificationResult:
@@ -184,7 +196,9 @@ def check_trace(audit_log: list[dict[str, Any]]) -> VerificationResult:
     the queue (correct then revalidate); corrections past the round limit go to a
     senior, not back to safety (bounded correction loop); every record has the
     fixed fields and belongs to this case (audit record); nothing but refusals
-    after release (closed case).
+    after release (closed case); a payload the privacy check refused never
+    reaches the model, and the refusal names the layer that refused (privacy
+    refusal).
 
     A triage is one pass through the log: it starts at the top, and starts
     over each time the case is re-filed from scratch and sent back through
@@ -223,6 +237,13 @@ def check_trace(audit_log: list[dict[str, Any]]) -> VerificationResult:
 
         if t == Transition.FRONT_DOOR_RERUN:
             tri = dict(_FRESH_TRIAGE)
+
+        if t == Transition.PRIVACY_REFUSED:
+            tri["refused"] = True
+            if not record.get("denying_layer"):
+                flag(i, "privacy refusal", "refusal names no denying_layer")
+        if t in _MODEL_CALLED and tri["refused"]:
+            flag(i, "privacy refusal", f"{t} after the privacy check refused the payload")
         if t in _NEEDS_HUMAN:
             tri["needs_human"] = True
         if t in _HUMAN_ANSWERED:

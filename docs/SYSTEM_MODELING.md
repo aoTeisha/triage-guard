@@ -126,7 +126,21 @@ guards safety (not compromisable - it needs a human substitute).
   regex identifier scan finds nothing, the payload is not proven clean, so it never
   reaches the model: the case takes the classifier-down path (the nurse's acuity, the
   discrepancy gate off, flagged for later review) and continues to safety validation.
-  An identifier the regex scan does find still halts the case, OPA or not.
+  An identifier the regex scan does find is refused, OPA or not (next item).
+- **Privacy check refuses the payload - a block, not a failure.** When OPA or the regex
+  scan finds an identifier or an unapproved field, the check has done its job: it is a
+  policy decision, not an outage. The payload never reaches the model and is not kept.
+  The case takes the same path as an OPA outage (the nurse's acuity, the discrepancy gate
+  off, flagged for review), on to safety validation and the queue, so the patient keeps
+  a reassessment timer and stays visible to the deadline check. Because a refusal means
+  redaction or the data upstream missed something, the case is also flagged
+  `privacy_refused` and the technician is alerted, apart from the "OPA down" mark of an
+  outage. The audit record names the layer that refused and its reasons.
+- **Payload builder crashes - halt, the one critical-closed stop.** If the step that
+  builds the model payload raises, it did not finish, so nothing it built is kept or
+  sent. The case halts in `agent_failed` with the technician alerted and resumes at that
+  step on `AGENT_RECOVERED`. While halted the case has no reassessment timer of its own;
+  the technician alert is its only escalation.
 - **Monitor (sweeper) unavailable - continue, humans watch the clock.** The pipeline
   never calls the monitor; it only stores timer rows in Postgres. Cases keep flowing to
   the queue, but nothing time-based fires: reassessment timers, gate and senior
@@ -336,7 +350,7 @@ is no direct arrow from the LLM to an irreversible action, by design._
 | Graph → Human Escalation  | `EscalationRequest { case, reason: discrepancy \| safety_fail \| validator_down \| low_confidence }`                | Reason determines which question the human gets.                                         |
 | Human Escalation → Graph  | `ApprovalToken { decision, resolver_role }`                                                                         | The human's answer; Prolog checks the role before the graph acts on it.                  |
 | Graph → OPA               | `PolicyQuery { privacy \| move \| release, case facts, actor_role }`                                                | Is the payload clean; may this person move or release this case.                         |
-| OPA → Graph               | `allow \| deny, reasons`                                                                                            | A refusal is logged and the case stays where it was.                                     |
+| OPA → Graph               | `allow \| deny, reasons`                                                                                            | A refused move or release is logged and the case stays where it was; a refused payload is logged and the case goes on without the model. |
 | Monitor → Graph           | `TimerFired`                                                                                                        | Resumes a case when its reassessment is due. Reminders go to staff, not the graph.       |
 | Monitor → CRM             | `VisitWriteback { patient_id, visit }`                                                                              | After release, the visit is written to the patient's record; retried until it lands.     |
 | Graph → Audit log         | `AuditRecord { action, actor, timestamp, before → after, reason }`                                                  | Every state change is recorded - the auditability constraint.                            |

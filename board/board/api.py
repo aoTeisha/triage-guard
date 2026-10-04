@@ -86,6 +86,8 @@ NOTIFY_TRANSITIONS = {
     Transition.REASSESSMENT_DUE.value,      # a reassessment timer fired
     Transition.MOVE_CONFIRMED.value,        # move to treatment confirmed
     Transition.BLK.value,                   # an attempted action was refused — worth seeing most
+    Transition.PRIVACY_REFUSED.value,       # the privacy check refused the payload: a technician looks
+    Transition.AF_PII.value,                # the payload builder crashed: the case is halted
 }
 
 app = FastAPI(title="Triage Guard — board", version="0.1.0")

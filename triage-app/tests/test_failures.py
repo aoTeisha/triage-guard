@@ -13,6 +13,7 @@ from app.labels import Transition
 from app.mock_cases import DEMO_CASES
 from app.schemas import SafetyVerdict
 from app.states import State
+from app.verification import check_trace
 from tests.conftest import transitions
 
 GAP_FREE_CASE = {
@@ -50,47 +51,147 @@ def test_an_unknown_agent_fails_closed():
     assert not retry_budget_left({}, "not_an_agent")
 
 
-# ---- V_HALT_PII: structural, never retried -------------------------------
+# ---- PRIVACY_REFUSED: a refusal is a block, not a failure ----------------------
 
 
-def _leak(monkeypatch):
+def _leak(monkeypatch, **smuggled):
     """Let one identifier survive the payload build. The builder is an allow-list
     now, so a leak cannot be made by dropping nothing; it has to be smuggled in
     after the build, which is what a bug in the builder would look like.
     Returns the real builder so a test can put it back (the technician's fix)."""
     real = normalizer.build_model_payload
     monkeypatch.setattr(normalizer, "build_model_payload",
-                        lambda *a, **k: {**real(*a, **k), "name": "Ada L."})
+                        lambda *a, **k: {**real(*a, **k), **(smuggled or {"name": "Ada L."})})
     return real
 
 
-def test_an_identifier_leak_halts_the_case(run, monkeypatch):
-    """The redaction step is the one place the line stops rather than degrades."""
+def _count_model_calls(monkeypatch):
+    from app.actors import acuity_classifier
+    calls = []
+    monkeypatch.setattr(acuity_classifier, "classify", lambda payload: calls.append(payload))
+    return calls
+
+
+def _refusal(state):
+    [record] = [r for r in state["audit_log"] if r["transition"] == Transition.PRIVACY_REFUSED]
+    return record
+
+
+def test_a_refused_payload_queues_the_case_on_the_nurses_acuity(run, monkeypatch):
+    """The guard doing its job is not a failure: the case goes on without the
+    model, and gets a reassessment timer like any queued patient."""
+    _leak(monkeypatch)
+
+    state, pending, _ = run(DEMO_CASES["clean"])
+
+    assert state["control_state"] == State.MONITORING.value
+    assert pending.get("waiting_room")
+    assert state["acuity"] == DEMO_CASES["clean"]["nurse_proposed_acuity"]
+    assert state["acuity_source"] == "nurse_fallback"
+    assert state["gate_disabled"] is True
+    assert "cross_check_off_review_later" in state["flags"]
+    assert Transition.SAFETY_PASSED in transitions(state)
+    assert Transition.TIMER_RUNNING in transitions(state)
+    assert Transition.AF_RECOVER not in transitions(state)
+    assert check_trace(state["audit_log"]).passed
+
+
+def test_a_refused_payload_never_reaches_the_model(run, monkeypatch):
+    calls = _count_model_calls(monkeypatch)
     _leak(monkeypatch)
 
     state, _, _ = run(DEMO_CASES["clean"])
 
-    assert state["control_state"] == State.AGENT_FAILED.value
-    assert Transition.V_HALT_PII in transitions(state)
-    assert state["failed_stage"] == State.REDACTING_ROUTING.value
+    assert calls == []
+    assert Transition.RUN_CLASSIFIER not in transitions(state)
+    assert state["system_proposed_acuity"] is None
 
 
-def test_a_leaked_payload_is_never_written_to_state(run, monkeypatch):
-    """'A malformed or unsafe output is never written to state.'"""
+def test_the_refusal_names_opa_and_its_reasons(run, monkeypatch):
+    _leak(monkeypatch)
+
+    state, _, _ = run(DEMO_CASES["clean"])
+
+    record = _refusal(state)
+    assert record["denying_layer"] == "OPA (privacy)"
+    assert record["engines"] == ["OPA"]
+    assert 'identifier key "name"' in record["explanation"]
+    assert 'field "name" is not approved' in record["explanation"]
+
+
+def test_a_refusal_alerts_the_technician_and_marks_the_card(run, monkeypatch):
+    """Redaction or the data upstream missed something: a bug or bad data,
+    so the technician hears of it. Marked apart from an OPA outage."""
+    _leak(monkeypatch)
+
+    state, _, _ = run(DEMO_CASES["clean"])
+
+    assert _refusal(state)["action"] == "alert_technician"
+    assert "privacy_refused" in state["flags"]
+    assert state["payload_refused"] is True
+    assert "opa" not in state["degraded"]
+    assert "acuity_classifier" not in state["degraded"]   # the model is fine, it was skipped
+
+
+def test_a_regex_hit_is_refused_the_same_way(run, monkeypatch):
+    """An identifier typed inside an allowed value: OPA's closed vocabulary
+    refuses it too, and the regex scan names what it is."""
+    calls = _count_model_calls(monkeypatch)
+    _leak(monkeypatch, chief_complaint="id 123456789")
+
+    state, _, _ = run(DEMO_CASES["clean"])
+
+    record = _refusal(state)
+    assert "regex scan" in record["denying_layer"]
+    assert "national_id in chief_complaint" in record["explanation"]
+    assert "123456789" not in str(state)    # the reason is kept, the identifier is not
+    assert calls == []
+    assert state["control_state"] == State.MONITORING.value
+    assert "privacy_refused" in state["flags"]
+
+
+def test_a_refused_payload_is_never_kept(run, monkeypatch):
+    """'A malformed or unsafe output is never written to state': not for the
+    model, and not for the board or the CRM write-back either."""
+    from app.crm_client import visit_record
+
     _leak(monkeypatch)
 
     state, _, _ = run(DEMO_CASES["clean"])
 
     assert state["redacted_payload"] == {}
-    assert state["system_proposed_acuity"] is None
+    assert "Ada L." not in str(state)
+    assert visit_record(state)["chief_complaint"] is None
 
 
-def test_a_halted_case_never_reaches_the_queue(run, monkeypatch):
-    _leak(monkeypatch)
+# ---- AF_PII: a crash of the redaction step halts ------------------------------
 
-    state, _, _ = run(DEMO_CASES["clean"])
 
-    assert state["control_state"] != State.MONITORING.value
+def _crash_builder(monkeypatch):
+    real = normalizer.build_model_payload
+
+    def broken(*a, **k):
+        raise KeyError("vitals")
+    monkeypatch.setattr(normalizer, "build_model_payload", broken)
+    return real
+
+
+def test_a_crash_of_the_payload_builder_halts_the_case(run, monkeypatch):
+    """The one place the line still stops: the redaction step did not finish."""
+    calls = _count_model_calls(monkeypatch)
+    _crash_builder(monkeypatch)
+
+    state, pending, _ = run(DEMO_CASES["clean"])
+
+    assert state["control_state"] == State.AGENT_FAILED.value
+    assert state["failed_stage"] == State.REDACTING_ROUTING.value
+    assert pending == {"case_id": state["case_id"], "recovery_pending": True,
+                       "halted_at": State.REDACTING_ROUTING.value}
+    [crash] = [r for r in state["audit_log"] if r["transition"] == Transition.AF_PII]
+    assert crash["action"] == "alert_technician"
+    assert "KeyError" in crash["explanation"] or "vitals" in crash["explanation"]
+    assert calls == []
+    assert state["redacted_payload"] == {}
     assert state["approved"] is False
 
 
@@ -186,14 +287,14 @@ def test_a_degraded_case_carries_no_history_into_the_payload(run, monkeypatch):
 
 
 def test_a_halted_case_waits_for_recovery_then_resumes_at_redaction(graph, run, monkeypatch):
-    """I10: agent_failed no longer ends the run. AGENT_RECOVERED re-runs the
+    """I10: agent_failed does not end the run. AGENT_RECOVERED re-runs the
     stage that halted; with the fault fixed, the case continues.
     """
     from langgraph.types import Command
 
     from app.runner import config_for, hydrate
 
-    real_build = _leak(monkeypatch)
+    real_build = _crash_builder(monkeypatch)
     _, pending, thread = run(DEMO_CASES["clean"])
     assert pending["recovery_pending"] is True
 

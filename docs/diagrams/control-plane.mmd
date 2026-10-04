@@ -13,6 +13,7 @@ graph TD;
 	data_parsed(data_parsed)
 	__error_handler__State\2eRESOLVING_IDENTITY(__error_handler__State.RESOLVING_IDENTITY)
 	resolving_identity(resolving_identity)
+	__error_handler__State\2eREDACTING_ROUTING(__error_handler__State.REDACTING_ROUTING)
 	redacting_routing(redacting_routing)
 	__error_handler__State\2eCLASSIFYING(__error_handler__State.CLASSIFYING)
 	classifying(classifying)
@@ -61,8 +62,8 @@ graph TD;
 	parsing -. &nbsp;Event.MISSING_FIELDS_DETECTED&nbsp; .-> missing_fields_requested;
 	parsing -. &nbsp;Event.SUBMISSION_FAILED&nbsp; .-> submission_failed;
 	reassessment_required --> awaiting_reassessment_submission;
-	redacting_routing -. &nbsp;Route.HALT&nbsp; .-> agent_failed;
-	redacting_routing -. &nbsp;Route.DEGRADED&nbsp; .-> classifier_fallback;
+	redacting_routing -. &nbsp;crashed&nbsp; .-> agent_failed;
+	redacting_routing -. &nbsp;Route.BLOCKED&nbsp; .-> classifier_fallback;
 	redacting_routing -. &nbsp;Route.PROCEED&nbsp; .-> classifying;
 	resolving_identity -. &nbsp;Route.DENIED&nbsp; .-> __end__;
 	resolving_identity -. &nbsp;Route.PROCEED&nbsp; .-> redacting_routing;
@@ -80,7 +81,6 @@ graph TD;
 	awaiting_reassessment_submission -. &nbsp;Route.DENIED&nbsp; .-> awaiting_reassessment_submission;
 	awaiting_recovery -. &nbsp;Route.DENIED&nbsp; .-> awaiting_recovery;
 	classifying -. &nbsp;Route.RETRY&nbsp; .-> classifying;
-	redacting_routing -. &nbsp;Route.RETRY&nbsp; .-> redacting_routing;
 	resolving_identity -. &nbsp;Route.RETRY&nbsp; .-> resolving_identity;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0

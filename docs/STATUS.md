@@ -1,8 +1,67 @@
 # Triage Guard — where things stand
 
-**Last updated:** 2026-10-03 (a past visit now keeps its chief complaint and vitals,
-and the model sees them as history; the gate shows the classifier's reason and
-confidence beside the two levels. Previous entries below.)
+**Last updated:** 2026-10-03 (a privacy refusal is now a block, not a halt: the
+case goes on without the model. Previous entries below.)
+
+**2026-10-03, a privacy refusal is a block, not a failure.**
+
+*What was wrong.* When the privacy check before the model refused the payload (an
+OPA `deny_reasons` entry or a regex identifier hit), the case halted: `V_HALT_PII`,
+`agent_failed`, then `awaiting_recovery` until a technician sent `AGENT_RECOVERED`.
+But a refusal is the guard doing its job, a policy decision; the failure is the
+engine not answering (OPA down), and that already degrades. A halted patient also
+had no reassessment timer, and the Datalog deadline check only looks at queued
+cases, so the patient dropped out of sight.
+
+*Now.* `redacting_routing` records the refusal as `privacy_refused` (the
+transition replaces `v_halt_pii`): action `alert_technician`, `denying_layer`
+naming `OPA (privacy)`, `regex scan` or both, `engines: ["OPA"]` when OPA refused,
+and the reasons, passed through `redact_identifiers` because OPA's reasons quote
+the refused value. The case then takes the OPA-down detour (`Route.BLOCKED` to
+`classifier_fallback`): the model is never called, the nurse's acuity is kept, the
+gap gate is off, `cross_check_off_review_later`, then safety validation and the
+queue with a reassessment timer. The card is flagged `privacy_refused`, apart from
+the `opa` degraded mark of an outage, and the board's notification strip shows the
+refusal. `redacted_payload` is left empty, so the refused content is kept nowhere:
+not on the case, the card or the CRM write-back (which reads its complaint and
+vitals; the card shows no complaint for that triage). A new state field,
+`payload_refused`, is set on every redaction pass and reset on a re-file, like
+`payload_unverified`. A payload with no `case_id` while OPA is down, which used to
+"retry" on a budget of zero and halt, is now refused too: OPA refuses the same
+payload when it is up. `deterministic.check_privacy` returns the refusing layers;
+`verify_no_identifiers` is a thin verdict over it.
+
+*The recovery path stays, for a crash.* A refusal no longer reaches
+`agent_failed`, but a crash of the payload builder now does: it had no error
+handler, so an exception in `build_model_payload` ended the run with no pause and
+no timer. `_on_redaction_error` logs `af_pii` (`alert_technician`) and halts in
+`agent_failed`, and `awaiting_recovery` resumes at `redacting_routing` on
+`AGENT_RECOVERED`, as before. No retry (`pii_schema_drop` budget 0). A builder that
+did not finish has produced nothing to check, so this is the one critical-closed
+stop left.
+
+*The trace check* gains a rule, *privacy refusal*: the model asked or answering
+after that triage's refusal, or a refusal naming no layer. The trace-violation demo
+plants it.
+
+*Docs.* SPECIFICATION.md: the transition rows (AF·PII now a crash, `V·refused·PII`
+replaces `V·halt·PII`), the per-agent failure model, On output verification, the
+scenario paths, I11, I12 (`G(privacy_refused → ¬model_call U front_door_rerun)`),
+the trace-check rule list and the identifier-redaction steps. SYSTEM_MODELING.md:
+the refusal and the crash as their own failure-model items. `control-plane.mmd`
+regenerated; LangGraph draws one edge per source and target, so the refusal and
+the outage share the one `classifier_fallback` arrow there. The slides' failure box
+now names a crash of the identifier-removing step as its example.
+
+*Open.* A halted case (now only a builder crash) still has no deadline: no
+reassessment timer, and Datalog's `unwatched` rule does not see it. Proposed, not
+done: schedule a `recovery` timer on entry to `agent_failed` and let the sweeper
+escalate it to a shift lead, plus a Datalog rule over halted cases with no live
+recovery timer. Found while wiring the crash handler, not fixed here:
+`_on_crm_error` sends `goto=State.REDACTING_ROUTING.value`, but enum-keyed nodes'
+trigger channels are named from the enum (`branch:to:State.REDACTING_ROUTING`), so
+LangGraph ignores the `goto` and a crashing CRM node ends the run at
+`resolving_identity` with no pause and no timer. The fix is `goto=State.REDACTING_ROUTING`.
 
 **2026-10-03, prior visits carry their complaint and vitals.**
 

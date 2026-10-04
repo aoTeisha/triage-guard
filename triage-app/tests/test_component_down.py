@@ -2,7 +2,8 @@
 where a check could not run, and never past a check that could not run.
 
 - OPA down: the payload cannot be proven clean, so the model is skipped and the
-  case settles on the nurse's acuity, the same as a classifier outage.
+  case settles on the nurse's acuity, the same as a classifier outage. The same
+  detour as a refusal (PRIVACY_REFUSED), but marked as an outage.
 - Prolog down: the safety check cannot answer, so a charge nurse gets
   the case and asks for the check again once the engine is back. No acuity change
   is required, because the input did not cause the failure.
@@ -79,13 +80,15 @@ def test_opa_down_skips_the_model_and_queues_on_the_nurses_acuity(run, monkeypat
     assert "opa" in state["degraded"]
     assert "acuity_classifier" not in state["degraded"]  # the model is fine, it was skipped
     assert Transition.PRIVACY_GATE_DOWN in transitions(state)
-    assert Transition.V_HALT_PII not in transitions(state)
+    assert Transition.PRIVACY_REFUSED not in transitions(state)
     assert check_trace(state["audit_log"]).passed
 
 
-def test_opa_down_still_halts_on_an_identifier_the_regex_finds(run, monkeypatch):
+def test_opa_down_still_refuses_an_identifier_the_regex_finds(run, monkeypatch):
     """Only OPA's half of the check is missing; a leak the regex scan can see is
-    still a leak, and still stops the line."""
+    still refused, by the regex scan alone, and still never reaches the model."""
+    calls = []
+    monkeypatch.setattr(acuity_classifier, "classify", lambda payload: calls.append(payload))
     real = normalizer.build_model_payload
     monkeypatch.setattr(normalizer, "build_model_payload",
                         lambda *a, **k: {**real(*a, **k), "chief_complaint": "id 123456789"})
@@ -93,8 +96,26 @@ def test_opa_down_still_halts_on_an_identifier_the_regex_finds(run, monkeypatch)
 
     state, _, _ = run(CASE)
 
-    assert state["control_state"] == State.AGENT_FAILED.value
-    assert Transition.V_HALT_PII in transitions(state)
+    [refusal] = [r for r in state["audit_log"] if r["transition"] == Transition.PRIVACY_REFUSED]
+    assert refusal["denying_layer"] == "regex scan"   # OPA could not answer; it refused nothing
+    assert "engines" not in refusal
+    assert calls == []
+    assert state["control_state"] == State.MONITORING.value
+    assert "privacy_refused" in state["flags"]
+    assert Transition.PRIVACY_GATE_DOWN not in transitions(state)
+    assert check_trace(state["audit_log"]).passed
+
+
+def test_opa_down_is_not_a_refusal(run, monkeypatch):
+    """An outage and a refusal take the same detour, but are marked apart."""
+    _opa_down(monkeypatch)
+
+    state, _, _ = run(CASE)
+
+    assert "privacy_refused" not in state["flags"]
+    assert state["payload_refused"] is False
+    assert state["redacted_payload"]                     # kept: nothing was found in it
+    assert Transition.PRIVACY_REFUSED not in transitions(state)
 
 
 # ---- Prolog --------------------------------------------------------------------
@@ -192,7 +213,7 @@ def _after_last(trail, label):
 
 
 @pytest.mark.parametrize("opa_down_first", [False, True])
-def test_a_leak_on_a_refile_halts_whatever_the_last_triage_left(graph, run, monkeypatch, opa_down_first):
+def test_a_leak_on_a_refile_is_refused_whatever_the_last_triage_left(graph, run, monkeypatch, opa_down_first):
     with pytest.MonkeyPatch.context() as mp:
         if opa_down_first:
             _opa_down(mp)
@@ -204,12 +225,31 @@ def test_a_leak_on_a_refile_halts_whatever_the_last_triage_left(graph, run, monk
     result = _refile(graph, thread)
 
     trail = transitions(result)
-    assert Transition.V_HALT_PII in trail
-    after = _after_last(trail, Transition.V_HALT_PII)
-    assert Transition.CLEARED_TO_QUEUE not in after
-    assert Transition.SAFETY_PASSED not in after
+    assert Transition.PRIVACY_REFUSED in trail
+    after = _after_last(trail, Transition.PRIVACY_REFUSED)
+    assert Transition.RUN_CLASSIFIER not in after
+    assert Transition.V_EXHAUSTED_CLASSIFIER in after    # on the nurse's new acuity
+    assert Transition.CLEARED_TO_QUEUE in after
     assert calls == []
     assert result["redacted_payload"] == {}
+    assert result["system_proposed_acuity"] is None
+    assert result["acuity"] == REFILE["nurse_proposed_acuity"]
+    assert check_trace(result["audit_log"]).passed
+
+
+def test_a_clean_refile_after_a_refusal_uses_the_model_again(graph, run, monkeypatch):
+    real = normalizer.build_model_payload
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(normalizer, "build_model_payload",
+                   lambda *a, **k: {**real(*a, **k), "name": "Ada L."})
+        state, _, thread = run(DEMO_CASES["clean"])
+    assert state["payload_refused"] is True
+
+    result = _refile(graph, thread)
+
+    assert result["payload_refused"] is False
+    assert result["redacted_payload"]
+    assert Transition.RUN_CLASSIFIER in _after_last(transitions(result), Transition.FRONT_DOOR_RERUN)
 
 
 def test_a_refile_with_everything_up_turns_the_confidence_gate_back_on(graph, run, monkeypatch):

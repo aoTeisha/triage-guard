@@ -43,21 +43,19 @@ def route_after_identity(state: TriageState) -> Route:
 
 
 def route_after_redaction(state: TriageState) -> Route:
-    """PAYLOAD_CLEAN / PRIVACY_GATE_DOWN / V_HALT_PII / AF_PII.
+    """PAYLOAD_CLEAN / PRIVACY_REFUSED / PRIVACY_GATE_DOWN.
 
-    `pii_schema_drop` carries N=0 by design, so a recoverable fault here exhausts
-    on its first occurrence and halts. That is the critical-closed rule from the
-    failure model, expressed as a budget rather than a special case.
+    The model sees only a payload the privacy check approved. A refusal is a
+    block and an OPA outage is a degrade; both skip the model and settle on the
+    nurse's acuity. A crash of the step itself never reaches here: its error
+    handler halts the case (AF_PII).
     """
-    if state.redacted_payload and state.payload_unverified:
+    # No payload is never an approved one: the model gets nothing to classify.
+    if state.payload_refused or not state.redacted_payload:
+        return Route.BLOCKED      # refused: the guard did its job, the model is skipped
+    if state.payload_unverified:
         return Route.DEGRADED     # OPA down: skip the model, use the nurse's acuity
-    if state.redacted_payload:
-        return Route.PROCEED
-    if state.failed_stage == State.REDACTING_ROUTING and not retry_budget_left(
-        state.retry_count, "pii_schema_drop"
-    ):
-        return Route.HALT
-    return Route.RETRY
+    return Route.PROCEED
 
 
 def route_after_classify(state: TriageState) -> Route:
@@ -188,5 +186,6 @@ def route_pause_exit(state: TriageState) -> Route:
 
 
 def route_after_recovery(state: TriageState) -> Route | State:
-    """AF_RECOVER: re-enter at the stage that halted, unless released."""
+    """AF_RECOVER: re-enter at the stage that halted, unless released. Only a
+    crash of `redacting_routing` halts today (AF_PII)."""
     return release_route(state) or state.failed_stage

@@ -112,6 +112,7 @@ def awaiting_reassessment_submission(state: TriageState) -> dict[str, Any]:
         # route this triage past a failed privacy check.
         "redacted_payload": {},
         "payload_unverified": False,
+        "payload_refused": False,
         "gate_disabled": False,
         "validator_down": [],
         "safety_waived": False,

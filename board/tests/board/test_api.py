@@ -166,6 +166,29 @@ def test_a_notification_names_the_complaint_even_with_no_redacted_payload():
     assert "P-1" not in str(note)
 
 
+def test_a_privacy_refusal_reaches_the_notification_strip():
+    """A refusal means redaction or the data upstream missed something: the
+    technician hears of it, the case itself carries on."""
+    state = {
+        "case_id": "c-2",
+        "parsed_fields": {"chief_complaint": "limb_injury"},
+        "redacted_payload": {},
+        "audit_log": [
+            {
+                "case_id": "c-2",
+                "transition": Transition.PRIVACY_REFUSED.value,
+                "action": "alert_technician",
+                "explanation": "payload refused for the model: OPA (privacy): ...; model skipped",
+                "denying_layer": "OPA (privacy)",
+                "at": "2026-01-01T00:00:00+00:00",
+            }
+        ],
+    }
+    [note] = api_module.notifications([state])
+    assert note["transition"] == "privacy_refused"
+    assert note["complaint"] == "limb injury"
+
+
 def test_heartbeat_endpoint_reports_degraded_with_no_worker(checkpoint_db):
     data = client.get("/api/heartbeat").json()
     assert data["degraded"] is True

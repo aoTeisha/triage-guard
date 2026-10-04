@@ -67,15 +67,15 @@ def test_data_parsed_leads_to_identity_lookup():
     assert (State.DATA_PARSED.value, State.RESOLVING_IDENTITY.value) in edges()
 
 
-def test_redaction_halts_on_a_leak_and_skips_the_model_when_opa_is_down():
-    """PAYLOAD_CLEAN forward, V_HALT_PII sideways, PRIVACY_GATE_DOWN around the
-    model to the nurse's acuity. A found leak still halts; nothing else does."""
+def test_redaction_goes_around_the_model_on_a_refusal_and_halts_only_on_a_crash():
+    """PAYLOAD_CLEAN forward. PRIVACY_REFUSED and PRIVACY_GATE_DOWN around the
+    model to the nurse's acuity. Only a crash of the step halts (AF_PII), and
+    nothing loops back to retry it."""
     targets = {t for s, t in edges() if s == State.REDACTING_ROUTING.value}
     assert targets == {
         State.CLASSIFYING.value,
-        State.AGENT_FAILED.value,
-        State.REDACTING_ROUTING.value,     # V_RETRY self-loop
-        "classifier_fallback",             # OPA down: payload not proven clean
+        "classifier_fallback",             # refused, or OPA down
+        State.AGENT_FAILED.value,          # the payload builder crashed
     }
 
 

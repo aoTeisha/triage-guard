@@ -87,6 +87,9 @@ const FLAG_LABELS = {
   crm_down_intake_only: "no history — intake details only",
   "cross-check off": "second opinion unavailable",
   cross_check_off_review_later: "second opinion unavailable — review later",
+  // Not an outage: the privacy check answered and refused the payload, so
+  // redaction or the data upstream missed something. A technician looks.
+  privacy_refused: "privacy check refused the AI payload — technician alerted",
 };
 const DRAWER_COLUMN = "patient_released";
 // The after-run trace check's rules, keyed as the server names them (the
@@ -99,6 +102,7 @@ const TRACE_RULE_LABELS = {
   bounded_correction_loop: "Too many correction attempts, never escalated to a senior",
   audit_record: "Log record from a different patient's case",
   closed_case: "Case changed after the patient was released",
+  privacy_refusal: "AI used after the privacy check refused the data",
 };
 // `acuity_source` is the spec's vocabulary; a board is not the place to make a
 // nurse learn it.
@@ -176,6 +180,8 @@ const NOTICE_LABELS = {
   reassessment_due: "reassessment due",
   move_confirmed: "move to treatment confirmed",
   blk: "action refused",
+  privacy_refused: "privacy check refused the AI payload — technician alerted",
+  af_pii: "removing identifiers crashed — case halted, technician alerted",
 };
 
 // Who a reminder went to, in words. The monitor widens the audience with each

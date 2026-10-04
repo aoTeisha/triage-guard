@@ -85,6 +85,10 @@ class TriageState(BaseModel):
     # OPA could not prove `redacted_payload` clean (engine down), so the model is
     # skipped for this triage. Set on every redaction pass.
     payload_unverified: bool = False
+    # The privacy check refused the payload (a block, not an outage): the model is
+    # skipped for this triage and `redacted_payload` is left empty. Set on every
+    # redaction pass.
+    payload_refused: bool = False
 
     # ---- Acuity: how urgent the case is, and who decided ----------------------
     nurse_proposed_acuity: Optional[int] = None

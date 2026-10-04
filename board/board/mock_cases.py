@@ -117,6 +117,9 @@ TRACE_VIOLATIONS: dict[str, tuple[T, ...]] = {
     # one ordinary record, but filed under another case
     "audit_record": (T.TIMER_RUNNING,),
     "closed_case": (T.RELEASE, T.MOVE_CONFIRMED),
+    # the model asked after the privacy check refused this triage's payload
+    # (the planted refusal also names no layer: the same rule)
+    "privacy_refusal": (T.FRONT_DOOR_RERUN, T.PRIVACY_REFUSED, T.RUN_CLASSIFIER),
 }
 
 
