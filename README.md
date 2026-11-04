@@ -4,6 +4,8 @@ Under-triage in hospital waiting rooms gets caught too late, and patients deteri
 without being reassessed. Triage Guard helps staff identify how far a patient has
 deteriorated, which improves ER capacity logistics and treatment.
 
+![The Triage Guard board: patients ordered by queue position across the waiting, human review, reassessment, treatment and discharge columns](assets/screenshots/board-overview.png)
+
 **Docs:**
 
 - [Architecture and State-Machine Specification](docs/SPECIFICATION.md)
@@ -153,3 +155,55 @@ uv run board   # serves on :8002 — the queue board and the intake front door
 See [board/README.md](board/README.md) for the full details, and
 [2026-09-11-board-service-design.md](2026-09-11-board-service-design.md) for the
 design it builds (milestones M0 + M1).
+
+## Screenshots
+
+Every screen below comes from the running board, with mock CRM patients and the
+mock classifier, which always proposes ESI 2. ESI is the Emergency Severity
+Index: 1 is the most urgent level and 5 the least.
+
+### New case
+
+The nurse picks a registered patient and looks them up. The CRM history comes
+back with identifiers already masked: initials, the last four digits of the
+national ID, and an age band instead of a birth date.
+
+![New case panel with a CRM lookup result showing masked identifiers](assets/screenshots/new-case-intake.png)
+
+### Human approval gate
+
+The nurse proposed ESI 5 and the classifier proposed ESI 2. A gap of two or more
+levels pauses the case for a charge nurse. Here a plain nurse tried to answer
+anyway: the Prolog authorization rule refused, the refusal is in the audit trail,
+and the case stayed at the gate.
+
+![Case panel paused at the gate, with the nurse's refused attempt in the audit trail](assets/screenshots/human-gate.png)
+
+### Reassessment
+
+This ESI 1 patient's 10-minute reassessment timer fired. The case now waits for a
+nurse to enter current observations, because the system never carries the old
+numbers forward on its own.
+
+![Case in the reassessment column with the re-file form open](assets/screenshots/reassessment.png)
+
+### Trace check
+
+The trace-violation demo writes fake records straight into a case's audit log,
+bypassing every guard. The independent trace check re-reads the log and reports
+that the patient was queued without a safety check.
+
+![Case panel with the trace check alert above the planted audit records](assets/screenshots/trace-violation.png)
+
+### Outage switch
+
+With `DEMO_OUTAGES=1`, the System health panel switches a component off for every
+patient until it is switched back. Here the LLM is down, and a red strip under the
+header names it.
+
+![System health panel with the LLM switched off and the outage strip across the board](assets/screenshots/system-health.png)
+
+A case submitted during the outage still reaches the queue. It keeps the nurse's
+acuity, and its Running degraded box lists what it went without.
+
+![Case panel with the Running degraded box after the classifier outage](assets/screenshots/outage-degraded.png)
